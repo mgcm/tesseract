@@ -6899,3 +6899,11 @@ msgstr "Zentriert"
 #: ui/shared/views/settings/AppearanceSection.cpp
 msgid "{0}%"
 msgstr "{0} %"
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to another chat app. Your messages are sent there too, and that app's own rules apply, not just Matrix's."
+msgstr "Dieser Raum ist mit einer anderen Chat-App verbunden. Deine Nachrichten werden auch dorthin gesendet, und es gelten die eigenen Regeln dieser App, nicht nur die von Matrix."
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
+msgstr "Dieser Raum ist mit {0} verbunden. Deine Nachrichten werden auch dorthin gesendet, und es gelten die eigenen Regeln von {0}, nicht nur die von Matrix."

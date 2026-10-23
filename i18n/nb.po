@@ -5260,3 +5260,11 @@ msgstr "Sentrert"
 #: ui/shared/views/settings/AppearanceSection.cpp
 msgid "{0}%"
 msgstr "{0} %"
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to another chat app. Your messages are sent there too, and that app's own rules apply, not just Matrix's."
+msgstr "Dette rommet er koblet til en annen chat-app. Meldingene dine sendes også dit, og appens egne regler gjelder, ikke bare Matrix sine."
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
+msgstr "Dette rommet er koblet til {0}. Meldingene dine sendes også dit, og {0} sine egne regler gjelder, ikke bare Matrix sine."

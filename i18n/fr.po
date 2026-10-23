@@ -6901,3 +6901,11 @@ msgstr "Centrée"
 #: ui/shared/views/settings/AppearanceSection.cpp
 msgid "{0}%"
 msgstr "{0} %"
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to another chat app. Your messages are sent there too, and that app's own rules apply, not just Matrix's."
+msgstr "Ce salon est connecté à une autre application de discussion. Vos messages y sont aussi envoyés, et les règles propres à cette application s’appliquent, pas seulement celles de Matrix."
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
+msgstr "Ce salon est connecté à {0}. Vos messages y sont aussi envoyés, et les règles propres à {0} s’appliquent, pas seulement celles de Matrix."

@@ -7310,3 +7310,11 @@ msgstr "[Çéñtérédx]"
 #: ui/shared/views/settings/AppearanceSection.cpp
 msgid "{0}%"
 msgstr "[{0}%x]"
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to another chat app. Your messages are sent there too, and that app's own rules apply, not just Matrix's."
+msgstr "[Thïs rööm ïs çöññéçtéd tö àñöthér çhàt àpp. Yöùr méssàgés àré séñt théré töö, àñd thàt àpp's öwñ rùlés àpply, ñöt jùst Màtrïx's.xxxxxxxxxxxxxxxxxxxxxxxxx]"
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
+msgstr "[Thïs rööm ïs çöññéçtéd tö {0}. Yöùr méssàgés àré séñt théré töö, àñd {0}'s öwñ rùlés àpply, ñöt jùst Màtrïx's.xxxxxxxxxxxxxxxxxxxxxx]"

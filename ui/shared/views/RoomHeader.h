@@ -159,6 +159,11 @@ public:
     // month, so the next open lands on this room's most recent day.
     void reset_jump_to_date();
 
+    // Fired from paint() when the bridge badge is shown but its network logo
+    // isn't cached yet, so the shell can fetch it. Safe to fire every paint;
+    // the shell dedups in-flight fetches.
+    std::function<void(const std::string& mxc_url)> on_bridge_avatar_needed;
+
     // Fired when the user clicks the threads button.
     std::function<void()> on_threads_requested;
 
@@ -274,6 +279,16 @@ private:
 
     bool encrypted_ = false;
     tk::Rect lock_icon_rect_{};
+
+    // Bridged-room badge next to the title: the network's logo (or a cable
+    // glyph) with a tooltip explaining what bridging means.
+    bool        bridged_ = false;
+    std::string bridge_network_name_;
+    std::string bridge_network_avatar_url_;
+    tk::Rect    bridge_icon_rect_{};
+    bool        hover_bridge_ = false;
+    tk::IconCache bridge_icon_cache_;
+    std::string bridge_tooltip_() const;
 
     struct AccessRow
     {

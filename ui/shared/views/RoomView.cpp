@@ -858,6 +858,11 @@ void RoomView::wire_internal_callbacks()
     };
     // Wire header info-requested to show room info panel.
     header_->on_info_requested = [this]() { show_room_info(); };
+    header_->on_bridge_avatar_needed = [this](const std::string& mxc)
+    {
+        if (on_bridge_avatar_needed)
+            on_bridge_avatar_needed(mxc);
+    };
 
     // Wire room info panel callbacks.
     room_info_panel_->on_close = [this]()

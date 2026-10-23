@@ -338,6 +338,8 @@ void ShellBase::wire_main_app_widget_(views::MainAppWidget* app)
     app->room_view()->set_avatar_provider(avatar_lookup);
     app->room_view()->on_room_avatar_needed =
         [this](const tesseract::RoomInfo& r) { ensure_room_avatar_(r); };
+    app->room_view()->on_bridge_avatar_needed = [this](const std::string& mxc)
+    { ensure_media_thumbnail_(mxc, 64, 64, false); };
     // Visible-row media prioritization: when the timeline's visible rows change,
     // move their still-pending downloads to the front of the queue.
     app->room_view()->on_visible_range_changed =

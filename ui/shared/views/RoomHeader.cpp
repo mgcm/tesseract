@@ -38,6 +38,8 @@ constexpr float kRoomHeaderMinTextW = 160.0f;
 constexpr float kLockW   = 10.0f;
 constexpr float kLockH   = 12.0f;
 constexpr float kLockGap =  4.0f;
+constexpr float kBridgeIconPx  = 16.0f;
+constexpr float kBridgeIconGap = 6.0f;
 
 // Vertical offsets for the name/topic block (from the top of the strip).
 // Two-line layout (with topic): name at 12 px, topic at 34 px.
@@ -222,6 +224,9 @@ void RoomHeader::set_room(const tesseract::RoomInfo& info)
     display_name_ = info.name;
     avatar_url_ = info.effective_avatar_url();
     encrypted_ = info.is_encrypted;
+    bridged_ = info.is_bridged && !info.bridge_overridden;
+    bridge_network_name_ = info.bridge_network_name;
+    bridge_network_avatar_url_ = info.bridge_network_avatar_url;
     if (name_label_)
     {
         name_label_->set_text(display_name_);
@@ -559,19 +564,27 @@ void RoomHeader::arrange(tk::LayoutCtx& ctx, tk::Rect bounds)
     const float name_y =
         has_topic ? bounds.y + kNameY_Pair : bounds.y + kNameY_Single;
 
+    // Leading badges, left to right: bridge, lock, then the name.
+    const bool show_bridge = bridged_ && text_w >= kBridgeIconPx + kBridgeIconGap;
+    const float bridge_reserve = show_bridge ? (kBridgeIconPx + kBridgeIconGap) : 0.0f;
+    bridge_icon_rect_ = show_bridge
+                            ? tk::Rect{text_x,
+                                       name_y + (kRoomHeaderNameH - kBridgeIconPx) * 0.5f,
+                                       kBridgeIconPx, kBridgeIconPx}
+                            : tk::Rect{};
+
     const float lock_reserve = encrypted_ ? (kLockW + kLockGap) : 0.0f;
     lock_icon_rect_ = encrypted_
-                          ? tk::Rect{text_x,
+                          ? tk::Rect{text_x + bridge_reserve,
                                      name_y + (kRoomHeaderNameH - kLockH) * 0.5f,
                                      kLockW, kLockH}
                           : tk::Rect{};
 
     if (name_label_)
     {
-        name_label_->arrange(
-            ctx,
-            {text_x + lock_reserve, name_y,
-             std::max(0.0f, text_w - lock_reserve), kRoomHeaderNameH});
+        const float lead = bridge_reserve + lock_reserve;
+        name_label_->arrange(ctx, {text_x + lead, name_y,
+                                   std::max(0.0f, text_w - lead), kRoomHeaderNameH});
     }
 
     topic_rect_ = {text_x, bounds.y + kTopicY, text_w, kTopicH};
@@ -849,6 +862,24 @@ void RoomHeader::paint(tk::PaintCtx& ctx)
                        ctx.theme.palette.text_secondary);
     }
 
+    if (bridged_ && bridge_icon_rect_.w > 0.0f)
+    {
+        const tk::Image* logo = (avatar_provider_ && !bridge_network_avatar_url_.empty())
+                                    ? avatar_provider_(bridge_network_avatar_url_)
+                                    : nullptr;
+        if (!logo && !bridge_network_avatar_url_.empty() && on_bridge_avatar_needed)
+            on_bridge_avatar_needed(bridge_network_avatar_url_);
+        if (logo)
+            ctx.canvas.draw_circle_image(
+                *logo,
+                {bridge_icon_rect_.x + kBridgeIconPx * 0.5f,
+                 bridge_icon_rect_.y + kBridgeIconPx * 0.5f},
+                kBridgeIconPx);
+        else
+            bridge_icon_cache_.draw(ctx.canvas, ctx.factory, kCableSvg, bridge_icon_rect_,
+                                    kBridgeIconPx, ctx.theme.palette.text_secondary);
+    }
+
     // Topic: rich text (HTML) if present, plain label otherwise.
     // topic_layout_ is built and cached in arrange(); no rebuild needed here.
     if (!topic_spans_.empty())
@@ -918,11 +949,23 @@ void RoomHeader::paint(tk::PaintCtx& ctx)
         ctx.host->register_popup(date_picker_.get(), calendar_btn_);
 }
 
+std::string RoomHeader::bridge_tooltip_() const
+{
+    if (bridge_network_name_.empty())
+        return tk::tr("This room is connected to another chat app. Your messages are sent there "
+                      "too, and that app's own rules apply, not just Matrix's.");
+    return tk::trf(tk::tr("This room is connected to {0}. Your messages are sent there too, and "
+                          "{0}'s own rules apply, not just Matrix's."),
+                   {bridge_network_name_});
+}
+
 std::size_t RoomHeader::access_row_count() const
 {
     access_rows_.clear();
     if (encrypted_ && !condensed_)
         access_rows_.push_back({tk::Role::Image, tk::tr("Encrypted room"), {}, lock_icon_rect_});
+    if (bridged_ && !condensed_ && bridge_icon_rect_.w > 0.0f)
+        access_rows_.push_back({tk::Role::Image, bridge_tooltip_(), {}, bridge_icon_rect_});
     if (!topic_spans_.empty())
     {
         std::string text;
@@ -1073,6 +1116,21 @@ bool RoomHeader::on_pointer_move(tk::Point local)
     }
     hover_topic_ = new_hover_topic;
 
+    const bool new_hover_bridge = bridged_ && bridge_icon_rect_.w > 0.0f &&
+                                  world.x >= bridge_icon_rect_.x &&
+                                  world.x < bridge_icon_rect_.x + bridge_icon_rect_.w &&
+                                  world.y >= bridge_icon_rect_.y &&
+                                  world.y < bridge_icon_rect_.y + bridge_icon_rect_.h;
+    if (new_hover_bridge && !hover_bridge_)
+    {
+        if (host_) host_->show_tooltip(this, bridge_tooltip_(), bridge_icon_rect_);
+    }
+    else if (!new_hover_bridge && hover_bridge_)
+    {
+        if (host_) host_->hide_tooltip(this);
+    }
+    hover_bridge_ = new_hover_bridge;
+
     // Cursor: switch to pointer when hovering a link in the topic layout.
     std::string new_link_url;
     if (new_hover_topic && topic_layout_)
@@ -1098,6 +1156,9 @@ void RoomHeader::on_pointer_leave()
         host_->hide_tooltip(this);
     }
     hover_topic_ = false;
+    if (hover_bridge_ && host_)
+        host_->hide_tooltip(this);
+    hover_bridge_ = false;
     if (!hover_link_url_.empty())
     {
         hover_link_url_.clear();

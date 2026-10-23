@@ -633,6 +633,10 @@ public:
     // is fetched and cached before the header paints.
     std::function<void(const tesseract::RoomInfo&)> on_room_avatar_needed;
 
+    // Fired from the header's paint() when a bridged room's network logo
+    // isn't cached yet; the shell fetches the thumbnail.
+    std::function<void(const std::string& mxc_url)> on_bridge_avatar_needed;
+
     std::function<void(std::string room_id)>                on_fetch_notification_mode;
     std::function<void(std::string room_id, std::string)>   on_notification_mode_changed;
     std::function<void(std::string room_id, bool)>          on_favourite_changed;

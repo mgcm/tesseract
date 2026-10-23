@@ -297,6 +297,33 @@ TEST_CASE("The title block keeps the name and topic labels where RoomHeader plac
     CHECK(name.y + name.h <= topic.y + 0.5f);
 }
 
+TEST_CASE("A bridged room shows a bridge badge beside the title; an override hides it",
+          "[room_header][bridge]")
+{
+    TkRoomHeaderStage st;
+    RoomHeader h;
+    tesseract::RoomInfo info{};
+    info.name = "Design";
+    info.is_bridged = true;
+    info.bridge_network_name = "WhatsApp";
+    h.set_room(info);
+    st.arrange(h, {0, 0, 800, 60});
+
+    auto has_bridge_row = [&]
+    {
+        for (std::size_t i = 0; i < h.access_row_count(); ++i)
+            if (h.access_name_for_widget_row(i).find("WhatsApp") != std::string::npos)
+                return true;
+        return false;
+    };
+    CHECK(has_bridge_row());
+
+    info.bridge_overridden = true;
+    h.set_room(info);
+    st.arrange(h, {0, 0, 800, 60});
+    CHECK_FALSE(has_bridge_row());
+}
+
 #ifndef _WIN32
 TEST_CASE("local_midnight_ms starts the picked day at local midnight",
           "[tk][view][room_header][jump]")

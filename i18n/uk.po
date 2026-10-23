@@ -7479,3 +7479,11 @@ msgstr "По центру"
 #: ui/shared/views/settings/AppearanceSection.cpp
 msgid "{0}%"
 msgstr "{0}%"
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to another chat app. Your messages are sent there too, and that app's own rules apply, not just Matrix's."
+msgstr "Ця кімната підключена до іншого чат-застосунку. Ваші повідомлення надсилаються і туди, і діють власні правила цього застосунку, а не лише Matrix."
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
+msgstr "Ця кімната підключена до {0}. Ваші повідомлення надсилаються і туди, і діють власні правила {0}, а не лише Matrix."

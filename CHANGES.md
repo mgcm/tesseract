@@ -5,6 +5,7 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- feat(ui): a bridged room shows its network logo (or a cable glyph) before the room title in the header, with a tooltip saying the room is connected to that network and its rules apply; hidden when the room is marked as not bridged. Built and tested by the user; 1 new test case
 - feat(ui): the "Find a server" browser names where its list comes from, with a footer link to the provider's site; fetching, caching and parsing now sit behind a `ServerListProvider` trait in `sdk/src/client/server_list.rs` (servers.joinmatrix.org is the only implementation). Linux release build, cargo 1 new test, user-verified
 - fix(ui): the login view ignored the dark theme: it is created lazily and never received the current theme, and its `set_theme` skipped the root widget's `apply_theme`. Fixed in all four shells; `tk::TextField`/`TextArea` also take their text colour from the theme now. Linux release build (Qt6 + GTK4)
 - fix(ui): joining a room found by `#alias:server` in the Join a Room dialog now routes through the alias's server; the join used the resolved room id, whose own server part may be missing (room v12). Linux release build, 1 new ctest case

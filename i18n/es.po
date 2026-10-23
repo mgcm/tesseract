@@ -6999,3 +6999,11 @@ msgstr "Centrada"
 #: ui/shared/views/settings/AppearanceSection.cpp
 msgid "{0}%"
 msgstr "{0} %"
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to another chat app. Your messages are sent there too, and that app's own rules apply, not just Matrix's."
+msgstr "Esta sala está conectada con otra aplicación de chat. Tus mensajes también se envían allí, y se aplican las reglas propias de esa aplicación, no solo las de Matrix."
+
+#: ui/shared/views/RoomHeader.cpp
+msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
+msgstr "Esta sala está conectada con {0}. Tus mensajes también se envían allí, y se aplican las reglas propias de {0}, no solo las de Matrix."
