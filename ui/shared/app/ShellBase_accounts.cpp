@@ -1537,17 +1537,11 @@ void ShellBase::restart_sdk_begin_(
     // Forget the open-tab layout entirely: clear it locally now, and Phase B
     // pushes an empty im.gnomos.tesseract account-data event (while sync is
     // still live) so the resync can't bring the tabs back.
-    // Only the layout (and the recent-rooms history) is forgotten — bridge
-    // overrides, the emoji skin tone
-    // and any keys this build doesn't write are carried over.
-    auto empty_layout_data = tesseract::Prefs::room_layout(std::string{}, {});
-    if (active_account_)
-    {
-        empty_layout_data.bridge_not_bridged_overrides =
-            active_account_->bridge_not_bridged_overrides;
-        empty_layout_data.emoji_skin_tone =
-            tesseract::emoji::skin_tone_key(active_account_->emoji_skin_tone);
-    }
+    // Only the layout (and the recent-rooms history) is forgotten — every
+    // other synced preference (carried_prefs_()) and any keys this build
+    // doesn't write are carried over.
+    const auto empty_layout_data =
+        tesseract::Prefs::without_layout(carried_prefs_());
     const std::string empty_layout = tesseract::Prefs::serialize(
         empty_layout_data, active_account_ ? active_account_->prefs_json : std::string{});
     current_room_id_.clear();

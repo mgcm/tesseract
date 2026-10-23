@@ -838,6 +838,19 @@ void ShellBase::start_room_subscription_(const std::string&       room_id,
 //    definitively times out) before shutdown proceeds — closing the gap
 //    where save_prefs's untracked spawned task could lose a race against
 //    process exit and silently drop the last-open-room save.
+tesseract::PrefsData ShellBase::carried_prefs_() const
+{
+    tesseract::PrefsData p;
+    if (!active_account_)
+        return p;
+    p.bridge_not_bridged_overrides = active_account_->bridge_not_bridged_overrides;
+    p.emoji_skin_tone =
+        tesseract::emoji::skin_tone_key(active_account_->emoji_skin_tone);
+    p.directory_servers = active_account_->directory_servers;
+    p.pinned_spaces     = active_account_->pinned_spaces;
+    return p;
+}
+
 void ShellBase::persist_room_layout_pref_(bool blocking)
 {
     if (blocking)
@@ -869,19 +882,15 @@ void ShellBase::persist_room_layout_pref_(bool blocking)
         for (const auto& t : tabs_)
             open.push_back(t.room_id);
     }
-    auto prefs_data = tesseract::Prefs::room_layout(last_room, open);
-    // room_layout() only fills in the tab-layout fields; carry the bridge
-    // overrides through unchanged so a tab switch doesn't wipe them.
+    // Everything that isn't the layout is carried through unchanged so a tab
+    // switch doesn't wipe it.
     settle_emoji_skin_tone_();
+    auto prefs_data = carried_prefs_();
+    const auto layout = tesseract::Prefs::room_layout(last_room, open);
+    prefs_data.last_room  = layout.last_room;
+    prefs_data.open_rooms = layout.open_rooms;
     if (active_account_)
-    {
-        prefs_data.bridge_not_bridged_overrides = active_account_->bridge_not_bridged_overrides;
-        prefs_data.emoji_skin_tone =
-            tesseract::emoji::skin_tone_key(active_account_->emoji_skin_tone);
         active_account_->recent_rooms = recent_room_ids_;
-        prefs_data.directory_servers = active_account_->directory_servers;
-        prefs_data.pinned_spaces = active_account_->pinned_spaces;
-    }
     prefs_data.recent_rooms = recent_room_ids_;
     // Overlay onto the last known event so keys this build doesn't write
     // survive.

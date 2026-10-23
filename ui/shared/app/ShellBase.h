@@ -7,6 +7,7 @@
 #include <tesseract/launch_args.h>
 #include <tesseract/paths.h>
 #include <tesseract/power_monitor.h>
+#include <tesseract/prefs.h>
 #include <tesseract/screen_lock.h>
 #include <tesseract/secret_store.h>
 #include <tesseract/settings.h>
@@ -464,6 +465,12 @@ protected:
     // Persist the current room-layout prefs (active room + open tabs) for the
     // logged-in account.
     void persist_room_layout_pref_(bool blocking = false);
+    // Every synced preference of the active account that is NOT the room
+    // layout (bridge overrides, skin tone, browsed servers, pinned spaces).
+    // The one place that decides what survives a prefs rewrite: Prefs::serialize
+    // deletes the key of any empty field, so a rewrite that forgets one erases
+    // it from the account data. Add new synced fields here.
+    tesseract::PrefsData carried_prefs_() const;
 
     // Room browser's server picker: pushes the active account's saved servers
     // (plus its homeserver and the built-in defaults) into the Browse view,

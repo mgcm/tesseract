@@ -220,3 +220,28 @@ TEST_CASE("Prefs without pinned_spaces parses empty and serialize drops the key"
     auto json = serialize(p, R"({"pinned_spaces":["!a:x"]})");
     CHECK(json.find("pinned_spaces") == std::string::npos);
 }
+
+TEST_CASE("Prefs without_layout forgets the layout and keeps everything else")
+{
+    PrefsData p;
+    p.last_room = "!r:x";
+    p.open_rooms = {"!r:x", "!s:x"};
+    p.recent_rooms = {"!s:x"};
+    p.pinned_spaces = {"!sp:x"};
+    p.directory_servers = {"example.org"};
+    p.bridge_not_bridged_overrides = {"!b:x"};
+    p.emoji_skin_tone = "medium";
+
+    const PrefsData out = tesseract::Prefs::without_layout(p);
+    CHECK(out.last_room.empty());
+    CHECK(out.open_rooms.empty());
+    CHECK(out.recent_rooms.empty());
+    CHECK(out.pinned_spaces == std::vector<std::string>{"!sp:x"});
+    CHECK(out.directory_servers == std::vector<std::string>{"example.org"});
+    CHECK(out.bridge_not_bridged_overrides == std::vector<std::string>{"!b:x"});
+    CHECK(out.emoji_skin_tone == "medium");
+
+    const auto json = serialize(out, R"({"future_key":1,"pinned_spaces":["!old:x"]})");
+    CHECK(parse(json).pinned_spaces == std::vector<std::string>{"!sp:x"});
+    CHECK(json.find("future_key") != std::string::npos);
+}

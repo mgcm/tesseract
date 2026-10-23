@@ -102,6 +102,7 @@ struct TabShell : tesseract::test::TestShellBase
     using ShellBase::pending_restore_rooms_;
     using ShellBase::handle_account_prefs_updated_ui_;
     using ShellBase::persist_room_layout_pref_;
+    using ShellBase::carried_prefs_;
     using ShellBase::recent_room_ids_;
     using ShellBase::refresh_window_title_;
     using ShellBase::room_nav_history_;
@@ -666,4 +667,40 @@ TEST_CASE("tab operations also reset the thread panel through the main pane",
     CHECK(s.current_room_id_.empty());
     CHECK(s.try_restore_tab_session_({"!a", "!b"}, "!b"));
     CHECK(s.main_room_pane_->room_id() == "!b");
+}
+
+TEST_CASE("a layout save and a cleared layout both keep the non-layout synced prefs",
+          "[shell][tabs][persist]")
+{
+    tesseract::Client client;
+    TabShell s;
+    s.client_ = &client;
+    s.active_account_ = std::make_shared<tesseract::AccountSession>();
+    s.active_account_->pinned_spaces = {"!sp1", "!sp2"};
+    s.active_account_->directory_servers = {"example.org"};
+    s.active_account_->bridge_not_bridged_overrides = {"!bridged"};
+    s.active_account_->prefs_json = R"({"future_key":42})";
+    s.tab_select_room("!a");
+    s.recent_room_ids_ = {"!a"};
+
+    // Tab switch: the layout is rewritten, everything else survives.
+    s.persist_room_layout_pref_(false);
+    auto saved = tesseract::Prefs::parse(s.active_account_->prefs_json);
+    CHECK(saved.pinned_spaces == TabIds{"!sp1", "!sp2"});
+    CHECK(saved.directory_servers == TabIds{"example.org"});
+    CHECK(saved.bridge_not_bridged_overrides == TabIds{"!bridged"});
+    CHECK(saved.open_rooms == TabIds{"!a"});
+    CHECK(s.active_account_->prefs_json.find("future_key") != std::string::npos);
+
+    // Clear Cache: only the layout is forgotten (this is exactly what the
+    // clear-cache path pushes before wiping the store).
+    const auto cleared = tesseract::Prefs::parse(tesseract::Prefs::serialize(
+        tesseract::Prefs::without_layout(s.carried_prefs_()),
+        s.active_account_->prefs_json));
+    CHECK(cleared.pinned_spaces == TabIds{"!sp1", "!sp2"});
+    CHECK(cleared.directory_servers == TabIds{"example.org"});
+    CHECK(cleared.bridge_not_bridged_overrides == TabIds{"!bridged"});
+    CHECK(cleared.open_rooms.empty());
+    CHECK(cleared.recent_rooms.empty());
+    CHECK(cleared.last_room.empty());
 }

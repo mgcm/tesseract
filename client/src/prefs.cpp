@@ -24,6 +24,14 @@ PrefsData room_layout(const std::string&              last_room,
     return p;
 }
 
+PrefsData without_layout(PrefsData p)
+{
+    p.last_room.clear();
+    p.open_rooms.clear();
+    p.recent_rooms.clear();
+    return p;
+}
+
 PrefsData parse(const std::string& json_str)
 {
     PrefsData p;

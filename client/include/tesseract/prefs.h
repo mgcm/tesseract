@@ -57,6 +57,11 @@ std::string serialize(const PrefsData& p, const std::string& base_json = {});
 PrefsData room_layout(const std::string&              last_room,
                       const std::vector<std::string>& open_room_ids);
 
+/// `p` with the room-layout fields forgotten (active room, open tabs, recent
+/// rooms); every other field is kept. Used when the layout is reset but the
+/// account's other synced preferences must survive (Clear Cache).
+PrefsData without_layout(PrefsData p);
+
 /// Returns `saved` with `server` moved (or added) to the front, matched
 /// case-insensitively, trimmed to `kMaxDirectoryServers`. An empty `server`
 /// leaves the list unchanged.
