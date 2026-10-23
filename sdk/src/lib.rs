@@ -393,6 +393,8 @@ pub mod ffi {
         pub entries: Vec<ServerListEntryFfi>,
         pub ok: bool,
         pub from_cache: bool,
+        pub source_name: String,
+        pub source_url: String,
     }
 
     #[derive(Debug, PartialEq, Default)]

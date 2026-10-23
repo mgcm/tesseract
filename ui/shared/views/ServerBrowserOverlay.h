@@ -53,6 +53,8 @@ public:
     State state() const { return state_; }
     // Replaces the offered servers, in display order, and switches to Ready.
     void set_servers(std::vector<Entry> servers);
+    // Names the list's provider in the footer link; an empty url hides it.
+    void set_source(const std::string& name, const std::string& url);
 
     // Public servers first, then the rest; each group shuffled with `rng` so
     // no server always lands on top.
@@ -112,11 +114,13 @@ private:
     std::vector<Entry> servers_;
     std::string query_;
     bool open_registration_only_ = false;
+    std::string source_url_;
 
     tk::TextField*  search_field_ = nullptr; // owned via add_child (null without a Host)
     tk::CheckButton* open_only_check_ = nullptr;
     tk::ScrollView* scroll_ = nullptr;
     tk::Button*     close_btn_ = nullptr;
+    tk::Button*     source_link_ = nullptr;
 
     tk::Rect backdrop_rect_{};
     tk::Rect card_rect_{};

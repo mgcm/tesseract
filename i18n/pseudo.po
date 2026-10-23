@@ -7252,6 +7252,10 @@ msgid "Open registration only"
 msgstr "[Öpéñ régïstràtïöñ öñlyxxxx]"
 
 #: ui/shared/views/ServerBrowserOverlay.cpp
+msgid "Server list from {0}"
+msgstr "[Sérvér lïst fröm {0}xxxx]"
+
+#: ui/shared/views/ServerBrowserOverlay.cpp
 msgid "Rules"
 msgstr "[Rùlésx]"
 

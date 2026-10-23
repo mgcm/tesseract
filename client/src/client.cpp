@@ -1743,11 +1743,12 @@ Client::UpdateResult Client::check_for_update(const std::string& repo,
 Client::ServerList Client::load_server_list()
 {
     SH_FFI;
-    const auto cache = (tesseract::cache_dir() / "server_list.json").string();
-    auto r = impl_->ffi->load_server_list(cache);
+    auto r = impl_->ffi->load_server_list(tesseract::cache_dir().string());
     ServerList out;
     out.ok = r.ok;
     out.from_cache = r.from_cache;
+    out.source_name = std::string(r.source_name);
+    out.source_url = std::string(r.source_url);
     out.entries.reserve(r.entries.size());
     for (const auto& e : r.entries)
     {

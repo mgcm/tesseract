@@ -1,17 +1,59 @@
-/// Community homeserver list (servers.joinmatrix.org) for the login view's
-/// server browser.
+/// Homeserver lists for the login view's server browser.
 ///
-/// The list is fetched over HTTPS, parsed defensively (every field optional),
-/// and cached on disk so the browser still works offline. Only servers that
-/// advertise sliding sync are kept, since Tesseract can't sync without it.
+/// A `ServerListProvider` knows where one list lives and how to parse it;
+/// everything else (HTTPS fetch with a size cap, disk cache, stale fallback)
+/// is shared. `JoinMatrix` (servers.joinmatrix.org) is the only provider so
+/// far; add another by implementing the trait and returning it from
+/// `default_provider()`. Parsing is defensive (every field optional) and only
+/// servers that advertise sliding sync are kept, since Tesseract can't sync
+/// without it.
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
 use serde::Deserialize;
 
-const LIST_URL: &str = "https://servers.joinmatrix.org/servers.json";
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 const CACHE_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// One source of homeserver suggestions.
+trait ServerListProvider: Sync {
+    /// Name shown to the user ("Server list from {name}").
+    fn display_name(&self) -> &'static str;
+    /// `https://` page for the list's own site, opened from the browser.
+    fn homepage(&self) -> &'static str;
+    /// `https://` URL the list is fetched from.
+    fn list_url(&self) -> &'static str;
+    /// File name for the on-disk cache, inside the cache directory.
+    fn cache_file_name(&self) -> &'static str;
+    /// Turns a fetched body into entries; garbage yields an empty list.
+    fn parse(&self, body: &str) -> Vec<crate::ffi::ServerListEntryFfi>;
+}
+
+/// The community list at servers.joinmatrix.org.
+struct JoinMatrix;
+
+impl ServerListProvider for JoinMatrix {
+    fn display_name(&self) -> &'static str {
+        "servers.joinmatrix.org"
+    }
+    fn homepage(&self) -> &'static str {
+        "https://servers.joinmatrix.org/"
+    }
+    fn list_url(&self) -> &'static str {
+        "https://servers.joinmatrix.org/servers.json"
+    }
+    fn cache_file_name(&self) -> &'static str {
+        "server_list.json"
+    }
+    fn parse(&self, body: &str) -> Vec<crate::ffi::ServerListEntryFfi> {
+        parse_server_list(body)
+    }
+}
+
+/// The provider the login view uses.
+fn default_provider() -> &'static dyn ServerListProvider {
+    &JoinMatrix
+}
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
@@ -94,9 +136,9 @@ pub fn parse_server_list(json: &str) -> Vec<crate::ffi::ServerListEntryFfi> {
     public.chain(private).collect()
 }
 
-async fn fetch_server_list(http: &reqwest::Client, version: &str) -> Option<String> {
+async fn fetch_server_list(http: &reqwest::Client, url: &str, version: &str) -> Option<String> {
     let response = http
-        .get(LIST_URL)
+        .get(url)
         .header("User-Agent", format!("Tesseract/{}", version))
         .timeout(Duration::from_secs(10))
         .send()
@@ -137,32 +179,49 @@ fn write_cache(path: &Path, body: &str) {
 
 #[cfg(not(test))]
 impl super::ClientFfi {
-    pub fn load_server_list(&self, cache_path: &str) -> crate::ffi::ServerListFfi {
-        let path = Path::new(cache_path);
-        let cached = read_cache(path);
+    pub fn load_server_list(&self, cache_dir: &str) -> crate::ffi::ServerListFfi {
+        let provider = default_provider();
+        let path = Path::new(cache_dir).join(provider.cache_file_name());
+        let result = |entries, from_cache| crate::ffi::ServerListFfi {
+            entries,
+            ok: true,
+            from_cache,
+            source_name: provider.display_name().to_owned(),
+            source_url: provider.homepage().to_owned(),
+        };
+        let cached = read_cache(&path);
         if let Some((body, true)) = &cached {
-            let entries = parse_server_list(body);
+            let entries = provider.parse(body);
             if !entries.is_empty() {
-                return crate::ffi::ServerListFfi { entries, ok: true, from_cache: true };
+                return result(entries, true);
             }
         }
         let http = self.http_client.clone();
         let version = env!("CARGO_PKG_VERSION");
-        if let Some(body) = self.rt.block_on(fetch_server_list(&http, version)) {
-            let entries = parse_server_list(&body);
+        if let Some(body) = self
+            .rt
+            .block_on(fetch_server_list(&http, provider.list_url(), version))
+        {
+            let entries = provider.parse(&body);
             if !entries.is_empty() {
-                write_cache(path, &body);
-                return crate::ffi::ServerListFfi { entries, ok: true, from_cache: false };
+                write_cache(&path, &body);
+                return result(entries, false);
             }
         }
         // Fetch failed: a stale cache beats nothing.
         if let Some((body, _)) = cached {
-            let entries = parse_server_list(&body);
+            let entries = provider.parse(&body);
             if !entries.is_empty() {
-                return crate::ffi::ServerListFfi { entries, ok: true, from_cache: true };
+                return result(entries, true);
             }
         }
-        crate::ffi::ServerListFfi { entries: Vec::new(), ok: false, from_cache: false }
+        crate::ffi::ServerListFfi {
+            entries: Vec::new(),
+            ok: false,
+            from_cache: false,
+            source_name: String::new(),
+            source_url: String::new(),
+        }
     }
 }
 
@@ -221,6 +280,16 @@ mod tests {
         assert!(parse_server_list("not json").is_empty());
         assert!(parse_server_list("[]").is_empty());
         assert!(parse_server_list("{}").is_empty());
+    }
+
+    #[test]
+    fn default_provider_metadata_is_sane() {
+        let p = default_provider();
+        assert!(p.homepage().starts_with("https://"));
+        assert!(p.list_url().starts_with("https://"));
+        assert!(!p.display_name().is_empty());
+        assert!(p.cache_file_name().ends_with(".json"));
+        assert_eq!(p.parse(SAMPLE).len(), 2);
     }
 
     #[test]

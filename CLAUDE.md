@@ -39,7 +39,7 @@ ui/
                   items built by media_viewer_items), ShortcodePopup;
                   SettingsView (preferences: `binder.bind(control, &Settings::field, SettingKey::X)` in
                   the section; a `case` in ShellBase::handle_setting_changed_ only if it has a
-                  side effect beyond saving), JoinRoomView, UserInfo; ServerBrowserOverlay (login view's "Find a server" list, fed by `Client::load_server_list`);
+                  side effect beyond saving), JoinRoomView, UserInfo; ServerBrowserOverlay (login view's "Find a server" list, fed by `Client::load_server_list`, which goes through the Rust `ServerListProvider` trait);
                   shortcut_registry (every keyboard shortcut, one table) +
                   KeyboardShortcutsOverlay (Ctrl+/ / F1 list built from it);
                   EncryptionSetupOverlay (the one encryption dialog: recovery-key

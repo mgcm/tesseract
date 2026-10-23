@@ -93,6 +93,16 @@ ServerBrowserOverlay::ServerBrowserOverlay()
             h->mark_needs_relayout();
     };
 
+    source_link_ = add_child(tk::create_widget<tk::Button>(
+        this, std::string{},
+        [this]
+        {
+            if (on_open_url && !source_url_.empty())
+                on_open_url(source_url_);
+        },
+        tk::Button::Variant::Link));
+    source_link_->set_visible(false);
+
     close_btn_ = add_child(tk::create_widget<tk::Button>(
         this, tk::tr("Close"), [this] { close(); }, tk::Button::Variant::Primary));
 
@@ -121,6 +131,15 @@ void ServerBrowserOverlay::set_servers(std::vector<Entry> servers)
     servers_ = std::move(servers);
     state_ = State::Ready;
     rebuild_();
+}
+
+void ServerBrowserOverlay::set_source(const std::string& name, const std::string& url)
+{
+    source_url_ = url;
+    source_link_->set_label(tk::trf(tk::tr("Server list from {0}"), {name}));
+    source_link_->set_visible(!url.empty() && !name.empty());
+    if (auto* h = host())
+        h->mark_needs_relayout();
 }
 
 std::vector<Entry> ServerBrowserOverlay::arrange_for_display(std::vector<Entry> servers,
@@ -389,6 +408,11 @@ void ServerBrowserOverlay::arrange(tk::LayoutCtx& lc, tk::Rect bounds)
     const tk::Size btn_sz = close_btn_->measure(lc, {-1.0f, kBtnH});
     const float btn_w = std::max(btn_sz.w, 88.0f);
     close_btn_->arrange(lc, {card_rect_.x + card_rect_.w - kCardPad - btn_w, btn_y, btn_w, kBtnH});
+
+    // Where the list comes from, bottom-left, vertically centred on the button.
+    const float src_w = std::max(0.0f, inner_w - btn_w - kGap);
+    const tk::Size src_sz = source_link_->measure(lc, {-1.0f, kBtnH});
+    source_link_->arrange(lc, {x, btn_y, std::min(src_sz.w, src_w), kBtnH});
 }
 
 // ── paint ─────────────────────────────────────────────────────────────────

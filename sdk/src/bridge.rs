@@ -844,6 +844,9 @@ pub mod ffi {
         entries: Vec<ServerListEntryFfi>,
         ok: bool,
         from_cache: bool,
+        /// Provider's display name and `https://` page; empty when `!ok`.
+        source_name: String,
+        source_url: String,
     }
 
     /// Outcome of a back-pagination or forward-pagination call.
@@ -3666,7 +3669,7 @@ pub mod ffi {
         /// `cache_path` if under 24 h old, else a fresh fetch (written back to
         /// the cache), else a stale cache. Blocks the calling thread (call from
         /// a worker, never from the UI thread).
-        fn load_server_list(self: &ClientFfi, cache_path: &str) -> ServerListFfi;
+        fn load_server_list(self: &ClientFfi, cache_dir: &str) -> ServerListFfi;
 
         /// Check the AUR RPC API for a newer version of `pkgname` than
         /// `current_version`. Blocks the calling thread (call from a worker,

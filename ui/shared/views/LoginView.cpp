@@ -459,6 +459,7 @@ void LoginView::apply_server_list_(const tesseract::Client::ServerList& list)
         server_browser_->set_state(ServerBrowserOverlay::State::Failed);
         return;
     }
+    server_browser_->set_source(list.source_name, list.source_url);
     auto entries = list.entries;
     // matrix.org isn't on the community list; offer it as one choice among many.
     ServerBrowserOverlay::Entry mx;

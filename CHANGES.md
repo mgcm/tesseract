@@ -5,6 +5,7 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- feat(ui): the "Find a server" browser names where its list comes from, with a footer link to the provider's site; fetching, caching and parsing now sit behind a `ServerListProvider` trait in `sdk/src/client/server_list.rs` (servers.joinmatrix.org is the only implementation). Linux release build, cargo 1 new test, user-verified
 - fix(ui): the login view ignored the dark theme: it is created lazily and never received the current theme, and its `set_theme` skipped the root widget's `apply_theme`. Fixed in all four shells; `tk::TextField`/`TextArea` also take their text colour from the theme now. Linux release build (Qt6 + GTK4)
 - fix(ui): joining a room found by `#alias:server` in the Join a Room dialog now routes through the alias's server; the join used the resolved room id, whose own server part may be missing (room v12). Linux release build, 1 new ctest case
 - fix(ui): a scroll gesture keeps the wheel with the view that took it, so a combobox or inner list sliding under a stationary pointer no longer grabs the rest of the gesture (or changes its value); it ends after 400 ms without wheel events and no momentum, or when the pointer moves. A click during a coast only stops it. Shared in `tk::Host`, all backends. Linux release build, 3491 test cases pass, user-verified Qt6

@@ -1333,9 +1333,11 @@ public:
         std::vector<ServerListEntry> entries;
         bool ok = false;         ///< false: no fetch and no usable cache
         bool from_cache = false;
+        std::string source_name; ///< provider shown to the user; empty unless ok
+        std::string source_url;  ///< provider's https:// page
     };
 
-    /// Load the community homeserver list: disk cache if under 24 h old, else a
+    /// Load the homeserver list from the current provider: disk cache if under 24 h old, else a
     /// fresh fetch, else a stale cache. Blocks the calling thread — call from a
     /// worker pool thread, never the UI thread.
     ServerList load_server_list();
