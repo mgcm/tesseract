@@ -79,6 +79,16 @@ public:
     {
         return sign_in_btn_ && sign_in_btn_->visible();
     }
+    // Whether the sign-in button and "Create an account" link accept clicks
+    // (they don't while the server's sign-in methods are being worked out).
+    bool sign_in_enabled() const
+    {
+        return sign_in_btn_ && sign_in_btn_->enabled();
+    }
+    bool register_enabled() const
+    {
+        return register_link_ && register_link_->enabled();
+    }
 
     /// The corner settings button (reaches Network settings before any
     /// account exists). Shown only on the first-login form.
@@ -332,6 +342,11 @@ private:
     // probe_oauth_support_'s outcome (or its absence): records it, updates
     // the form and runs a remembered Enter.
     void oauth_probe_done_result_(bool supported);
+    // The sign-in, "Create an account" and password-form controls are inert
+    // while the server's sign-in methods are still being worked out (the same
+    // Wait state that makes Enter defer): until then the default offered
+    // method may be the wrong one.
+    void update_method_controls_enabled_();
     // The homeserver lookup finished: record what the server offers and run
     // a remembered Enter if nothing else is outstanding.
     void apply_discovery_result_(bool ok, const std::string& base_url_or_error,

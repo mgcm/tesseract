@@ -176,6 +176,24 @@ TEST_CASE("LoginView remembers Enter pressed while the server is being checked",
     CHECK_FALSE(lv.homeserver_submit_pending());
 }
 
+TEST_CASE("LoginView sign-in controls are inert until the server's methods are known",
+          "[tk][view][login][discovery]")
+{
+    StubHost host;
+    auto lv_owner = tk::create_root_widget<LoginView>(&host);
+    LoginView& lv = *lv_owner;
+    lv.set_relayout([] {});
+    lv.finish_init(); // discovery starts (Discovering)
+
+    CHECK_FALSE(lv.sign_in_enabled());
+    CHECK_FALSE(lv.register_enabled());
+
+    // The lookup answers (no client here, so no OAuth probe is left to wait for).
+    lv.simulate_discovery_result(true, "https://example.org", false);
+    CHECK(lv.sign_in_enabled());
+    CHECK(lv.register_enabled());
+}
+
 TEST_CASE("LoginView keeps waiting until the server's sign-in methods are known",
           "[tk][view][login][discovery]")
 {

@@ -708,6 +708,19 @@ void LoginView::sign_in_()
     start_oauth_(false);
 }
 
+void LoginView::update_method_controls_enabled_()
+{
+    const bool ready = homeserver_submit_action() != SubmitAction::Wait;
+    if (sign_in_btn_)
+        sign_in_btn_->set_enabled(ready);
+    if (register_link_)
+        register_link_->set_enabled(ready);
+#ifdef TESSERACT_LEGACY_LOGIN_ENABLED
+    if (password_toggle_btn_)
+        password_toggle_btn_->set_enabled(ready);
+#endif
+}
+
 LoginView::SubmitAction LoginView::homeserver_submit_action() const
 {
     // Still checking what the server offers (its sign-in methods and OAuth
@@ -780,6 +793,7 @@ void LoginView::apply_discovery_result_(bool ok, const std::string& base_url_or_
     (void)supports_password;
 #endif
     discovery_settled_ = true;
+    update_method_controls_enabled_();
     relayout_();
     // A Failed check settles it; a Resolved one still waits for the OAuth
     // probe (which runs it when it answers).
@@ -790,6 +804,7 @@ void LoginView::oauth_probe_done_result_(bool supported)
 {
     oauth_probe_done_ = true;
     update_oauth_availability_(supported);
+    update_method_controls_enabled_();
     if (relayout_)
         relayout_();
     run_pending_submit_();
@@ -885,6 +900,7 @@ void LoginView::hs_changed_(const std::string& text)
 #ifdef TESSERACT_LEGACY_LOGIN_ENABLED
     update_password_availability_(false); // unknown while still probing — stay hidden
 #endif
+    update_method_controls_enabled_();
     relayout_();
 
     auto* snap = client_;

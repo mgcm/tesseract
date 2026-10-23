@@ -5,6 +5,7 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- fix(ui): the login view's Sign in button, "Create an account" link and password toggle are disabled while the server's sign-in methods are still being checked (the same wait Enter already honours), so a click can't start the wrong flow. Linux release build, 40 login ctest cases pass, 1 new, user-verified
 - feat(ui): the server browser shows cards in two columns when wide, highlights the card under the pointer and picks a server on a click anywhere on it (the "Use this server" button is gone), and shows each server's favicon (fetched from its own site when the browser opens, stored in the media disk cache). Linux release build, 84 related ctest cases, 2 new cargo tests, user-verified
 - feat(build): `TESSERACT_ENABLE_SERVER_BROWSER` (default `ON`) compiles the server browser and its community list in or out, with a matching `server_browser` Cargo feature. Linux release build with the flag on and off
 - feat(ui): pin a space from its room-list context menu to give it an avatar tab in a new column left of the room list (Home tab, drag to reorder, aggregated unread); pins sync as `pinned_spaces` in the `im.gnomos.tesseract` account data. Linux release build, ctest 3513/3513
