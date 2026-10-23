@@ -2768,9 +2768,12 @@ bool RoomListView::on_right_click(tk::Point local)
     if (!room_context_menu_)
         return false;
 
-    const auto* room = room_at_(local);
-    if (!room)
+    const auto* row = room_row_at_(local);
+    if (!row)
         return false;
+    if (row->is_space)
+        return open_space_context_menu_(*row, local);
+    const auto* room = row;
     const std::string room_id = room->id;
 
     const bool in_tab =
@@ -2836,6 +2839,43 @@ bool RoomListView::on_right_click(tk::Point local)
     // give the anchor a width of exactly PopupMenu::kWidth starting at the
     // click point — that puts the anchor's right edge (and thus the menu's
     // left edge) at the cursor, opening the menu to the right of it.
+    const tk::Rect anchor_world{bounds_.x + local.x, bounds_.y + local.y,
+                                PopupMenu::kWidth, 0.0f};
+    room_context_menu_->open(std::move(items), anchor_world);
+    return true;
+}
+
+bool RoomListView::open_space_context_menu_(const tesseract::RoomInfo& space,
+                                            tk::Point local)
+{
+    const std::string space_id = space.id;
+    std::vector<PopupMenu::Item> items;
+
+    PopupMenu::Item pin;
+    pin.svg_icon    = kPinSvg;
+    pin.label       = tk::tr("Pin to sidebar");
+    pin.on_selected = [this, space_id]
+    {
+        if (on_pin_space_requested)
+            on_pin_space_requested(space_id);
+    };
+    items.push_back(std::move(pin));
+
+    PopupMenu::Item sep;
+    sep.is_separator = true;
+    items.push_back(std::move(sep));
+
+    PopupMenu::Item leave;
+    leave.svg_icon    = kLeaveRoomSvg;
+    leave.label       = tk::tr("Leave space");
+    leave.destructive = true;
+    leave.on_selected = [this, space_id]
+    {
+        if (on_leave_room_requested)
+            on_leave_room_requested(space_id);
+    };
+    items.push_back(std::move(leave));
+
     const tk::Rect anchor_world{bounds_.x + local.x, bounds_.y + local.y,
                                 PopupMenu::kWidth, 0.0f};
     room_context_menu_->open(std::move(items), anchor_world);

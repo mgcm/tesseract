@@ -277,6 +277,9 @@ public:
     std::function<void(const std::string& /*room_id*/)> on_open_in_window_requested;
     std::function<void(const std::string& /*room_id*/)> on_leave_room_requested;
     std::function<void(const std::string& /*room_id*/)> on_mark_read_requested;
+    // Fired by a space row's "Pin to sidebar" item (spaces get their own,
+    // shorter menu: pin + leave).
+    std::function<void(const std::string& /*space_id*/)> on_pin_space_requested;
 
     // Test helpers.
     int  unjoined_room_count() const;
@@ -480,6 +483,7 @@ private:
     // the icon-only hover flyout); room_at_ filters them out (selection /
     // context menu are for joined rooms only).
     const tesseract::RoomInfo* room_row_at_(tk::Point local) const;
+    bool open_space_context_menu_(const tesseract::RoomInfo& space, tk::Point local);
     const tesseract::RoomInfo* room_at_(tk::Point local) const;
 };
 

@@ -184,8 +184,11 @@ ShellBase::finish_restore_accounts_ui_(RestoreIOResult&& io)
         session->bridge_not_bridged_overrides = std::move(acc.bridge_not_bridged_overrides);
         session->emoji_skin_tone = acc.emoji_skin_tone;
         session->prefs_json = std::move(acc.prefs_json);
-        session->directory_servers =
-            tesseract::Prefs::parse(session->prefs_json).directory_servers;
+        {
+            const auto parsed = tesseract::Prefs::parse(session->prefs_json);
+            session->directory_servers = parsed.directory_servers;
+            session->pinned_spaces     = parsed.pinned_spaces;
+        }
 
         // Bridge already built + sync already started on the worker thread
         // in restore_all_accounts_blocking_(), which also already applied the
@@ -393,6 +396,7 @@ ShellBase::FinalizeLoginIO ShellBase::finalize_login_blocking_(
         session->open_rooms = prefs.open_rooms;
         session->recent_rooms = prefs.recent_rooms;
         session->directory_servers = prefs.directory_servers;
+        session->pinned_spaces = prefs.pinned_spaces;
         session->bridge_not_bridged_overrides = prefs.bridge_not_bridged_overrides;
         session->emoji_skin_tone = tesseract::emoji::skin_tone_from_key(prefs.emoji_skin_tone);
     }
@@ -740,11 +744,7 @@ bool ShellBase::switch_active_account_impl_(const std::string& user_id)
         main_room_pane_->clear_compose_drafts_();
     space_stack_.clear();
     space_nav_frames_.clear();
-    ++unjoined_fetch_gen_;
-    unjoined_fetch_pending_.clear();
-    pending_summaries_.clear();
-    unjoined_fetch_retry_.clear();
-    active_space_id_.clear();
+    reset_unjoined_fetch_state_();
     // Rooms kept open by the outgoing account's pop-outs stay subscribed, so
     // their scroll-back state stays valid: park it under that account.
     if (active_account_)
@@ -1269,11 +1269,7 @@ ShellBase::LogoutResult ShellBase::logout_active_account_impl_()
     // refresh_account_ui_after_switch_, the empty branch via the login view).
     space_stack_.clear();
     space_nav_frames_.clear();
-    ++unjoined_fetch_gen_;
-    unjoined_fetch_pending_.clear();
-    pending_summaries_.clear();
-    unjoined_fetch_retry_.clear();
-    active_space_id_.clear();
+    reset_unjoined_fetch_state_();
     my_user_id_.clear();
     my_display_name_.clear();
     my_avatar_url_.clear();
@@ -1576,11 +1572,7 @@ void ShellBase::restart_sdk_begin_(
         main_room_pane_->clear_compose_drafts_();
     space_stack_.clear();
     space_nav_frames_.clear();
-    ++unjoined_fetch_gen_;
-    unjoined_fetch_pending_.clear();
-    pending_summaries_.clear();
-    unjoined_fetch_retry_.clear();
-    active_space_id_.clear();
+    reset_unjoined_fetch_state_();
     pagination_.clear();
     other_account_pagination_.clear(); // every pop-out was closed above
     visited_lru_.clear();

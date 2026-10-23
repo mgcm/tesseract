@@ -35,10 +35,7 @@ void ShellBase::wire_main_app_widget_(views::MainAppWidget* app)
     }
     app->on_space_header = [this]
     {
-        if (!space_stack_.empty())
-            show_space_root_(space_stack_.back());
-        else if (!current_room_id_.empty())
-            show_space_root_(current_room_id_);
+        show_space_root_(effective_space_id_());
     };
     if (auto* sr = app->space_root())
     {
@@ -94,16 +91,28 @@ void ShellBase::wire_main_app_widget_(views::MainAppWidget* app)
     app->room_list_view()->on_unjoined_room_summary_needed =
         [this](const std::string& room_id)
         {
-            if (active_space_id_.empty() ||
-                unjoined_fetch_pending_.count(room_id))
-                return;
-            auto retry_it = unjoined_fetch_retry_.find(room_id);
-            if (retry_it != unjoined_fetch_retry_.end() &&
-                std::chrono::steady_clock::now() < retry_it->second.next_retry)
-                return;
-            unjoined_fetch_pending_.insert(room_id);
-            fetch_single_room_summary_(active_space_id_, room_id);
+            // The unjoined section only exists while the sidebar is drilled
+            // into a space.
+            if (!space_stack_.empty())
+                request_summary_fetch_(space_stack_.back(), room_id);
         };
+
+    app->room_list_view()->on_pin_space_requested =
+        [this](const std::string& id) { pin_space_(id); };
+    if (auto* picker = app->space_picker())
+    {
+        picker->on_select = [this](const std::string& id)
+        { select_picker_space_(id); };
+        picker->on_home  = [this] { select_picker_home_(); };
+        picker->on_unpin = [this](const std::string& id) { unpin_space_(id); };
+        picker->on_reorder = [this](const std::string& id, const std::string& before)
+        { reorder_pinned_space_(id, before); };
+        picker->on_avatar_needed = [this](const std::string& id)
+        {
+            if (const auto* r = room_by_id_(id))
+                ensure_room_avatar_(*r);
+        };
+    }
 
     register_search_backend_();
 

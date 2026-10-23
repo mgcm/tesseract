@@ -7318,3 +7318,19 @@ msgstr "[Thïs rööm ïs çöññéçtéd tö àñöthér çhàt àpp. Yöùr m
 #: ui/shared/views/RoomHeader.cpp
 msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
 msgstr "[Thïs rööm ïs çöññéçtéd tö {0}. Yöùr méssàgés àré séñt théré töö, àñd {0}'s öwñ rùlés àpply, ñöt jùst Màtrïx's.xxxxxxxxxxxxxxxxxxxxxx]"
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Pin to sidebar"
+msgstr "[Pïñ tö sïdébàrxx]"
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Unpin from sidebar"
+msgstr "[Ùñpïñ fröm sïdébàrxxx]"
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Leave space"
+msgstr "[Léàvé spàçéxx]"
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Home (all rooms)"
+msgstr "[Hömé (àll rööms)xxx]"

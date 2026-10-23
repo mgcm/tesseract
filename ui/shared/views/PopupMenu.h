@@ -20,8 +20,14 @@ namespace tesseract::views
 // stays mounted in its owner's tree only to hold state and register itself
 // as the host's active popup (Host::register_popup(), giving it
 // click-anywhere-dismiss input priority via the owner's on_popup_dismiss());
-// it is never itself painted or hit-tested — all drawing/row hit-testing
+// it draws nothing and is never hit-tested — all drawing/row hit-testing
 // happens in the popup surface's own separate widget tree.
+//
+// CONTRACT: that registration happens inside PopupMenu::paint(), so the owner
+// (and every ancestor up to the root) must actually paint its children each
+// frame the menu is open. An owner that overrides paint() must call
+// paint_children(), or override paint_before_children()/paint_after_children()
+// instead; otherwise the menu opens but click-outside/Escape never dismiss it.
 //
 // Anchor rect passed to open() must be in WORLD coordinates (this widget's
 // own local coordinate space, since anchors are always computed by the

@@ -563,21 +563,19 @@ void ShellBase::leave_room_command_(const std::string& room_id,
 // wasn't actually the current stack top / active room.
 void ShellBase::leave_space_navigate_back_(const std::string& space_id)
 {
+    // A space we left can't stay pinned (its tab would be dead).
+    if (active_account_ && is_space_pinned_(space_id))
+    {
+        auto& pins = active_account_->pinned_spaces;
+        pins.erase(std::remove(pins.begin(), pins.end(), space_id), pins.end());
+        schedule_account_data_save_();
+    }
     if (!space_stack_.empty() && space_stack_.back() == space_id)
         space_stack_.pop_back();
     if (main_app_)
-    {
         main_app_->hide_room_preview();
-        main_app_->hide_space_root();
-    }
-    space_root_shown_id_.clear();
-    refresh_room_list_();
-    if (!space_nav_frames_.empty())
-    {
-        if (main_app_ && main_app_->room_list_view())
-            space_nav_frames_.back().restore(main_app_->room_list_view());
-        space_nav_frames_.pop_back();
-    }
+    hide_space_root_();
+    finish_space_pop_();
     if (current_room_id_ == space_id)
     {
         current_room_id_.clear();
@@ -611,11 +609,21 @@ void ShellBase::space_back_command_()
     }
     else
     {
-        if (main_app_)
-            main_app_->hide_space_root();
-        space_root_shown_id_.clear();
+        hide_space_root_();
     }
 
+    finish_space_pop_();
+}
+
+void ShellBase::hide_space_root_()
+{
+    if (main_app_)
+        main_app_->hide_space_root();
+    space_root_shown_id_.clear();
+}
+
+void ShellBase::finish_space_pop_()
+{
     refresh_room_list_();
     if (!space_nav_frames_.empty())
     {
@@ -1130,6 +1138,8 @@ void ShellBase::refresh_room_list_()
     if (!rlv)
         return;
 
+    refresh_space_picker_();
+
     if (is_room_search_active_())
     {
         main_app_->set_space_nav(false);
@@ -1151,37 +1161,52 @@ void ShellBase::refresh_room_list_()
             rooms_, space_children_cache_, group_unread);
 
         apply_space_child_counts_(filtered);
+        hide_pinned_spaces_(filtered);
 
         main_app_->set_space_nav(false);
         main_app_->room_list_view()->clear_space_unjoined_rooms();
-        cancel_unjoined_summaries_();
+        cancel_unjoined_summaries_(space_root_shown_id_);
 
         rlv->set_rooms(filtered);
     }
     else
     {
         const std::string& space_id = space_stack_.back();
+        // Drop fetches for spaces nothing is showing any more, but spare the
+        // one the space-root panel may be showing independently.
+        cancel_unjoined_summaries_(space_id, space_root_shown_id_);
         static const std::vector<std::string> kNoChildren;
         const auto sc_it = space_children_cache_.find(space_id);
         const auto& child_ids =
             sc_it != space_children_cache_.end() ? sc_it->second : kNoChildren;
 
+        const std::unordered_set<std::string> child_set(child_ids.begin(),
+                                                        child_ids.end());
         std::vector<tesseract::RoomInfo> filtered;
         filtered.reserve(child_ids.size());
         for (const auto& r : rooms_)
         {
-            if (std::find(child_ids.begin(), child_ids.end(), r.id) !=
-                child_ids.end())
+            if (child_set.count(r.id))
                 filtered.push_back(r);
         }
+        hide_pinned_spaces_(filtered);
 
-        for (const auto& r : rooms_)
+        // A pinned space entered from the picker is named by its tab, so the
+        // header (name + back button) only appears one level further down.
+        if (space_stack_.size() == 1 && is_space_pinned_(space_id))
         {
-            if (r.id == space_id)
+            main_app_->set_space_nav(false);
+        }
+        else
+        {
+            for (const auto& r : rooms_)
             {
-                ensure_room_avatar_(r);
-                main_app_->set_space_nav(true, r.name, r.avatar_url);
-                break;
+                if (r.id == space_id)
+                {
+                    ensure_room_avatar_(r);
+                    main_app_->set_space_nav(true, r.name, r.avatar_url);
+                    break;
+                }
             }
         }
         const auto& unjoined = get_cached_unjoined_summaries_(space_id);

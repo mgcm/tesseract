@@ -493,9 +493,14 @@ void Host::paint_drag_overlay(PaintCtx& ctx, Rect /*surface_bounds*/)
         return;
     const DragVisual& visual = active_drag_->visual;
     Point cursor = active_drag_->cursor_world;
+    // Image::width()/height() are device pixels (the visual is rendered at the
+    // surface's scale factor, see CanvasFactory::create_offscreen), while
+    // `dst` and the hotspot are logical: divide the scale back out, or the
+    // ghost is drawn scale-times too big on a HiDPI display.
+    const float scale = ctx.canvas.scale_factor() > 0.0f ? ctx.canvas.scale_factor() : 1.0f;
     Rect dst{cursor.x - visual.hotspot.x, cursor.y - visual.hotspot.y,
-              static_cast<float>(visual.image->width()),
-              static_cast<float>(visual.image->height())};
+              static_cast<float>(visual.image->width()) / scale,
+              static_cast<float>(visual.image->height()) / scale};
     OpacityScope fade(ctx.canvas, visual.opacity);
     ctx.canvas.draw_image(*visual.image, dst);
 }

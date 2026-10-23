@@ -5,6 +5,9 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- feat(ui): pin a space from its room-list context menu to give it an avatar tab in a new column left of the room list (Home tab, drag to reorder, aggregated unread); pins sync as `pinned_spaces` in the `im.gnomos.tesseract` account data. Linux release build, ctest 3513/3513
+- fix(ui): in-app drag ghosts were drawn scale-times too big on HiDPI (the image's device-pixel size was used as a logical size). Linux release build, ctest 3513/3513
+- chore(ui): unjoined-space summary fetches are owned per space, so the room list and the space-root panel no longer cancel each other's and retry backoff survives space switches. Linux release build, ctest 3513/3513
 - feat(ui): a bridged room shows its network logo (or a cable glyph) before the room title in the header, with a tooltip saying the room is connected to that network and its rules apply; hidden when the room is marked as not bridged. Built and tested by the user; 1 new test case
 - feat(ui): the "Find a server" browser names where its list comes from, with a footer link to the provider's site; fetching, caching and parsing now sit behind a `ServerListProvider` trait in `sdk/src/client/server_list.rs` (servers.joinmatrix.org is the only implementation). Linux release build, cargo 1 new test, user-verified
 - fix(ui): the login view ignored the dark theme: it is created lazily and never received the current theme, and its `set_theme` skipped the root widget's `apply_theme`. Fixed in all four shells; `tk::TextField`/`TextArea` also take their text colour from the theme now. Linux release build (Qt6 + GTK4)

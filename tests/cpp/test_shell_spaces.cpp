@@ -52,7 +52,6 @@ struct SpacesShell : tesseract::test::TestShellBase
     void on_space_children_cache_ready_ui_() override { ++cache_ready; }
 
     using ShellBase::active_account_;
-    using ShellBase::active_space_id_;
     using ShellBase::apply_space_child_counts_;
     using ShellBase::cancel_unjoined_summaries_;
     using ShellBase::client_;
@@ -70,13 +69,29 @@ struct SpacesShell : tesseract::test::TestShellBase
     using ShellBase::server_info_;
     using ShellBase::space_children_cache_;
     using ShellBase::space_root_shown_id_;
-    using ShellBase::unjoined_fetch_gen_;
-    using ShellBase::unjoined_fetch_pending_;
+    using ShellBase::unjoined_fetch_;
+    using ShellBase::unjoined_fetch_gen_counter_;
+    using ShellBase::fetch_gen_current_;
+    using ShellBase::reset_unjoined_fetch_state_;
+    using ShellBase::request_summary_fetch_;
     using ShellBase::unjoined_fetch_retry_;
     using ShellBase::unjoined_space_children_cache_;
     using ShellBase::unjoined_summaries_cache_;
     using ShellBase::update_space_children_cache_;
     using ShellBase::show_space_root_;
+    using ShellBase::space_stack_;
+    using ShellBase::space_nav_frames_;
+    using ShellBase::is_space_pinned_;
+    using ShellBase::pin_space_;
+    using ShellBase::unpin_space_;
+    using ShellBase::sidebar_shows_space_;
+    using ShellBase::push_unjoined_to_sidebar_;
+    using ShellBase::reorder_pinned_space_;
+    using ShellBase::select_picker_space_;
+    using ShellBase::select_picker_home_;
+    using ShellBase::refresh_space_picker_;
+    using ShellBase::hide_pinned_spaces_;
+    using ShellBase::refresh_room_list_;
     using ShellBase::mark_room_index_dirty_;
 };
 
@@ -178,23 +193,32 @@ TEST_CASE("apply_space_child_counts_ is a no-op without a cache",
     CHECK(display[0].notification_count == 9);
 }
 
-TEST_CASE("cancel_unjoined_summaries_ resets all in-flight state",
+TEST_CASE("cancel_unjoined_summaries_ drops in-flight state except kept spaces",
           "[shell][spaces]")
 {
     tesseract::Client client;
     SpacesShell s;
     s.client_ = &client;
-    s.active_space_id_ = "!space";
-    s.unjoined_fetch_pending_.insert("!x");
-    s.pending_summaries_[1] = {"!space", "!x", 0};
+    s.get_cached_unjoined_summaries_("!one");
+    s.get_cached_unjoined_summaries_("!two");
+    s.get_cached_unjoined_summaries_("!three");
+    s.unjoined_fetch_["!one"].pending.insert("!x");
+    s.pending_summaries_[1] = {"!one", "!x", s.unjoined_fetch_["!one"].gen};
+    s.pending_summaries_[2] = {"!two", "!y", s.unjoined_fetch_["!two"].gen};
     s.unjoined_fetch_retry_["!x"].attempts = 3;
-    const auto gen = s.unjoined_fetch_gen_;
+
+    s.cancel_unjoined_summaries_("!two", "");
+    CHECK(s.unjoined_fetch_.count("!two") == 1);
+    CHECK(s.unjoined_fetch_.count("!one") == 0);
+    CHECK(s.unjoined_fetch_.count("!three") == 0);
+    CHECK(s.pending_summaries_.count(1) == 0);
+    CHECK(s.pending_summaries_.count(2) == 1);
+    // Backoff is per room and outlives a cancel.
+    CHECK(s.unjoined_fetch_retry_["!x"].attempts == 3);
+
     s.cancel_unjoined_summaries_();
-    CHECK(s.unjoined_fetch_gen_ == gen + 1);
-    CHECK(s.unjoined_fetch_pending_.empty());
+    CHECK(s.unjoined_fetch_.empty());
     CHECK(s.pending_summaries_.empty());
-    CHECK(s.unjoined_fetch_retry_.empty());
-    CHECK(s.active_space_id_.empty());
 }
 
 TEST_CASE("entering a space kicks off summary fetches for unloaded children once",
@@ -209,27 +233,31 @@ TEST_CASE("entering a space kicks off summary fetches for unloaded children once
 
     const auto& summaries = s.get_cached_unjoined_summaries_("!space");
     CHECK(summaries.empty());
-    CHECK(s.active_space_id_ == "!space");
+    REQUIRE(s.unjoined_fetch_.count("!space") == 1);
+    CHECK(s.unjoined_fetch_["!space"].gen != 0);
     // No usable account client: both fetch slots are released again rather
     // than left pending forever.
-    CHECK(s.unjoined_fetch_pending_.empty());
+    CHECK(s.unjoined_fetch_["!space"].pending.empty());
 }
 
-TEST_CASE("switching spaces bumps the fetch generation and drops stale state",
+TEST_CASE("looking up one space leaves another space's fetch state alone",
           "[shell][spaces]")
 {
     tesseract::Client client;
     SpacesShell s;
     s.client_ = &client;
     s.get_cached_unjoined_summaries_("!one");
-    const auto gen = s.unjoined_fetch_gen_;
-    s.unjoined_fetch_pending_.insert("!stale");
-    s.get_cached_unjoined_summaries_("!one"); // same space: untouched
-    CHECK(s.unjoined_fetch_gen_ == gen);
-    CHECK(s.unjoined_fetch_pending_.count("!stale") == 1);
+    const auto gen_one = s.unjoined_fetch_["!one"].gen;
+    s.unjoined_fetch_["!one"].pending.insert("!inflight");
+    s.unjoined_fetch_retry_["!inflight"].attempts = 2;
+
     s.get_cached_unjoined_summaries_("!two");
-    CHECK(s.unjoined_fetch_gen_ == gen + 1);
-    CHECK(s.unjoined_fetch_pending_.empty());
+    s.get_cached_unjoined_summaries_("!one"); // same space again: untouched
+
+    CHECK(s.unjoined_fetch_["!one"].gen == gen_one);
+    CHECK(s.unjoined_fetch_["!one"].pending.count("!inflight") == 1);
+    CHECK(s.unjoined_fetch_["!two"].gen != gen_one);
+    CHECK(s.unjoined_fetch_retry_["!inflight"].attempts == 2);
 }
 
 TEST_CASE("nameless summary stubs are pruned from the cache", "[shell][spaces]")
@@ -250,15 +278,17 @@ TEST_CASE("a fetched summary is cached and replaces an older copy",
           "[shell][spaces]")
 {
     SpacesShell s;
-    s.pending_summaries_[7] = {"!space", "!c", s.unjoined_fetch_gen_};
-    s.unjoined_fetch_pending_.insert("!c");
+    auto& fetch = s.unjoined_fetch_["!space"];
+    fetch.gen = ++s.unjoined_fetch_gen_counter_;
+    s.pending_summaries_[7] = {"!space", "!c", fetch.gen};
+    fetch.pending.insert("!c");
     s.handle_space_child_summary_ready_ui_(
         7, R"({"room_id":"!c","name":"First"})");
-    CHECK(s.unjoined_fetch_pending_.empty());
+    CHECK(s.unjoined_fetch_["!space"].pending.empty());
     REQUIRE(s.unjoined_summaries_cache_["!space"].size() == 1);
     CHECK(s.unjoined_summaries_cache_["!space"][0].name == "First");
 
-    s.pending_summaries_[8] = {"!space", "!c", s.unjoined_fetch_gen_};
+    s.pending_summaries_[8] = {"!space", "!c", s.unjoined_fetch_["!space"].gen};
     s.handle_space_child_summary_ready_ui_(
         8, R"({"room_id":"!c","name":"Second"})");
     REQUIRE(s.unjoined_summaries_cache_["!space"].size() == 1);
@@ -276,12 +306,14 @@ TEST_CASE("a summary from a superseded generation frees its slot but is dropped"
           "[shell][spaces]")
 {
     SpacesShell s;
-    s.pending_summaries_[7] = {"!space", "!c", s.unjoined_fetch_gen_};
-    s.unjoined_fetch_pending_.insert("!c");
-    ++s.unjoined_fetch_gen_;
+    auto& fetch = s.unjoined_fetch_["!space"];
+    fetch.gen = ++s.unjoined_fetch_gen_counter_;
+    s.pending_summaries_[7] = {"!space", "!c", fetch.gen};
+    fetch.pending.insert("!c");
+    fetch.gen = ++s.unjoined_fetch_gen_counter_; // superseded
     s.handle_space_child_summary_ready_ui_(
         7, R"({"room_id":"!c","name":"Late"})");
-    CHECK(s.unjoined_fetch_pending_.empty());
+    CHECK(s.unjoined_fetch_["!space"].pending.empty());
     CHECK(s.unjoined_summaries_cache_.empty());
 }
 
@@ -290,9 +322,11 @@ TEST_CASE("failed summary fetches back off exponentially up to a cap",
 {
     SpacesShell s;
     using namespace std::chrono;
+    const auto gen = (s.unjoined_fetch_["!space"].gen =
+                          ++s.unjoined_fetch_gen_counter_);
     for (int attempt = 1; attempt <= 3; ++attempt)
     {
-        s.pending_summaries_[attempt] = {"!space", "!c", s.unjoined_fetch_gen_};
+        s.pending_summaries_[attempt] = {"!space", "!c", gen};
         const auto before = steady_clock::now();
         s.handle_space_child_summary_ready_ui_(attempt, "");
         const auto& rs = s.unjoined_fetch_retry_["!c"];
@@ -303,7 +337,7 @@ TEST_CASE("failed summary fetches back off exponentially up to a cap",
     }
     // Far-out attempts are capped at five minutes.
     s.unjoined_fetch_retry_["!c"].attempts = 20;
-    s.pending_summaries_[99] = {"!space", "!c", s.unjoined_fetch_gen_};
+    s.pending_summaries_[99] = {"!space", "!c", gen};
     const auto before = steady_clock::now();
     s.handle_space_child_summary_ready_ui_(99, "");
     CHECK(s.unjoined_fetch_retry_["!c"].next_retry <=
@@ -354,10 +388,10 @@ TEST_CASE("the space children cache is cleared when there is nothing to track",
     tesseract::Client client;
     SpacesShell s;
     s.space_children_cache_["!space"] = {"!a"};
-    s.unjoined_fetch_pending_.insert("!x");
+    s.unjoined_fetch_["!space"].pending.insert("!x");
     s.update_space_children_cache_(); // no client
     CHECK(s.space_children_cache_.empty());
-    CHECK(s.unjoined_fetch_pending_.empty());
+    CHECK(s.unjoined_fetch_.empty());
 
     s.client_ = &client;
     s.space_children_cache_["!space"] = {"!a"};
@@ -400,4 +434,161 @@ TEST_CASE("space root view shows for a known space only", "[shell][spaces]")
 
     s.show_space_root_("!space");
     CHECK(s.space_root_shown_id_ == "!space");
+}
+
+namespace
+{
+struct PinFixture
+{
+    tesseract::Client client;
+    SpacesShell s;
+    std::unique_ptr<TestSurface> surface = TestSurface::create(1000, 700);
+    std::unique_ptr<tesseract::views::MainAppWidget> app =
+        tk::create_root_widget<tesseract::views::MainAppWidget>(nullptr);
+
+    PinFixture()
+    {
+        s.client_ = &client;
+        s.active_account_ = space_account(&client);
+        s.main_app_ = app.get();
+        s.rooms_ = {space_room("!sp", true), space_room("!other", true),
+                    space_room("!child")};
+        s.space_children_cache_["!sp"] = {"!child"};
+        s.mark_room_index_dirty_();
+    }
+};
+} // namespace
+
+TEST_CASE("pinning a space persists on the account and hides it from the list",
+          "[shell][spaces][pin]")
+{
+    PinFixture f;
+    CHECK_FALSE(f.s.is_space_pinned_("!sp"));
+    f.s.pin_space_("!sp");
+    f.s.pin_space_("!sp"); // idempotent
+    CHECK(f.s.is_space_pinned_("!sp"));
+    CHECK(f.s.active_account_->pinned_spaces == std::vector<std::string>{"!sp"});
+
+    std::vector<tesseract::RoomInfo> list = f.s.rooms_;
+    f.s.hide_pinned_spaces_(list);
+    CHECK(std::none_of(list.begin(), list.end(),
+                       [](const auto& r) { return r.id == "!sp"; }));
+    CHECK(std::any_of(list.begin(), list.end(),
+                      [](const auto& r) { return r.id == "!other"; }));
+}
+
+TEST_CASE("the picker shows pinned spaces only while something is pinned",
+          "[shell][spaces][pin]")
+{
+    PinFixture f;
+    f.s.refresh_space_picker_();
+    CHECK(f.app->space_picker()->entries().empty());
+
+    f.s.pin_space_("!sp");
+    REQUIRE(f.app->space_picker()->entries().size() == 1);
+    CHECK(f.app->space_picker()->entries()[0].space_id == "!sp");
+
+    f.s.unpin_space_("!sp");
+    CHECK(f.app->space_picker()->entries().empty());
+    CHECK(f.s.active_account_->pinned_spaces.empty());
+}
+
+TEST_CASE("picker selection drills into a space and Home returns to the root",
+          "[shell][spaces][pin]")
+{
+    PinFixture f;
+    f.s.pin_space_("!sp");
+
+    f.s.select_picker_space_("!sp");
+    CHECK(f.s.space_stack_ == std::vector<std::string>{"!sp"});
+    CHECK(f.app->space_picker()->active_space() == "!sp");
+
+    f.s.select_picker_home_();
+    CHECK(f.s.space_stack_.empty());
+    CHECK(f.app->space_picker()->active_space().empty());
+}
+
+TEST_CASE("re-selecting the active picker tab opens that space's root panel",
+          "[shell][spaces][pin]")
+{
+    PinFixture f;
+    f.s.pin_space_("!sp");
+    f.s.select_picker_space_("!sp");
+    CHECK(f.s.space_root_shown_id_.empty());
+    f.s.select_picker_space_("!sp");
+    CHECK(f.s.space_root_shown_id_ == "!sp");
+    CHECK(f.s.space_stack_.size() == 1);
+}
+
+TEST_CASE("unpinning the space the sidebar is inside steps out to Home",
+          "[shell][spaces][pin]")
+{
+    PinFixture f;
+    f.s.pin_space_("!sp");
+    f.s.select_picker_space_("!sp");
+    f.s.unpin_space_("!sp");
+    CHECK(f.s.space_stack_.empty());
+}
+
+TEST_CASE("selecting an unknown space from the picker is ignored",
+          "[shell][spaces][pin]")
+{
+    PinFixture f;
+    f.s.select_picker_space_("!nope");
+    CHECK(f.s.space_stack_.empty());
+}
+
+TEST_CASE("reordering pinned spaces moves the id and keeps the picker in step",
+          "[shell][spaces][pin]")
+{
+    PinFixture f;
+    f.s.rooms_.push_back(space_room("!third", true));
+    f.s.mark_room_index_dirty_();
+    f.s.pin_space_("!sp");
+    f.s.pin_space_("!other");
+    f.s.pin_space_("!third");
+
+    f.s.reorder_pinned_space_("!third", "!sp"); // to the front
+    CHECK(f.s.active_account_->pinned_spaces ==
+          std::vector<std::string>{"!third", "!sp", "!other"});
+    REQUIRE(f.app->space_picker()->entries().size() == 3);
+    CHECK(f.app->space_picker()->entries()[0].space_id == "!third");
+
+    f.s.reorder_pinned_space_("!third", ""); // to the end
+    CHECK(f.s.active_account_->pinned_spaces ==
+          std::vector<std::string>{"!sp", "!other", "!third"});
+
+    f.s.reorder_pinned_space_("!nope", "!sp"); // unknown: ignored
+    CHECK(f.s.active_account_->pinned_spaces.size() == 3);
+}
+
+TEST_CASE("an unjoined-room summary only reaches the sidebar section for the space it is in",
+          "[shell][spaces]")
+{
+    PinFixture f;
+    auto* rl = f.app->room_list_view();
+    auto summary_json = [](const char* id)
+    { return std::string(R"({"room_id":")") + id + R"(","name":"N"})"; };
+    auto arrive = [&](std::uint64_t req, const char* space, const char* room)
+    {
+        auto& fetch = f.s.unjoined_fetch_[space];
+        fetch.gen = ++f.s.unjoined_fetch_gen_counter_;
+        f.s.pending_summaries_[req] = {space, room, fetch.gen};
+        f.s.handle_space_child_summary_ready_ui_(req, summary_json(room));
+    };
+
+    // Space-root panel shows !other while the sidebar is at the root list.
+    f.s.space_stack_.clear();
+    arrive(1, "!other", "!x");
+    CHECK(rl->unjoined_room_count() == 0);
+
+    // Sidebar drilled into !sp: a result for !other still stays out.
+    f.s.space_stack_ = {"!sp"};
+    arrive(2, "!other", "!y");
+    CHECK(rl->unjoined_room_count() == 0);
+    CHECK(f.s.unjoined_summaries_cache_["!other"].size() == 2); // still cached
+
+    // A result for the space the sidebar is in does show up.
+    arrive(3, "!sp", "!z");
+    CHECK(rl->unjoined_room_count() == 1);
 }

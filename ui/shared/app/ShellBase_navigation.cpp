@@ -880,6 +880,7 @@ void ShellBase::persist_room_layout_pref_(bool blocking)
             tesseract::emoji::skin_tone_key(active_account_->emoji_skin_tone);
         active_account_->recent_rooms = recent_room_ids_;
         prefs_data.directory_servers = active_account_->directory_servers;
+        prefs_data.pinned_spaces = active_account_->pinned_spaces;
     }
     prefs_data.recent_rooms = recent_room_ids_;
     // Overlay onto the last known event so keys this build doesn't write

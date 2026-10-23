@@ -103,7 +103,7 @@ struct WiringShell : tesseract::test::TestShellBase
     using ShellBase::wire_settings_view_;
     using ShellBase::wire_voice_capture_;
     using ShellBase::capture_;
-    using ShellBase::unjoined_fetch_pending_;
+    using ShellBase::unjoined_fetch_;
     using ShellBase::pending_forwards_;
     using ShellBase::current_room_id_;
 };
@@ -340,9 +340,9 @@ TEST_CASE("wiring: unjoined-space summary request is deduplicated",
     WiringFixture f;
     auto& rl = *f.app->room_list_view();
     REQUIRE(rl.on_unjoined_room_summary_needed != nullptr);
-    // No active space: nothing is queued.
+    // Not drilled into a space: nothing is queued.
     rl.on_unjoined_room_summary_needed("!child:x");
-    CHECK(f.s.unjoined_fetch_pending_.empty());
+    CHECK(f.s.unjoined_fetch_.empty());
 }
 
 TEST_CASE("wiring: add-room dialog opens from the room list plus button",

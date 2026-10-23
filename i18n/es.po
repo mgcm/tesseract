@@ -7007,3 +7007,19 @@ msgstr "Esta sala está conectada con otra aplicación de chat. Tus mensajes tam
 #: ui/shared/views/RoomHeader.cpp
 msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
 msgstr "Esta sala está conectada con {0}. Tus mensajes también se envían allí, y se aplican las reglas propias de {0}, no solo las de Matrix."
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Pin to sidebar"
+msgstr "Fijar en la barra lateral"
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Unpin from sidebar"
+msgstr "Desfijar de la barra lateral"
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Leave space"
+msgstr "Salir del espacio"
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Home (all rooms)"
+msgstr "Inicio (todas las salas)"

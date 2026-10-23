@@ -32,7 +32,8 @@ ui/
     views/     ← MainAppWidget (root widget tree); LoginView, BrandView;
                   RoomListView, RoomView, MessageListView, ComposeBar;
                   ThreadView, ThreadListView (right-side panel inside RoomView);
-                  EmojiPicker, StickerPicker, AccountPicker;
+                  EmojiPicker, StickerPicker, AccountPicker,
+                  SpacePickerView (pinned-space avatar tabs left of the room list);
                   MediaViewerOverlay (the one lightbox; ImageViewerPage /
                   VideoViewerPage / AudioViewerPage / FileViewerPage are its
                   per-kind page strategies, video+audio share MediaTransportBar,

@@ -6909,3 +6909,19 @@ msgstr "Ce salon est connecté à une autre application de discussion. Vos messa
 #: ui/shared/views/RoomHeader.cpp
 msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
 msgstr "Ce salon est connecté à {0}. Vos messages y sont aussi envoyés, et les règles propres à {0} s’appliquent, pas seulement celles de Matrix."
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Pin to sidebar"
+msgstr "Épingler à la barre latérale"
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Unpin from sidebar"
+msgstr "Détacher de la barre latérale"
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Leave space"
+msgstr "Quitter l'espace"
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Home (all rooms)"
+msgstr "Accueil (tous les salons)"

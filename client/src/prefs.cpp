@@ -36,6 +36,7 @@ PrefsData parse(const std::string& json_str)
         p.emoji_skin_tone = j.value("emoji_skin_tone", std::string{});
         p.recent_rooms = j.value("recent_rooms", std::vector<std::string>{});
         p.directory_servers = j.value("directory_servers", std::vector<std::string>{});
+        p.pinned_spaces = j.value("pinned_spaces", std::vector<std::string>{});
         if (p.directory_servers.size() > kMaxDirectoryServers)
             p.directory_servers.resize(kMaxDirectoryServers);
     }
@@ -75,6 +76,10 @@ std::string serialize(const PrefsData& p, const std::string& base_json)
         j.erase("directory_servers");
     else
         j["directory_servers"] = p.directory_servers;
+    if (p.pinned_spaces.empty())
+        j.erase("pinned_spaces");
+    else
+        j["pinned_spaces"] = p.pinned_spaces;
     return j.dump();
 }
 

@@ -5268,3 +5268,19 @@ msgstr "Dette rommet er koblet til en annen chat-app. Meldingene dine sendes ogs
 #: ui/shared/views/RoomHeader.cpp
 msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
 msgstr "Dette rommet er koblet til {0}. Meldingene dine sendes også dit, og {0} sine egne regler gjelder, ikke bare Matrix sine."
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Pin to sidebar"
+msgstr "Fest i sidestolpen"
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Unpin from sidebar"
+msgstr "Løsne fra sidestolpen"
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Leave space"
+msgstr "Forlat området"
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Home (all rooms)"
+msgstr "Hjem (alle rom)"

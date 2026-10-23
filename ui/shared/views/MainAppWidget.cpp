@@ -4,6 +4,7 @@
 #include "media_utils.h"
 #include "shortcut_registry.h"
 #include "sidebar_metrics.h"
+#include "SpacePickerView.h"
 #include "tk/access_tree.h"
 #include "tk/i18n.h"
 #include "tk/keyboard_target.h"
@@ -523,6 +524,10 @@ public:
 
     explicit RootLayoutWidget(tk::Host* host)
     {
+        auto picker = std::make_unique<SpacePickerView>();
+        picker_ = add_child(std::move(picker));
+        picker_->set_visible(false);
+
         auto sidebar = std::make_unique<SidebarWidget>(host);
         sidebar_ = add_child(std::move(sidebar));
 
@@ -567,6 +572,17 @@ public:
 
     SidebarWidget* sidebar() const { return sidebar_; }
     ChatPanelWidget* chat_panel() const { return chat_panel_; }
+    SpacePickerView* space_picker() const { return picker_; }
+
+    // The picker only exists while at least one space is pinned, and only in
+    // the two-pane layout (the narrow layout shows a single full-width pane).
+    void set_picker_shown(bool shown)
+    {
+        if (picker_shown_ == shown) return;
+        picker_shown_ = shown;
+        if (host()) host()->mark_needs_relayout();
+    }
+    bool picker_shown() const { return picker_shown_; }
 
     Pane active_pane() const { return active_pane_; }
     // Requests its own relayout on an actual change — a custom enum-based
@@ -637,7 +653,8 @@ public:
             if (sidebar_ && sidebar_->room_list_view())
                 longest = sidebar_->room_list_view()->longest_visible_row_width(
                     ctx.factory, ctx.theme);
-            max_sidebar_w_ = sidebar_max_width(bounds.w, longest);
+            const float picker_w = picker_w_();
+            max_sidebar_w_ = sidebar_max_width(bounds.w - picker_w, longest);
             const bool shrank = last_root_w_ > 0.0f && bounds.w < last_root_w_;
             last_root_w_ = bounds.w;
             if (shrank)
@@ -647,18 +664,26 @@ public:
 
             apply_icon_only_();
             const float eff_w = collapsed_ ? collapsed_w_ : sidebar_w_;
+            const float pw    = picker_w_();
 
+            if (picker_)
+            {
+                picker_->set_visible(pw > 0.0f);
+                picker_->arrange(ctx, pw > 0.0f
+                                          ? tk::Rect{bounds.x, bounds.y, pw, bounds.h}
+                                          : tk::Rect{});
+            }
             if (sidebar_)
             {
                 sidebar_->set_visible(true);
-                sidebar_->arrange(ctx, {bounds.x, bounds.y, eff_w, bounds.h});
+                sidebar_->arrange(ctx, {bounds.x + pw, bounds.y, eff_w, bounds.h});
             }
             if (chat_panel_)
             {
-                const float chat_x = bounds.x + eff_w + kSepW;
+                const float chat_x = bounds.x + pw + eff_w + kSepW;
                 chat_panel_->set_visible(true);
                 chat_panel_->arrange(
-                    ctx, {chat_x, bounds.y, bounds.w - eff_w - kSepW, bounds.h});
+                    ctx, {chat_x, bounds.y, bounds.w - pw - eff_w - kSepW, bounds.h});
             }
             if (grip_target_)
             {
@@ -669,6 +694,11 @@ public:
         }
         if (grip_target_)
             grip_target_->arrange(ctx, {}); // no separator in narrow mode
+        if (picker_)
+        {
+            picker_->set_visible(false);
+            picker_->arrange(ctx, {});
+        }
 
         // Narrow: only the active pane is shown, full width. Icon-only mode is
         // dropped here (it's a single full-width pane). Both children still get
@@ -824,11 +854,23 @@ private:
         return collapsed_ ? collapsed_w_ : sidebar_w_;
     }
 
+    // Width the picker column takes to the left of the room list.
+    float picker_w_() const
+    {
+        return picker_shown_ && !is_narrow_ ? SpacePickerView::kWidth : 0.0f;
+    }
+
+    // x of the room-list / chat separator.
+    float separator_x_() const
+    {
+        return bounds_.x + picker_w_() + eff_sidebar_w_();
+    }
+
     bool over_handle_band_(tk::Point world) const
     {
         if (world.y < bounds_.y || world.y >= bounds_.y + bounds_.h)
             return false;
-        const float sx = bounds_.x + eff_sidebar_w_();
+        const float sx = separator_x_();
         return std::abs(world.x - sx) <= kHandleHalfW;
     }
 
@@ -837,7 +879,7 @@ private:
     // panel but clear of the composer bar in the pane to its right.
     tk::Rect grip_rect_() const
     {
-        const float sx = bounds_.x + eff_sidebar_w_();
+        const float sx = separator_x_();
         const float cy = bounds_.y + bounds_.h - MainAppWidget::user_strip_height();
         return {sx - kGripR, cy - kGripR, kGripR * 2.0f, kGripR * 2.0f};
     }
@@ -864,7 +906,7 @@ private:
     void draw_separator_and_grip_(tk::PaintCtx& ctx)
     {
         const auto& pal = ctx.theme.palette;
-        const float sx = bounds_.x + eff_sidebar_w_();
+        const float sx = separator_x_();
         const tk::Rect g = grip_rect_();
         const float cy = g.y + g.h * 0.5f;
         // The separator line gets the accent tint while the bar is hovered
@@ -917,6 +959,8 @@ private:
     }
 
     SidebarWidget* sidebar_ = nullptr;
+    SpacePickerView* picker_ = nullptr;
+    bool picker_shown_ = false;
     ChatPanelWidget* chat_panel_ = nullptr;
     tk::KeyboardTarget* grip_target_ = nullptr;
     Pane active_pane_ = Pane::List;
@@ -1295,9 +1339,25 @@ void MainAppWidget::set_space_nav(bool show, std::string_view space_name,
     }
 }
 
+void MainAppWidget::set_space_picker_entries(std::vector<SpacePickerEntry> entries)
+{
+    if (!root_layout_ || !root_layout_->space_picker())
+        return;
+    const bool shown = !entries.empty();
+    root_layout_->space_picker()->set_entries(std::move(entries));
+    root_layout_->set_picker_shown(shown);
+}
+
+SpacePickerView* MainAppWidget::space_picker() const
+{
+    return root_layout_ ? root_layout_->space_picker() : nullptr;
+}
+
 void MainAppWidget::set_avatar_provider(
     std::function<const tk::Image*(const std::string& mxc_url)> provider)
 {
+    if (root_layout_ && root_layout_->space_picker())
+        root_layout_->space_picker()->set_image_provider(provider);
     if (sidebar_)
     {
         sidebar_->set_avatar_provider(provider);

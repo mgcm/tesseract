@@ -76,6 +76,11 @@ struct AccountSession
     /// account-data event. The room browser's server picker lists these.
     std::vector<std::string> directory_servers;
 
+    /// Space room IDs pinned to the space picker sidebar (tab order),
+    /// restored from the `im.gnomos.tesseract` account-data event. Pinned
+    /// spaces are hidden from the room list.
+    std::vector<std::string> pinned_spaces;
+
     /// Room IDs the user has locally marked "not actually bridged", restored
     /// from the `im.gnomos.tesseract` account-data event. Overrides
     /// `RoomInfo::is_bridged` for that room — see

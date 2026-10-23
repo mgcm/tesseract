@@ -7462,3 +7462,19 @@ msgstr ""
 #: ui/shared/views/settings/AppearanceSection.cpp
 msgid "{0}%"
 msgstr ""
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Pin to sidebar"
+msgstr ""
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Unpin from sidebar"
+msgstr ""
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Leave space"
+msgstr ""
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Home (all rooms)"
+msgstr ""

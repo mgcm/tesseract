@@ -13,7 +13,7 @@ void ShellBase::update_space_children_cache_()
         space_children_cache_.clear();
         unjoined_space_children_cache_.clear();
         unjoined_summaries_cache_.clear();
-        unjoined_fetch_pending_.clear();
+        unjoined_fetch_.clear();
         pending_summaries_.clear();
         return;
     }
@@ -30,7 +30,7 @@ void ShellBase::update_space_children_cache_()
         space_children_cache_.clear();
         unjoined_space_children_cache_.clear();
         unjoined_summaries_cache_.clear();
-        unjoined_fetch_pending_.clear();
+        unjoined_fetch_.clear();
         pending_summaries_.clear();
         return;
     }
@@ -163,7 +163,7 @@ void ShellBase::fetch_single_room_summary_(const std::string& space_id,
                                            const std::string& room_id)
 {
     auto sess = active_account_;
-    const std::uint64_t gen = unjoined_fetch_gen_;
+    const std::uint64_t gen = unjoined_fetch_[space_id].gen;
 
     // Phase 1: show SQLite-cached summary while the async network fetch is
     // in-flight. SQLite reads acquire ffi_mu, so they run on the I/O pool.
@@ -177,7 +177,7 @@ void ShellBase::fetch_single_room_summary_(const std::string& space_id,
                     [this, space_id, room_id, gen,
                      cached = std::move(*cached)]() mutable
                     {
-                        if (gen != unjoined_fetch_gen_) return;
+                        if (!fetch_gen_current_(space_id, gen)) return;
                         auto& summaries = unjoined_summaries_cache_[space_id];
                         bool found = false;
                         for (auto& entry : summaries)
@@ -191,10 +191,7 @@ void ShellBase::fetch_single_room_summary_(const std::string& space_id,
                         }
                         if (!found)
                             summaries.push_back(cached);
-                        if (main_app_)
-                            if (auto* rl = main_app_->room_list_view())
-                                rl->set_space_unjoined_rooms(
-                                    std::vector<tesseract::RoomSummary>(summaries));
+                        push_unjoined_to_sidebar_(space_id);
                         refresh_space_root_children_(space_id);
                         if (!cached.avatar_url.empty())
                             ensure_media_thumbnail_(cached.avatar_url, 64, 64, false);
@@ -207,7 +204,7 @@ void ShellBase::fetch_single_room_summary_(const std::string& space_id,
     // resolve it even if the tokio task fires before this function returns.
     if (!sess || !sess->client)
     {
-        unjoined_fetch_pending_.erase(room_id);
+        unjoined_fetch_[space_id].pending.erase(room_id);
         return;
     }
     const auto req_id = next_request_id_++;
@@ -225,9 +222,10 @@ void ShellBase::handle_space_child_summary_ready_ui_(std::uint64_t request_id,
     pending_summaries_.erase(it);
 
     // Always free the in-flight slot so the room can be retried on re-entry.
-    unjoined_fetch_pending_.erase(room_id);
+    if (auto st = unjoined_fetch_.find(space_id); st != unjoined_fetch_.end())
+        st->second.pending.erase(room_id);
 
-    if (gen != unjoined_fetch_gen_) return;
+    if (!fetch_gen_current_(space_id, gen)) return;
 
     auto summary = tesseract::RoomSummary::from_json(summary_json);
     auto sess    = active_account_;
@@ -276,11 +274,26 @@ void ShellBase::handle_space_child_summary_ready_ui_(std::uint64_t request_id,
             sess->client->note_room_summary_backoff_ok(room_id);
     });
 
-    if (main_app_)
-        if (auto* rl = main_app_->room_list_view())
-            rl->set_space_unjoined_rooms(
-                std::vector<tesseract::RoomSummary>(cached));
+    push_unjoined_to_sidebar_(space_id);
     refresh_space_root_children_(space_id);
+}
+
+bool ShellBase::sidebar_shows_space_(const std::string& space_id) const
+{
+    return !space_stack_.empty() && space_stack_.back() == space_id;
+}
+
+// The room list has a single "Available to join" section, owned by whichever
+// space the sidebar is drilled into. Summaries also arrive for the space the
+// space-root panel is showing (per-space fetches run independently), so a
+// result for any other space must stay in the cache only.
+void ShellBase::push_unjoined_to_sidebar_(const std::string& space_id)
+{
+    if (!main_app_ || !sidebar_shows_space_(space_id))
+        return;
+    if (auto* rl = main_app_->room_list_view())
+        rl->set_space_unjoined_rooms(std::vector<tesseract::RoomSummary>(
+            unjoined_summaries_cache_[space_id]));
 }
 
 void ShellBase::handle_server_info_async_ready_ui_(std::uint64_t /*request_id*/,
@@ -368,11 +381,11 @@ void ShellBase::refresh_space_root_children_(const std::string& space_id)
         // which would let a stale id space_children() still reports (e.g.
         // a room since left/abandoned, no longer in rooms_) leak through
         // as a blank placeholder entry.
-        const auto& child_ids = it->second;
+        const std::unordered_set<std::string> child_set(it->second.begin(),
+                                                        it->second.end());
         for (const auto& r : rooms_)
         {
-            if (std::find(child_ids.begin(), child_ids.end(), r.id) ==
-                child_ids.end())
+            if (!child_set.count(r.id))
                 continue;
             views::SpaceChildRoomGrid::ChildRoomEntry entry;
             entry.joined = true;
@@ -458,30 +471,68 @@ void ShellBase::request_remove_room_from_space_(const std::string& space_id,
     client_->remove_room_from_space_async(req_id, space_id, room_id);
 }
 
-void ShellBase::cancel_unjoined_summaries_()
+void ShellBase::cancel_unjoined_summaries_(const std::string& keep_a,
+                                           const std::string& keep_b)
 {
-    if (!active_space_id_.empty() && client_)
-        client_->cancel_space_summaries(active_space_id_);
-    ++unjoined_fetch_gen_;
-    unjoined_fetch_pending_.clear();
+    const auto kept = [&](const std::string& id)
+    { return !id.empty() && (id == keep_a || id == keep_b); };
+
+    for (auto it = unjoined_fetch_.begin(); it != unjoined_fetch_.end();)
+    {
+        if (kept(it->first))
+        {
+            ++it;
+            continue;
+        }
+        if (client_)
+            client_->cancel_space_summaries(it->first);
+        it = unjoined_fetch_.erase(it);
+    }
+    for (auto it = pending_summaries_.begin(); it != pending_summaries_.end();)
+    {
+        if (kept(it->second.space_id))
+            ++it;
+        else
+            it = pending_summaries_.erase(it);
+    }
+}
+
+void ShellBase::reset_unjoined_fetch_state_()
+{
+    unjoined_fetch_.clear();
     pending_summaries_.clear();
     unjoined_fetch_retry_.clear();
-    active_space_id_.clear();
+}
+
+bool ShellBase::fetch_gen_current_(const std::string& space_id,
+                                   std::uint64_t gen) const
+{
+    const auto it = unjoined_fetch_.find(space_id);
+    return it != unjoined_fetch_.end() && gen != 0 && it->second.gen == gen;
+}
+
+void ShellBase::request_summary_fetch_(const std::string& space_id,
+                                       const std::string& room_id)
+{
+    auto& st = unjoined_fetch_[space_id];
+    if (st.gen == 0)
+        st.gen = ++unjoined_fetch_gen_counter_;
+    if (st.pending.count(room_id))
+        return;
+    const auto retry_it = unjoined_fetch_retry_.find(room_id);
+    if (retry_it != unjoined_fetch_retry_.end() &&
+        std::chrono::steady_clock::now() < retry_it->second.next_retry)
+        return;
+    st.pending.insert(room_id);
+    fetch_single_room_summary_(space_id, room_id);
 }
 
 const std::vector<tesseract::RoomSummary>&
 ShellBase::get_cached_unjoined_summaries_(const std::string& space_id)
 {
-    if (active_space_id_ != space_id)
-    {
-        if (!active_space_id_.empty() && client_)
-            client_->cancel_space_summaries(active_space_id_);
-        active_space_id_ = space_id;
-        ++unjoined_fetch_gen_;
-        unjoined_fetch_pending_.clear();
-        pending_summaries_.clear();
-        unjoined_fetch_retry_.clear();
-    }
+    auto& fetch = unjoined_fetch_[space_id];
+    if (fetch.gen == 0)
+        fetch.gen = ++unjoined_fetch_gen_counter_;
 
     auto& summaries = unjoined_summaries_cache_[space_id];
 
@@ -501,21 +552,150 @@ ShellBase::get_cached_unjoined_summaries_(const std::string& space_id)
             loaded.insert(s.room_id);
 
         // Proactively kick off a fetch for every unloaded child.
-        // Rooms that are already in-flight or currently in backoff are skipped;
-        // they will be retried on the next space entry.
+        // Rooms that are already in-flight or currently in backoff are skipped
+        // (request_summary_fetch_); they will be retried on the next refresh.
         for (const auto& id : child_it->second)
         {
-            if (loaded.count(id) || unjoined_fetch_pending_.count(id))
-                continue;
-            auto retry_it = unjoined_fetch_retry_.find(id);
-            if (retry_it != unjoined_fetch_retry_.end() &&
-                std::chrono::steady_clock::now() < retry_it->second.next_retry)
-                continue;
-            unjoined_fetch_pending_.insert(id);
-            fetch_single_room_summary_(space_id, id);
+            if (!loaded.count(id))
+                request_summary_fetch_(space_id, id);
         }
     }
     return summaries;
+}
+
+bool ShellBase::is_space_pinned_(const std::string& space_id) const
+{
+    if (!active_account_)
+        return false;
+    const auto& pins = active_account_->pinned_spaces;
+    return std::find(pins.begin(), pins.end(), space_id) != pins.end();
+}
+
+void ShellBase::pin_space_(const std::string& space_id)
+{
+    if (!active_account_ || space_id.empty() || is_space_pinned_(space_id))
+        return;
+    active_account_->pinned_spaces.push_back(space_id);
+    schedule_account_data_save_();
+    refresh_room_list_(); // also refreshes the picker
+}
+
+void ShellBase::unpin_space_(const std::string& space_id)
+{
+    if (!active_account_ || !is_space_pinned_(space_id))
+        return;
+    auto& pins = active_account_->pinned_spaces;
+    pins.erase(std::remove(pins.begin(), pins.end(), space_id), pins.end());
+    schedule_account_data_save_();
+    // Its tab is gone: if the sidebar is inside that space, step out to Home.
+    if (!space_stack_.empty() && space_stack_.front() == space_id)
+        select_picker_home_();
+    else
+        refresh_room_list_();
+}
+
+void ShellBase::reorder_pinned_space_(const std::string& space_id,
+                                      const std::string& before_space_id)
+{
+    if (!active_account_ || space_id == before_space_id)
+        return;
+    auto& pins = active_account_->pinned_spaces;
+    const auto from = std::find(pins.begin(), pins.end(), space_id);
+    if (from == pins.end())
+        return;
+    pins.erase(from);
+    auto to = std::find(pins.begin(), pins.end(), before_space_id);
+    pins.insert(to, space_id); // not found (or empty) → end
+    schedule_account_data_save_();
+    refresh_space_picker_();
+}
+
+void ShellBase::select_picker_space_(const std::string& space_id)
+{
+    if (!main_app_ || !room_by_id_(space_id))
+        return;
+    if (space_stack_.size() == 1 && space_stack_.front() == space_id)
+    {
+        show_space_root_(space_id); // the header that does this is hidden
+        return;
+    }
+
+    views::RoomListView* rlv = main_app_->room_list_view();
+    space_stack_.clear();
+    space_nav_frames_.clear();
+    main_app_->hide_room_preview();
+    if (const auto* cur = room_by_id_(current_room_id_); cur && cur->is_space)
+        show_space_root_(current_room_id_);
+    else
+        hide_space_root_();
+
+    space_nav_frames_.push_back(SpaceNavFrame::capture(rlv));
+    space_stack_.push_back(space_id);
+    refresh_room_list_();
+    SpaceNavFrame::enter(rlv);
+}
+
+void ShellBase::select_picker_home_()
+{
+    if (!main_app_)
+        return;
+    SpaceNavFrame root_frame;
+    const bool have_frame = !space_nav_frames_.empty();
+    if (have_frame)
+        root_frame = space_nav_frames_.front();
+    space_stack_.clear();
+    space_nav_frames_.clear();
+    main_app_->hide_room_preview();
+    if (const auto* cur = room_by_id_(current_room_id_); cur && cur->is_space)
+        show_space_root_(current_room_id_);
+    else
+        hide_space_root_();
+    refresh_room_list_();
+    if (have_frame)
+        root_frame.restore(main_app_->room_list_view());
+}
+
+void ShellBase::refresh_space_picker_()
+{
+    if (!main_app_)
+        return;
+    std::vector<views::SpacePickerEntry> entries;
+    if (active_account_)
+    {
+        std::vector<RoomInfo> spaces;
+        for (const auto& id : active_account_->pinned_spaces)
+        {
+            if (const auto* r = room_by_id_(id); r && r->is_space)
+                spaces.push_back(*r);
+        }
+        apply_space_child_counts_(spaces); // aggregated child unread
+        for (const auto& s : spaces)
+        {
+            views::SpacePickerEntry e;
+            e.space_id           = s.id;
+            e.name               = s.name;
+            e.avatar_url         = s.avatar_url;
+            e.notification_count = s.notification_count;
+            e.highlight_count    = s.highlight_count;
+            e.unread_count       = s.unread_count;
+            e.muted              = s.muted;
+            entries.push_back(std::move(e));
+        }
+    }
+    main_app_->set_space_picker_entries(std::move(entries));
+    if (auto* picker = main_app_->space_picker())
+        picker->set_active_space(space_stack_.empty() ? std::string{}
+                                                      : space_stack_.front());
+}
+
+void ShellBase::hide_pinned_spaces_(std::vector<RoomInfo>& rooms) const
+{
+    if (!active_account_ || active_account_->pinned_spaces.empty())
+        return;
+    rooms.erase(std::remove_if(rooms.begin(), rooms.end(),
+                               [this](const RoomInfo& r)
+                               { return r.is_space && is_space_pinned_(r.id); }),
+                rooms.end());
 }
 
 void ShellBase::apply_space_child_counts_(std::vector<RoomInfo>& rooms) const

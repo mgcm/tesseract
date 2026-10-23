@@ -44,6 +44,7 @@
 #include "MessageSearchView.h"
 #include "RoomMediaView.h"
 #include "RoomListView.h"
+#include "SpacePickerView.h"
 #include "RoomView.h"
 #include "UserInfo.h"
 #include "EncryptionReminderBanner.h"
@@ -94,6 +95,13 @@ public:
     // Pass show=false to return to the plain room list.
     void set_space_nav(bool show, std::string_view space_name = {},
                        std::string_view avatar_url = {});
+
+    // ── Space picker sidebar ──────────────────────────────────────────────
+
+    // Pinned-space tabs left of the room list. The column is shown only while
+    // `entries` is non-empty (and the window is wide enough for two panes).
+    void set_space_picker_entries(std::vector<SpacePickerEntry> entries);
+    SpacePickerView* space_picker() const;
 
     // Supply the image cache lookup function used to paint the space avatar.
     // The signature matches the one used by RoomListView / RoomView.

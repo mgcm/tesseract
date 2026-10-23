@@ -255,6 +255,8 @@ set(_tk_sources
     views/UserInfo.cpp
     views/AccountPicker.h
     views/AccountPicker.cpp
+    views/SpacePickerView.h
+    views/SpacePickerView.cpp
     views/MediaOverlayBase.h
     views/MediaOverlayBase.cpp
     views/CameraWidget.h
@@ -570,6 +572,8 @@ set(_icon_svgs
     "${_lucide_dir}/lucide-more.svg"
     "${_lucide_dir}/lucide-redact.svg"
     "${_lucide_dir}/lucide-pin.svg"
+    "${_lucide_dir}/lucide-pin-off.svg"
+    "${_lucide_dir}/lucide-house.svg"
     "${_lucide_dir}/lucide-download.svg"
     "${_lucide_dir}/lucide-close.svg"
     "${_lucide_dir}/lucide-copy.svg"

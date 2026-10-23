@@ -1203,6 +1203,15 @@ void ShellBase::handle_account_prefs_updated_ui_(std::string user_id,
         refresh_directory_server_choices_();
     }
 
+    // Pinned spaces follow the same rule: the newest save wins, so a pin made
+    // on another device shows up here.
+    if (active_account_->pinned_spaces != prefs.pinned_spaces)
+    {
+        active_account_->pinned_spaces = prefs.pinned_spaces;
+        refresh_room_list_();
+        refresh_space_picker_();
+    }
+
     // Adopt the synced MRU only while ours is still empty (fresh login, before
     // the first visit): once the user has visited a room the local order wins,
     // so another device's save can't reorder the list mid Ctrl+Tab cycle.

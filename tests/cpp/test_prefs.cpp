@@ -204,3 +204,19 @@ TEST_CASE("Prefs directory_server_choices lists defaults until pushed out")
     std::vector<std::string> full{"1", "2", "3", "4", "5", "6", "7", "8"};
     CHECK(directory_server_choices(full, "home.org") == full);
 }
+
+TEST_CASE("Prefs pinned_spaces round-trips in tab order")
+{
+    PrefsData p;
+    p.pinned_spaces = {"!b:x", "!a:x"};
+    auto back = parse(serialize(p));
+    CHECK(back.pinned_spaces == std::vector<std::string>{"!b:x", "!a:x"});
+}
+
+TEST_CASE("Prefs without pinned_spaces parses empty and serialize drops the key")
+{
+    CHECK(parse(R"({"last_room":"!r:x"})").pinned_spaces.empty());
+    PrefsData p;
+    auto json = serialize(p, R"({"pinned_spaces":["!a:x"]})");
+    CHECK(json.find("pinned_spaces") == std::string::npos);
+}

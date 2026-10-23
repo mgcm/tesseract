@@ -27,6 +27,9 @@ struct PrefsData
     /// Room-directory servers the user has browsed, most recent first, at
     /// most `kMaxDirectoryServers`. Only servers whose directory answered.
     std::vector<std::string> directory_servers;
+    /// Space room IDs the user pinned to the space picker sidebar, in the
+    /// order the tabs are shown. Pinned spaces are hidden from the room list.
+    std::vector<std::string> pinned_spaces;
 };
 
 /// Cap on the saved `directory_servers` list.

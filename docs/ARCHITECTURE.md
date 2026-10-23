@@ -94,7 +94,7 @@ flowchart TB
     native["Native main window<br/>MainWindow / MainWindowController"]
     shell["ShellBase<br/>Window state, room selection, worker pools"]
     root["MainAppWidget"]
-    sidebar["RoomListView / AccountPicker"]
+    sidebar["RoomListView / AccountPicker / SpacePickerView"]
     room["RoomView"]
     timeline["MessageListView<br/>Timeline media, receipts, spoilers, link layout"]
     compose["ComposeBar<br/>Text, attachments, replies, mentions"]

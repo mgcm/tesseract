@@ -7487,3 +7487,19 @@ msgstr "Ця кімната підключена до іншого чат-зас
 #: ui/shared/views/RoomHeader.cpp
 msgid "This room is connected to {0}. Your messages are sent there too, and {0}'s own rules apply, not just Matrix's."
 msgstr "Ця кімната підключена до {0}. Ваші повідомлення надсилаються і туди, і діють власні правила {0}, а не лише Matrix."
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Pin to sidebar"
+msgstr "Закріпити на бічній панелі"
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Unpin from sidebar"
+msgstr "Відкріпити від бічної панелі"
+
+#: ui/shared/views/RoomListView.cpp
+msgid "Leave space"
+msgstr "Вийти з простору"
+
+#: ui/shared/views/SpacePickerView.cpp
+msgid "Home (all rooms)"
+msgstr "Головна (усі кімнати)"

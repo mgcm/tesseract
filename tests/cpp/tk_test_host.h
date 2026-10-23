@@ -147,6 +147,7 @@ public:
     using tk::Host::toast_visible_;
     using tk::Host::kToastDurationMs;
     using tk::Host::active_drag_;
+    using tk::Host::pending_popup_;
 
     // Drive the popup the way a paint pass would: register then promote.
     void set_active_popup(tk::Widget* w, tk::Widget* trigger = nullptr)

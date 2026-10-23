@@ -671,24 +671,32 @@ protected:
     // is filled in per-room as rows are painted via fetch_single_room_summary_.
     std::unordered_map<std::string, std::vector<tesseract::RoomSummary>>
         unjoined_summaries_cache_;
-    // Room IDs whose individual summary fetch is currently in flight.
-    std::unordered_set<std::string> unjoined_fetch_pending_;
     // Per-room exponential backoff for rooms that returned an error (403/404/…).
-    // Cleared whenever the active space changes so stale failure state doesn't
-    // persist if the user re-enters the same space later.
+    // Keyed by room, not space: a room's failure is a property of the room, so
+    // it survives space switches (and is seeded from the persisted backoff).
     struct UnjoinedRetryState
     {
         int attempts = 0;
         std::chrono::steady_clock::time_point next_retry{};
     };
     std::unordered_map<std::string, UnjoinedRetryState> unjoined_fetch_retry_;
-    // Bumped whenever the active space changes; captured by each
-    // fetch_single_room_summary_ call so stale completions are discarded.
-    std::uint64_t unjoined_fetch_gen_ = 0;
+    // In-flight summary fetches for one space. The sidebar and the space-root
+    // panel can each be showing a different space, so fetch ownership is per
+    // space: cancelling one space never disturbs another's fetches.
+    struct UnjoinedFetchState
+    {
+        // Captured by each fetch_single_room_summary_ call so completions that
+        // outlive a cancel are discarded. Never 0 (0 = "no such fetch").
+        std::uint64_t gen = 0;
+        // Room IDs whose individual summary fetch is currently in flight.
+        std::unordered_set<std::string> pending;
+    };
+    std::unordered_map<std::string, UnjoinedFetchState> unjoined_fetch_;
+    std::uint64_t unjoined_fetch_gen_counter_ = 0;
     // Bumped on every lookup_room_command_ call (Join tab of AddRoomView);
     // captured by the posted continuation so a stale get_room_summary()
     // result from a superseded lookup is discarded. Mirrors
-    // unjoined_fetch_gen_'s exact idiom.
+    // UnjoinedFetchState::gen's exact idiom.
     std::uint64_t join_room_lookup_gen_ = 0;
     // Monotonically increasing counter for async FFI request IDs. UI-thread-only.
     std::uint64_t next_request_id_ = 0;
@@ -702,8 +710,6 @@ protected:
         std::uint64_t gen = 0;
     };
     std::unordered_map<std::uint64_t, PendingSummaryRequest> pending_summaries_;
-    // Space ID whose unjoined section is currently displayed in the room list.
-    std::string active_space_id_;
     std::string current_room_id_;
     // Set while the full-window app-settings page (SettingsView) replaces the
     // main app surface. While set, compose_window_title_() stays plain
@@ -3952,9 +3958,22 @@ protected:
     void fetch_single_room_summary_(const std::string& space_id,
                                     const std::string& room_id);
 
-    // Cancel all in-flight unjoined-room summary fetches and reset per-space
-    // fetch state. Call whenever the user exits a space.
-    void cancel_unjoined_summaries_();
+    // Cancel in-flight unjoined-room summary fetches and drop their per-space
+    // state, except for the (up to two) spaces named in `keep_a`/`keep_b` —
+    // the ones the sidebar and the space-root panel are still showing. With no
+    // arguments every space is cancelled.
+    void cancel_unjoined_summaries_(const std::string& keep_a = {},
+                                    const std::string& keep_b = {});
+    // True while `gen` is still the live generation of `space_id`'s fetches.
+    bool fetch_gen_current_(const std::string& space_id,
+                            std::uint64_t gen) const;
+    // Forgets all fetch state (account switch / teardown). Does not touch the
+    // room-keyed retry backoff.
+    void reset_unjoined_fetch_state_();
+    // Starts a summary fetch for (space, room) unless one is already in
+    // flight or the room is still backing off.
+    void request_summary_fetch_(const std::string& space_id,
+                                const std::string& room_id);
 
     // ── Extended profile (MSC4133) helpers ────────────────────────────────────
 
@@ -4980,6 +4999,45 @@ protected:
     // The room list's own "back" button: exits one level of the sidebar's
     // "drilled into a space" browsing (space_stack_/space_nav_frames_).
     void space_back_command_();
+    // The space the user is "in": the sidebar's drilled-into space if any,
+    // else the main pane's room (empty if neither is meant to be a space).
+    const std::string& effective_space_id_() const
+    {
+        return space_stack_.empty() ? current_room_id_ : space_stack_.back();
+    }
+    // True while the sidebar is drilled into `space_id`.
+    bool sidebar_shows_space_(const std::string& space_id) const;
+    // Pushes `space_id`'s cached unjoined summaries into the room list's
+    // "Available to join" section, only if the sidebar is inside that space.
+    void push_unjoined_to_sidebar_(const std::string& space_id);
+    // Hides the space-root panel and forgets which space it was showing.
+    void hide_space_root_();
+
+    // ── Space picker sidebar (pinned spaces) ──────────────────────────────
+    // Pins are per-account (AccountSession::pinned_spaces, synced in the
+    // im.gnomos.tesseract account data). A pinned space gets a tab in the
+    // picker column and is hidden from the room list.
+    bool is_space_pinned_(const std::string& space_id) const;
+    void pin_space_(const std::string& space_id);
+    void unpin_space_(const std::string& space_id);
+    // Drag-reorder from the picker: moves `space_id` in the pinned list to sit
+    // in front of `before_space_id` (empty = last) and saves.
+    void reorder_pinned_space_(const std::string& space_id,
+                               const std::string& before_space_id);
+    // Picker tab click: drill the sidebar into `space_id` (clicking the tab
+    // that is already active opens that space's root panel instead).
+    void select_picker_space_(const std::string& space_id);
+    // Picker Home tab: back to the plain room list.
+    void select_picker_home_();
+    // Rebuilds the picker's tabs (name, avatar, aggregated unread) and its
+    // active tab from the pinned list and `space_stack_`.
+    void refresh_space_picker_();
+    // Drops pinned spaces from a room-list model.
+    void hide_pinned_spaces_(std::vector<RoomInfo>& rooms) const;
+    // Tail shared by every "step out of a space" path, after space_stack_ has
+    // been popped: re-filters the room list, then restores and pops the
+    // matching SpaceNavFrame.
+    void finish_space_pop_();
     void join_room_command_(const std::string& room_id_or_alias,
                             std::vector<std::string> via = {},
     const std::shared_ptr<AccountSession>& on_behalf_of = nullptr);
