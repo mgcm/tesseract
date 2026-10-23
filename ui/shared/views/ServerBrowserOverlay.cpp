@@ -1,5 +1,6 @@
 #include "ServerBrowserOverlay.h"
 
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
 #include "media_utils.h" // rect_contains
 #include "text_util.h"
 
@@ -11,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <span>
 #include <sstream>
 #include <utility>
 
@@ -27,6 +29,8 @@ constexpr float kRowPad      = 12.0f;
 constexpr float kRowSpacing  = 6.0f;
 constexpr float kListSpacing = 10.0f;
 constexpr float kRowBtnH     = 32.0f;
+constexpr float kIconSize    = 20.0f;
+constexpr float kTwoColumnMinW = 640.0f; // list width from which cards go two-up
 
 std::string join(const std::vector<std::string>& parts, const char* sep)
 {
@@ -42,8 +46,9 @@ std::string join(const std::vector<std::string>& parts, const char* sep)
     return out;
 }
 
-// One server: a rounded card of name, details, description and action
-// buttons, stacked top to bottom.
+// One server: a rounded card of name, details, description and link buttons,
+// stacked top to bottom. Clicking it anywhere but on a link button picks the
+// server; it lights up under the pointer.
 class ServerCard : public tk::VBox
 {
 protected:
@@ -51,11 +56,67 @@ protected:
     TK_WIDGET_FACTORY_FRIEND(ServerCard)
 
 public:
+    void set_name(std::string n) { name_ = std::move(n); }
+    std::string access_name() const override { return name_; }
+
     void paint_before_children(tk::PaintCtx& ctx) override
     {
         const auto& pal = ctx.theme.palette;
         ctx.canvas.fill_rounded_rect(bounds(), kCardRadius, pal.compose_card_bg);
+        // The base paints hover before this, i.e. under the opaque card fill.
+        paint_hover_fill(ctx);
         ctx.canvas.stroke_rounded_rect(bounds(), kCardRadius, pal.border, 1.0f);
+    }
+
+private:
+    std::string name_;
+};
+
+// The cards, flowing row-major into one or two columns depending on the width
+// it is given, so a resize needs no rebuild. Cards in a row share its height.
+class CardGrid : public tk::Widget
+{
+protected:
+    CardGrid() = default;
+    TK_WIDGET_FACTORY_FRIEND(CardGrid)
+
+public:
+    tk::Size measure(tk::LayoutCtx& lc, tk::Size constraints) override
+    {
+        return layout_(lc, constraints.w, nullptr);
+    }
+    void arrange(tk::LayoutCtx& lc, tk::Rect bounds) override
+    {
+        bounds_ = bounds;
+        layout_(lc, bounds.w, &bounds);
+    }
+
+private:
+    tk::Size layout_(tk::LayoutCtx& lc, float width, const tk::Rect* place)
+    {
+        std::vector<tk::Widget*> kids;
+        for (auto& ch : children())
+            if (ch->visible())
+                kids.push_back(ch.get());
+        const std::size_t cols =
+            static_cast<std::size_t>(ServerBrowserOverlay::columns_for_width(width));
+        const float col_w =
+            std::max(0.0f, (width - kListSpacing * static_cast<float>(cols - 1)) /
+                               static_cast<float>(cols));
+        float y = 0.0f;
+        for (std::size_t i = 0; i < kids.size(); i += cols)
+        {
+            const std::size_t end = std::min(kids.size(), i + cols);
+            float row_h = 0.0f;
+            for (std::size_t j = i; j < end; ++j)
+                row_h = std::max(row_h, kids[j]->measure(lc, {col_w, 1'000'000.0f}).h);
+            if (place)
+                for (std::size_t j = i; j < end; ++j)
+                    kids[j]->arrange(lc, {place->x + static_cast<float>(j - i) * (col_w + kListSpacing),
+                                          place->y + y, col_w, row_h});
+            y += row_h + kListSpacing;
+        }
+        return {width, kids.empty() ? 0.0f : y - kListSpacing};
     }
 };
 
@@ -69,6 +130,11 @@ std::unique_ptr<tk::Label> make_label(tk::Widget* parent, std::string text, tk::
 }
 
 } // namespace
+
+int ServerBrowserOverlay::columns_for_width(float inner_w)
+{
+    return inner_w >= kTwoColumnMinW ? 2 : 1;
+}
 
 ServerBrowserOverlay::ServerBrowserOverlay()
 {
@@ -242,17 +308,38 @@ void ServerBrowserOverlay::rebuild_()
         const auto shown = visible_servers();
         if (shown.empty())
             note(tk::tr("No servers match your search."));
+        auto grid = tk::create_widget<CardGrid>(column.get());
+        icon_views_.clear();
         for (const Entry* e : shown)
         {
-            auto card = tk::create_widget<ServerCard>(column.get());
+            auto card = tk::create_widget<ServerCard>(grid.get());
             card->set_padding(tk::Edges::all(kRowPad))
                 .set_spacing(kRowSpacing)
                 .set_cross(tk::Cross::Stretch);
+            const std::string domain = e->client_domain;
+            card->set_name(e->name);
+            card->set_hoverable(true, tk::HoverStyle::Fill);
+            card->set_hover_radius(kCardRadius);
+            card->set_on_click([this, domain] { pick_(domain); });
 
             std::string title = e->name;
             if (e->longstanding)
                 title = tk::trf(tk::tr("{0} \xc2\xb7 Established"), {title});
-            card->add_child(make_label(card.get(), std::move(title), tk::FontRole::SenderName, true));
+            auto title_row = tk::create_widget<tk::HBox>(card.get());
+            title_row->set_spacing(8.0f).set_cross(tk::Cross::Center);
+            auto icon = tk::create_widget<tk::ImageView>(title_row.get(), nullptr,
+                                                         tk::ImageView::ContentMode::Contain);
+            icon->set_size({kIconSize, kIconSize});
+            const auto have = icon_images_.find(domain);
+            if (have != icon_images_.end() && have->second)
+                icon->set_image(have->second.get());
+            else
+                icon->set_visible(false);
+            icon_views_[domain] = title_row->add_child(std::move(icon));
+            auto name = make_label(title_row.get(), std::move(title), tk::FontRole::SenderName, true);
+            name->set_layout_hints({.fill_main = true});
+            title_row->add_child(std::move(name));
+            card->add_child(std::move(title_row));
 
             const std::string meta =
                 join({e->jurisdiction, join(e->languages, ", "), e->software}, " \xc2\xb7 ");
@@ -272,13 +359,6 @@ void ServerBrowserOverlay::rebuild_()
 
             auto row = tk::create_widget<tk::HBox>(card.get());
             row->set_spacing(8.0f).set_cross(tk::Cross::Center);
-            const std::string domain = e->client_domain;
-            auto use = tk::create_widget<tk::Button>(
-                row.get(), tk::tr("Use this server"), [this, domain] { pick_(domain); },
-                tk::Button::Variant::Primary);
-            use->set_min_size({0, kRowBtnH});
-            row->add_child(std::move(use));
-
             auto link = [&](std::string label, const std::string& url)
             {
                 if (url.empty())
@@ -302,13 +382,38 @@ void ServerBrowserOverlay::rebuild_()
             link(tk::tr("Privacy"), e->privacy);
             card->add_child(std::move(row));
 
-            column->add_child(std::move(card));
+            grid->add_child(std::move(card));
         }
+        column->add_child(std::move(grid));
     }
     scroll_->set_child(std::move(column));
     scroll_->scroll_to_top();
     if (auto* h = host())
         h->mark_needs_relayout();
+}
+
+void ServerBrowserOverlay::set_icon(const std::string& client_domain,
+                                    std::vector<std::uint8_t> bytes)
+{
+    if (bytes.empty())
+        return;
+    pending_icons_[client_domain] = std::move(bytes);
+    if (auto* h = host())
+        h->mark_needs_relayout();
+}
+
+bool ServerBrowserOverlay::has_icon(const std::string& client_domain) const
+{
+    return icon_images_.count(client_domain) != 0 || pending_icons_.count(client_domain) != 0;
+}
+
+void ServerBrowserOverlay::show_icon_(const std::string& client_domain, const tk::Image* image)
+{
+    const auto it = icon_views_.find(client_domain);
+    if (it == icon_views_.end() || !image)
+        return;
+    it->second->set_image(image);
+    it->second->set_visible(true);
 }
 
 void ServerBrowserOverlay::pick_(const std::string& client_domain)
@@ -371,6 +476,15 @@ void ServerBrowserOverlay::arrange(tk::LayoutCtx& lc, tk::Rect bounds)
 {
     bounds_ = bounds;
     backdrop_rect_ = bounds;
+
+    // Favicons that arrived since the last layout (see pending_icons_).
+    for (auto& [domain, bytes] : pending_icons_)
+    {
+        auto img = lc.factory.decode_image(std::span<const std::uint8_t>(bytes));
+        show_icon_(domain, img.get());
+        icon_images_[domain] = std::move(img);
+    }
+    pending_icons_.clear();
 
     const float card_w = std::max(0.0f, std::min(kCardMaxW, bounds.w - kMargin * 2));
     const float inner_w = std::max(0.0f, card_w - kCardPad * 2);
@@ -512,3 +626,5 @@ bool ServerBrowserOverlay::on_key_down(const tk::KeyEvent& event)
 }
 
 } // namespace tesseract::views
+
+#endif // TESSERACT_SERVER_BROWSER_ENABLED

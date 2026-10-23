@@ -3671,6 +3671,12 @@ pub mod ffi {
         /// a worker, never from the UI thread).
         fn load_server_list(self: &ClientFfi, cache_dir: &str) -> ServerListFfi;
 
+        /// The favicon (`/favicon.ico`) of a listed server's https homepage, as
+        /// raw image bytes; empty when there is none. Size-capped and guarded
+        /// like other third-party fetches. Blocks the calling thread (worker
+        /// only); the caller caches the bytes.
+        fn fetch_server_icon(self: &ClientFfi, homepage: &str) -> Vec<u8>;
+
         /// Check the AUR RPC API for a newer version of `pkgname` than
         /// `current_version`. Blocks the calling thread (call from a worker,
         /// never from the UI thread). Returns `UpdateResult::has_update ==

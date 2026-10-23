@@ -7276,10 +7276,6 @@ msgid "Sign up"
 msgstr "[Sïgñ ùpx]"
 
 #: ui/shared/views/ServerBrowserOverlay.cpp
-msgid "Use this server"
-msgstr "[Ùsé thïs sérvérxxx]"
-
-#: ui/shared/views/ServerBrowserOverlay.cpp
 msgid "Website"
 msgstr "[Wébsïtéx]"
 

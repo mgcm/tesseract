@@ -7445,10 +7445,6 @@ msgid "Sign up"
 msgstr "Зареєструватися"
 
 #: ui/shared/views/ServerBrowserOverlay.cpp
-msgid "Use this server"
-msgstr "Використати цей сервер"
-
-#: ui/shared/views/ServerBrowserOverlay.cpp
 msgid "Website"
 msgstr "Вебсайт"
 

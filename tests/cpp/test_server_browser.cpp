@@ -1,3 +1,5 @@
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
+
 #include <catch2/catch_test_macros.hpp>
 
 #include "tk_test_host.h"
@@ -21,6 +23,17 @@ Entry entry(std::string name, std::string domain, bool is_public = true, bool on
     e.is_public = is_public;
     e.online = online;
     return e;
+}
+
+// First widget under `w` that is clickable and named `name` (a server card).
+tk::Widget* find_clickable(tk::Widget& w, const std::string& name)
+{
+    if (w.clickable() && w.access_name() == name)
+        return &w;
+    for (auto& ch : w.children())
+        if (auto* hit = find_clickable(*ch, name))
+            return hit;
+    return nullptr;
 }
 
 std::vector<std::string> names(const std::vector<const Entry*>& v)
@@ -109,6 +122,48 @@ TEST_CASE("ServerBrowserOverlay pick closes the overlay and reports the domain",
     CHECK_FALSE(ov.is_open());
     CHECK(picked.empty());
     CHECK(retries == 0);
+}
+
+TEST_CASE("ServerBrowserOverlay: clicking a server card picks it",
+          "[tk][view][login][server_browser]")
+{
+    StubHost host;
+    auto owner = tk::create_root_widget<ServerBrowserOverlay>(&host);
+    ServerBrowserOverlay& ov = *owner;
+    ov.on_layout_changed = [] {};
+    std::string picked;
+    ov.on_pick = [&](const std::string& d) { picked = d; };
+    ov.set_servers({entry("alpha", "alpha.example"), entry("beta", "beta.example")});
+    ov.open();
+
+    auto* card = find_clickable(ov, "beta");
+    REQUIRE(card);
+    CHECK(card->hoverable());
+    CHECK(card->access_default_action());
+    CHECK(picked == "beta.example");
+    CHECK_FALSE(ov.is_open());
+}
+
+TEST_CASE("ServerBrowserOverlay lays the cards out in two columns only when wide",
+          "[tk][view][login][server_browser]")
+{
+    CHECK(ServerBrowserOverlay::columns_for_width(300.0f) == 1);
+    CHECK(ServerBrowserOverlay::columns_for_width(639.0f) == 1);
+    CHECK(ServerBrowserOverlay::columns_for_width(900.0f) == 2);
+}
+
+TEST_CASE("ServerBrowserOverlay remembers delivered icons per server",
+          "[tk][view][login][server_browser]")
+{
+    StubHost host;
+    auto owner = tk::create_root_widget<ServerBrowserOverlay>(&host);
+    ServerBrowserOverlay& ov = *owner;
+    ov.set_servers({entry("alpha", "alpha.example")});
+    CHECK_FALSE(ov.has_icon("alpha.example"));
+    ov.set_icon("alpha.example", {});
+    CHECK_FALSE(ov.has_icon("alpha.example")); // empty bytes are no icon
+    ov.set_icon("alpha.example", {0x89, 'P', 'N', 'G'});
+    CHECK(ov.has_icon("alpha.example"));
 }
 
 TEST_CASE("LoginView offers the server browser, with matrix.org as one choice",
@@ -209,3 +264,5 @@ TEST_CASE("LoginView hides the homeserver field while the server browser is open
     lv.server_browser()->close();
     CHECK(lv.homeserver_field()->visible());
 }
+
+#endif // TESSERACT_SERVER_BROWSER_ENABLED

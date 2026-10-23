@@ -2,6 +2,7 @@
 
 #include "AlertDialog.h"
 #include "icons.h"
+#include "tk/cache_key.h"
 #include "tk/i18n.h"
 
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include <thread>
 
 #include <tesseract/client.h>
+#include <tesseract/paths.h>
 #include <tesseract/provisioning.h>
 #include <tesseract/version.h>
 
@@ -130,11 +132,13 @@ void LoginView::rebuild_tree()
     hs_input_label_      = card->add_child(std::move(hs_input_label));
     card->add_child(std::move(hs_field_row));
 
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     auto find_server = tk::create_widget<tk::Button>(
         this, tk::tr("Find a server"), std::function<void()>{}, tk::Button::Variant::Link);
     find_server->set_on_click([this] { open_server_browser(); });
     find_server->set_visible(!provisioned_);
     find_server_btn_ = card->add_child(std::move(find_server));
+#endif
 
     discovery_error_lbl_ = card->add_child(std::move(discovery_error));
     sign_in_btn_         = card->add_child(std::move(sign_in));
@@ -215,6 +219,7 @@ void LoginView::rebuild_tree()
     settings_btn_ = add_child(std::move(settings));
     update_settings_visibility_();
 
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     auto browser = tk::create_widget<ServerBrowserOverlay>(this);
     browser->on_layout_changed = [this]
     {
@@ -257,6 +262,7 @@ void LoginView::rebuild_tree()
     };
     browser->on_retry = [this] { load_server_list_(); };
     server_browser_ = add_child(std::move(browser));
+#endif
 
     auto alert_dlg = std::make_unique<AlertDialog>();
     alert_dlg->on_layout_changed = [this] { if (relayout_) relayout_(); };
@@ -284,8 +290,10 @@ void LoginView::set_state(State s)
     cancel_btn_->set_visible(mode_ == Mode::AddAccount || s == State::Waiting);
     if (register_link_)
         register_link_->set_visible(s == State::Form && registration_supported_);
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     if (find_server_btn_)
         find_server_btn_->set_visible(!provisioned_ && s == State::Form);
+#endif
 #ifdef TESSERACT_LEGACY_LOGIN_ENABLED
     update_form_visibility_();
 #endif
@@ -397,20 +405,25 @@ void LoginView::finish_init()
     hs_field_->set_on_changed(
         [this](const std::string& text) { hs_changed_(text); });
     hs_changed_("");
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     if (!provisioned_)
         load_server_list_();
+#endif
 }
 
 void LoginView::on_register_clicked_()
 {
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     if (!provisioned_ && hs_field_ && tesseract::text::trim(hs_field_->text()).empty())
     {
         open_server_browser();
         return;
     }
+#endif
     start_oauth_(true);
 }
 
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
 void LoginView::open_server_browser()
 {
     if (!server_browser_ || provisioned_)
@@ -418,6 +431,7 @@ void LoginView::open_server_browser()
     if (server_browser_->state() != ServerBrowserOverlay::State::Ready)
         load_server_list_();
     server_browser_->open();
+    request_server_icons_();
 }
 
 void LoginView::load_server_list_()
@@ -472,9 +486,80 @@ void LoginView::apply_server_list_(const tesseract::Client::ServerList& list)
     mx.is_public = true;
     entries.push_back(std::move(mx));
     std::mt19937 rng{std::random_device{}()};
+    server_icon_targets_.clear();
+    for (const auto& e : entries)
+        server_icon_targets_.emplace_back(e.client_domain, e.homepage);
     server_browser_->set_servers(
         ServerBrowserOverlay::arrange_for_display(std::move(entries), rng));
+    if (server_browser_->is_open())
+        request_server_icons_();
 }
+
+void LoginView::request_server_icons_()
+{
+    auto* snap = client_;
+    if (!snap || !server_browser_ || icons_fetching_)
+        return;
+    struct Work
+    {
+        std::vector<std::pair<std::string, std::string>> todo;
+        std::atomic<std::size_t> next{0};
+        std::atomic<std::size_t> active{0};
+    };
+    auto work = std::make_shared<Work>();
+    for (const auto& t : server_icon_targets_)
+        if (!t.second.empty() && !server_browser_->has_icon(t.first))
+            work->todo.push_back(t);
+    if (work->todo.empty())
+        return;
+    if (!icon_cache_)
+        icon_cache_ = std::make_shared<tk::MediaDiskCache>(tesseract::cache_dir() / "media");
+    icons_fetching_ = true;
+    const uint32_t gen = icon_gen_.load();
+    const std::size_t workers = std::min<std::size_t>(4, work->todo.size());
+    work->active = workers;
+    for (std::size_t w = 0; w < workers; ++w)
+    {
+        auto body = [this, gen, snap, work, cache = icon_cache_]
+        {
+            for (;;)
+            {
+                const std::size_t i = work->next.fetch_add(1);
+                if (i >= work->todo.size() || gen != icon_gen_.load())
+                    break;
+                const auto& [domain, homepage] = work->todo[i];
+                const tk::CacheKey key = tk::CacheKey::server_icon(homepage);
+                auto bytes = cache->load(key);
+                if (bytes.empty())
+                {
+                    bytes = snap->fetch_server_icon(homepage);
+                    if (!bytes.empty())
+                        cache->store(key, bytes);
+                }
+                if (bytes.empty() || gen != icon_gen_.load() || !post_to_ui_)
+                    continue;
+                post_to_ui_(
+                    [this, gen, domain = domain, bytes = std::move(bytes)]() mutable
+                    {
+                        if (gen == icon_gen_.load() && server_browser_)
+                            server_browser_->set_icon(domain, std::move(bytes));
+                    });
+            }
+            if (work->active.fetch_sub(1) == 1 && gen == icon_gen_.load() && post_to_ui_)
+                post_to_ui_(
+                    [this, gen]
+                    {
+                        if (gen == icon_gen_.load())
+                            icons_fetching_ = false;
+                    });
+        };
+        if (run_async_)
+            run_async_(std::move(body));
+        else
+            std::thread(std::move(body)).detach();
+    }
+}
+#endif // TESSERACT_SERVER_BROWSER_ENABLED
 
 #ifdef TESSERACT_LEGACY_LOGIN_ENABLED
 void LoginView::finish_password_init()
@@ -519,7 +604,10 @@ void LoginView::set_client(tesseract::Client* c)
 void LoginView::shutdown()
 {
     ++discovery_gen_;
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     ++server_list_gen_;
+    ++icon_gen_;
+#endif
     ++registration_gen_;
     cancelled_.store(true);
     if (client_)
@@ -957,8 +1045,10 @@ void LoginView::update_form_visibility_()
     if (hs_input_label_) hs_input_label_->set_visible(oauth_form_visible);
     if (hs_field_)       hs_field_->set_visible(oauth_form_visible);
     if (hs_help_btn_)    hs_help_btn_->set_visible(oauth_form_visible);
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     if (find_server_btn_)
         find_server_btn_->set_visible(!provisioned_ && oauth_form_visible);
+#endif
     if (discovery_icon_lbl_)
         discovery_icon_lbl_->set_visible(oauth_form_visible &&
                                     discovery_state_ != DiscoveryState::Idle);
@@ -1149,7 +1239,9 @@ void LoginView::arrange(tk::LayoutCtx& ctx, tk::Rect bounds)
                   kSettingsBtnSize});
     }
 
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     if (server_browser_) server_browser_->arrange(ctx, bounds);
+#endif
     if (alert_) alert_->arrange(ctx, bounds);
 }
 

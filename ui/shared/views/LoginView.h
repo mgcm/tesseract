@@ -7,9 +7,10 @@
 // the host before calling finish_init().
 
 #include "AlertDialog.h"
-#include "ServerBrowserOverlay.h"
+#include "ServerBrowserOverlay.h" // empty unless TESSERACT_SERVER_BROWSER_ENABLED
 #include "tk/canvas.h"
 #include "tk/controls.h"
+#include "tk/media_disk_cache.h"
 #include "tk/host.h"
 #include "tk/image_view.h"
 #include "tk/layout.h"
@@ -215,6 +216,7 @@ public:
         on_cancel_done_ = std::move(fn);
     }
 
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     /// Opens the "Find a server" browser (loading the community list first if
     /// it hasn't arrived yet).
     void open_server_browser();
@@ -234,14 +236,17 @@ public:
     {
         apply_server_list_(list);
     }
+#endif
     tk::TextField* homeserver_field() const
     {
         return hs_field_;
     }
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     tk::Button* find_server_button() const
     {
         return find_server_btn_;
     }
+#endif
     tk::Button* register_button() const
     {
         return register_link_;
@@ -335,8 +340,15 @@ private:
     // "Create an account": with an empty field (and no provisioned server)
     // there is no server to register on yet, so offer the browser instead.
     void on_register_clicked_();
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     void load_server_list_();
     void apply_server_list_(const tesseract::Client::ServerList& list);
+    // Fetches the favicons the browser doesn't have yet (disk cache first,
+    // then each server's site), a few at a time on the worker pool. Only runs
+    // while the browser is open, so nothing contacts the listed sites before
+    // the user asks to see them.
+    void request_server_icons_();
+#endif
     void probe_registration_support_(const std::string& base_url);
     void probe_oauth_support_(const std::string& base_url);
     void update_oauth_availability_(bool available);
@@ -383,15 +395,22 @@ private:
 
     // Alert overlay (owned via add_child, raw pointer borrowed back)
     AlertDialog* alert_          = nullptr;
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     // "Find a server" browser, added before alert_ so alerts paint above it.
     ServerBrowserOverlay* server_browser_ = nullptr;
     tk::Button*           find_server_btn_ = nullptr;
-    // A deployment-provisioned default homeserver replaces the picker.
-    bool                  provisioned_ = false;
     bool                  server_list_loading_ = false;
     // hs_field_ was visible when the browser opened and is restored on close.
     bool                  hs_field_hidden_by_browser_ = false;
     std::atomic<uint32_t> server_list_gen_{0};
+    // (client_domain, homepage) of the listed servers, for request_server_icons_.
+    std::vector<std::pair<std::string, std::string>> server_icon_targets_;
+    std::shared_ptr<tk::MediaDiskCache> icon_cache_; // the shared media cache dir
+    bool                  icons_fetching_ = false;
+    std::atomic<uint32_t> icon_gen_{0};
+#endif
+    // A deployment-provisioned default homeserver replaces the picker.
+    bool                  provisioned_ = false;
 
     // Borrowed widget pointers (owned by card_)
     tk::VBox*      card_            = nullptr;

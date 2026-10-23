@@ -5,6 +5,8 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- feat(ui): the server browser shows cards in two columns when wide, highlights the card under the pointer and picks a server on a click anywhere on it (the "Use this server" button is gone), and shows each server's favicon (fetched from its own site when the browser opens, stored in the media disk cache). Linux release build, 84 related ctest cases, 2 new cargo tests, user-verified
+- feat(build): `TESSERACT_ENABLE_SERVER_BROWSER` (default `ON`) compiles the server browser and its community list in or out, with a matching `server_browser` Cargo feature. Linux release build with the flag on and off
 - feat(ui): pin a space from its room-list context menu to give it an avatar tab in a new column left of the room list (Home tab, drag to reorder, aggregated unread); pins sync as `pinned_spaces` in the `im.gnomos.tesseract` account data. Linux release build, ctest 3513/3513
 - fix(ui): in-app drag ghosts were drawn scale-times too big on HiDPI (the image's device-pixel size was used as a logical size). Linux release build, ctest 3513/3513
 - chore(ui): unjoined-space summary fetches are owned per space, so the room list and the space-root panel no longer cancel each other's and retry backoff survives space switches. Linux release build, ctest 3513/3513

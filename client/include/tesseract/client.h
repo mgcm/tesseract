@@ -1307,6 +1307,7 @@ public:
     UpdateResult check_for_update(const std::string& repo,
                                   const std::string& current_version);
 
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
     /// One homeserver from the community list (servers.joinmatrix.org).
     /// Link fields are `https://` URLs or empty. Only servers that support
     /// sliding sync are ever returned.
@@ -1341,6 +1342,12 @@ public:
     /// fresh fetch, else a stale cache. Blocks the calling thread — call from a
     /// worker pool thread, never the UI thread.
     ServerList load_server_list();
+
+    /// Favicon bytes of a listed server's https homepage (`/favicon.ico`);
+    /// empty when there is none. No caching here. Blocks the calling thread —
+    /// worker pool only.
+    std::vector<std::uint8_t> fetch_server_icon(const std::string& homepage);
+#endif // TESSERACT_SERVER_BROWSER_ENABLED
 
     /// Check the AUR RPC API for a newer version of `pkgname` than `current_version`.
     /// Blocks the calling thread — call from a worker pool thread, never the UI thread.

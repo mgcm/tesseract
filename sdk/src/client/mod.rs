@@ -54,7 +54,28 @@ mod sync;
 mod tags;
 pub(crate) mod text_code;
 pub(crate) use text_code::{text_code, text_code_arg, user_text};
+#[cfg(feature = "server_browser")]
 mod server_list;
+// The cxx bridge always declares `load_server_list` (cxxbridge can't see Cargo
+// features), so builds without the feature keep a failing stub.
+#[cfg(all(not(feature = "server_browser"), not(test)))]
+mod server_list {
+    impl super::ClientFfi {
+        pub fn fetch_server_icon(&self, _homepage: &str) -> Vec<u8> {
+            Vec::new()
+        }
+
+        pub fn load_server_list(&self, _cache_dir: &str) -> crate::ffi::ServerListFfi {
+            crate::ffi::ServerListFfi {
+                entries: Vec::new(),
+                ok: false,
+                from_cache: false,
+                source_name: String::new(),
+                source_url: String::new(),
+            }
+        }
+    }
+}
 mod thread;
 mod timeline;
 mod timeline_convert;

@@ -5226,10 +5226,6 @@ msgid "Sign up"
 msgstr "Registrer deg"
 
 #: ui/shared/views/ServerBrowserOverlay.cpp
-msgid "Use this server"
-msgstr "Bruk denne serveren"
-
-#: ui/shared/views/ServerBrowserOverlay.cpp
 msgid "Website"
 msgstr "Nettsted"
 

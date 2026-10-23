@@ -6867,10 +6867,6 @@ msgid "Sign up"
 msgstr "S'inscrire"
 
 #: ui/shared/views/ServerBrowserOverlay.cpp
-msgid "Use this server"
-msgstr "Utiliser ce serveur"
-
-#: ui/shared/views/ServerBrowserOverlay.cpp
 msgid "Website"
 msgstr "Site web"
 

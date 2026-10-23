@@ -115,6 +115,13 @@ option(TESSERACT_ENABLE_LEGACY_LOGIN
     "Enable legacy username/password (m.login.password) login as a fallback for homeservers without OIDC/MAS"
     ON)
 
+# The login view's "Find a server" browser (community homeserver list, fetched
+# from the network). OFF removes it and the Client list API; sign-in then goes
+# straight to the default homeserver (matrix.org) when the field is empty.
+option(TESSERACT_ENABLE_SERVER_BROWSER
+    "Enable the login view's \"Find a server\" browser (community homeserver list)"
+    ON)
+
 # Accounts without recovery get it set up without a dialog; the key is held in
 # the OS secure storage until the user saves it. OFF restores the setup dialog.
 option(TESSERACT_ENABLE_SILENT_RECOVERY_SETUP
@@ -673,6 +680,7 @@ endif()
 
 # ---------------------------------------------------------------------------
 # TESSERACT_ENABLE_LEGACY_LOGIN — m.login.password fallback for non-OIDC servers
+# TESSERACT_ENABLE_SERVER_BROWSER — community homeserver list (Find a server)
 # TESSERACT_ENABLE_CRASH_HANDLER — optional local crash handler
 # TESSERACT_ENABLE_JEMALLOC     — jemalloc process allocator (Linux only)
 #
@@ -691,6 +699,15 @@ if(TESSERACT_ENABLE_LEGACY_LOGIN)
     # Propagate the flag to all C++ targets so #ifdef TESSERACT_LEGACY_LOGIN_ENABLED
     # guards compile their password-login-related code.
     add_compile_definitions(TESSERACT_LEGACY_LOGIN_ENABLED)
+endif()
+
+if(TESSERACT_ENABLE_SERVER_BROWSER)
+    message(STATUS "tesseract: server browser enabled")
+    # Also activates the `server_browser` Cargo feature, which compiles the Rust
+    # list fetcher; without it `load_server_list` is a failing stub (the bridge
+    # declaration is unconditional).
+    add_compile_definitions(TESSERACT_SERVER_BROWSER_ENABLED)
+    list(APPEND _tesseract_cargo_features server_browser)
 endif()
 
 if(TESSERACT_ENABLE_SILENT_RECOVERY_SETUP)

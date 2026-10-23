@@ -1,5 +1,7 @@
 #pragma once
 
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
+
 // Modal "Find a server" browser for the login view: a searchable, scrollable
 // list of homeserver cards (name, jurisdiction, languages, description,
 // registration kind) fed from the community list (servers.joinmatrix.org, via
@@ -12,6 +14,7 @@
 // ForwardRoomPicker).
 
 #include "tk/controls.h"
+#include "tk/image_view.h"
 #include "tk/scroll_view.h"
 #include "tk/text_field.h"
 #include "tk/widget.h"
@@ -21,7 +24,9 @@
 #include <functional>
 #include <memory>
 #include <random>
+#include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace tesseract::views
@@ -55,6 +60,17 @@ public:
     void set_servers(std::vector<Entry> servers);
     // Names the list's provider in the footer link; an empty url hides it.
     void set_source(const std::string& name, const std::string& url);
+
+    // Card columns for a list area `inner_w` wide: two once there is room for
+    // both to stay readable, else one.
+    static int columns_for_width(float inner_w);
+
+    // Hands over a server's favicon (any image format the platform decodes);
+    // it is decoded on the next layout and shown beside the server's name.
+    void set_icon(const std::string& client_domain, std::vector<std::uint8_t> bytes);
+    // Whether an icon was already delivered for the server (even one that
+    // turned out undecodable), so callers don't fetch it again.
+    bool has_icon(const std::string& client_domain) const;
 
     // Public servers first, then the rest; each group shuffled with `rng` so
     // no server always lands on top.
@@ -106,6 +122,7 @@ private:
     // Rebuilds the card column for the current state / filter.
     void rebuild_();
     void pick_(const std::string& client_domain);
+    void show_icon_(const std::string& client_domain, const tk::Image* image);
 
     bool open_ = false;
     bool press_backdrop_ = false;
@@ -122,13 +139,21 @@ private:
     tk::Button*     close_btn_ = nullptr;
     tk::Button*     source_link_ = nullptr;
 
+    // Favicons: bytes wait in pending_icons_ for the next arrange() (the only
+    // place with a decoder); icon_images_ keeps the decoded images alive for the
+    // card ImageViews in icon_views_ (rebuilt with the cards). A null image
+    // marks bytes that didn't decode.
+    std::unordered_map<std::string, std::vector<std::uint8_t>> pending_icons_;
+    std::unordered_map<std::string, std::unique_ptr<tk::Image>> icon_images_;
+    std::unordered_map<std::string, tk::ImageView*> icon_views_;
+
     tk::Rect backdrop_rect_{};
     tk::Rect card_rect_{};
     tk::Rect search_rect_{};
     tk::CachedTextLayout title_layout_;
     float title_w_ = -1.0f;
 
-    static constexpr float kCardMaxW  = 640.0f;
+    static constexpr float kCardMaxW  = 960.0f;
     static constexpr float kCardMaxH  = 720.0f;
     static constexpr float kMargin    = 24.0f;
     static constexpr float kCardPad   = 20.0f;
@@ -140,3 +165,5 @@ private:
 };
 
 } // namespace tesseract::views
+
+#endif // TESSERACT_SERVER_BROWSER_ENABLED

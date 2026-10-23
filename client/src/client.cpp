@@ -1740,6 +1740,7 @@ Client::UpdateResult Client::check_for_update(const std::string& repo,
     return { r.has_update, std::string(r.version), std::string(r.url) };
 }
 
+#ifdef TESSERACT_SERVER_BROWSER_ENABLED
 Client::ServerList Client::load_server_list()
 {
     SH_FFI;
@@ -1772,6 +1773,14 @@ Client::ServerList Client::load_server_list()
     }
     return out;
 }
+
+std::vector<std::uint8_t> Client::fetch_server_icon(const std::string& homepage)
+{
+    SH_FFI;
+    auto r = impl_->ffi->fetch_server_icon(homepage);
+    return std::vector<std::uint8_t>(r.begin(), r.end());
+}
+#endif // TESSERACT_SERVER_BROWSER_ENABLED
 
 Client::UpdateResult Client::check_for_aur_update(const std::string& pkgname,
                                                    const std::string& current_version)

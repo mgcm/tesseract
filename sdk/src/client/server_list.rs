@@ -177,8 +177,54 @@ fn write_cache(path: &Path, body: &str) {
     }
 }
 
+const ICON_MAX_BYTES: usize = 64 * 1024;
+const ICON_TIMEOUT: Duration = Duration::from_secs(8);
+
+/// `https://<host>[:port]/favicon.ico` for a server's homepage; `None` unless
+/// the homepage is an https URL with a host.
+fn icon_url(homepage: &str) -> Option<String> {
+    let url = url::Url::parse(homepage).ok()?;
+    if url.scheme() != "https" {
+        return None;
+    }
+    let mut out = format!("https://{}", url.host_str()?);
+    if let Some(port) = url.port() {
+        out.push_str(&format!(":{port}"));
+    }
+    out.push_str("/favicon.ico");
+    Some(out)
+}
+
+/// Sites often answer a missing favicon with a 200 HTML page; keep only bytes
+/// that start like an ICO, PNG, GIF, JPEG or WebP file.
+fn looks_like_image(b: &[u8]) -> bool {
+    b.starts_with(&[0, 0, 1, 0])
+        || b.starts_with(&[0x89, b'P', b'N', b'G'])
+        || b.starts_with(b"GIF8")
+        || b.starts_with(&[0xFF, 0xD8, 0xFF])
+        || (b.len() > 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP")
+}
+
 #[cfg(not(test))]
 impl super::ClientFfi {
+    /// The favicon of a listed server's site, or empty when there is none.
+    /// Blocks the calling thread; the caller owns caching.
+    pub fn fetch_server_icon(&self, homepage: &str) -> Vec<u8> {
+        let Some(url) = icon_url(homepage) else {
+            return Vec::new();
+        };
+        let bytes = self.rt.block_on(super::media::download_guarded(
+            &url,
+            ICON_MAX_BYTES,
+            ICON_TIMEOUT,
+        ));
+        if looks_like_image(&bytes) {
+            bytes
+        } else {
+            Vec::new()
+        }
+    }
+
     pub fn load_server_list(&self, cache_dir: &str) -> crate::ffi::ServerListFfi {
         let provider = default_provider();
         let path = Path::new(cache_dir).join(provider.cache_file_name());
@@ -280,6 +326,30 @@ mod tests {
         assert!(parse_server_list("not json").is_empty());
         assert!(parse_server_list("[]").is_empty());
         assert!(parse_server_list("{}").is_empty());
+    }
+
+    #[test]
+    fn icon_url_is_origin_favicon_over_https() {
+        assert_eq!(
+            icon_url("https://a.example/some/path?q=1").as_deref(),
+            Some("https://a.example/favicon.ico")
+        );
+        assert_eq!(
+            icon_url("https://a.example:8448/").as_deref(),
+            Some("https://a.example:8448/favicon.ico")
+        );
+        assert_eq!(icon_url("http://a.example"), None);
+        assert_eq!(icon_url("javascript:alert(1)"), None);
+        assert_eq!(icon_url(""), None);
+    }
+
+    #[test]
+    fn only_image_bytes_pass() {
+        assert!(looks_like_image(&[0, 0, 1, 0, 1, 0]));
+        assert!(looks_like_image(&[0x89, b'P', b'N', b'G', 0, 0]));
+        assert!(looks_like_image(b"RIFF\0\0\0\0WEBPVP8 "));
+        assert!(!looks_like_image(b"<!doctype html><html>"));
+        assert!(!looks_like_image(b""));
     }
 
     #[test]
