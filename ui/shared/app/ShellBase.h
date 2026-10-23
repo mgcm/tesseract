@@ -5025,6 +5025,10 @@ protected:
     // im.gnomos.tesseract account data). A pinned space gets a tab in the
     // picker column and is hidden from the room list.
     bool is_space_pinned_(const std::string& space_id) const;
+    // Pinned *and* the picker is on screen. Without room for the picker
+    // (collapsed sidebar, single-pane layout) pins are ignored, so the space
+    // stays reachable from the room list.
+    bool is_space_pin_active_(const std::string& space_id) const;
     void pin_space_(const std::string& space_id);
     void unpin_space_(const std::string& space_id);
     // Drag-reorder from the picker: moves `space_id` in the pinned list to sit

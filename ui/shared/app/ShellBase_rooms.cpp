@@ -1193,7 +1193,7 @@ void ShellBase::refresh_room_list_()
 
         // A pinned space entered from the picker is named by its tab, so the
         // header (name + back button) only appears one level further down.
-        if (space_stack_.size() == 1 && is_space_pinned_(space_id))
+        if (space_stack_.size() == 1 && is_space_pin_active_(space_id))
         {
             main_app_->set_space_nav(false);
         }

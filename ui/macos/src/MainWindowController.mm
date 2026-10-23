@@ -7509,15 +7509,11 @@ private:
     _accountPickerPopover.contentSize = NSMakeSize(kPickerWidth, h);
     _accountPickerSurface->relayout();
 
-    // Anchor the popover above the bottom-left of the main app surface (user strip area).
-    // TKSurfaceView has isFlipped=YES so y=0 is the top; the strip sits at viewH-stripH.
+    // Anchor the popover to the user strip. TKSurfaceView has isFlipped=YES, so
+    // the widget's bounds are already in the view's coordinates.
     NSView* mainAppView = (__bridge NSView*)_mainAppSurface->view_handle();
-    CGFloat stripH = static_cast<CGFloat>(
-        tesseract::views::MainAppWidget::user_strip_height());
-    CGFloat viewH  = mainAppView.bounds.size.height;
-    NSRect stripRect = NSMakeRect(
-        0, viewH - stripH,
-        static_cast<CGFloat>(tesseract::visual::kSidebarWidth), stripH);
+    const tk::Rect strip = _mainApp->user_info()->bounds();
+    NSRect stripRect = NSMakeRect(strip.x, strip.y, strip.w, strip.h);
     [_accountPickerPopover showRelativeToRect:stripRect
                                        ofView:mainAppView
                                 preferredEdge:NSRectEdgeMaxY];

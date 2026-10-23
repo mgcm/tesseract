@@ -336,6 +336,10 @@ void ShellBase::wire_main_app_widget_(views::MainAppWidget* app)
         app->set_room_list_compact(s.room_list_density ==
                                    tesseract::Settings::RoomListDensity::Compact);
     }
+    // The picker column drops out (and pinned spaces return to the room list)
+    // when collapsed or single-pane. Fired mid-layout, so rebuild afterwards.
+    app->on_space_pins_shown_changed = [this](bool)
+    { post_to_ui_([this] { refresh_room_list_(); }); };
     app->on_sidebar_layout_changed = [this](float width, bool collapsed)
     {
         auto& s = tesseract::Settings::instance();

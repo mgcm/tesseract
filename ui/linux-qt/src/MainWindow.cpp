@@ -1433,12 +1433,14 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
         mainAppSurface_, &QWidget::customContextMenuRequested, this,
         [this](const QPoint& pos)
         {
-            using namespace tesseract::visual;
             const bool in_user_strip =
-                pos.x() < kSidebarWidth &&
-                pos.y() >= mainAppSurface_->height() -
-                               static_cast<int>(tesseract::views::MainAppWidget::
-                                                    user_strip_height());
+                mainApp_ && mainApp_->user_info() &&
+                [&]
+            {
+                const auto& r = mainApp_->user_info()->bounds();
+                return pos.x() >= r.x && pos.x() < r.right() &&
+                       pos.y() >= r.y && pos.y() < r.bottom();
+            }();
             if (in_user_strip)
             {
                 onUserStripContextMenu(mainAppSurface_->mapToGlobal(pos));

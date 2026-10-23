@@ -571,6 +571,12 @@ bool ShellBase::is_space_pinned_(const std::string& space_id) const
     return std::find(pins.begin(), pins.end(), space_id) != pins.end();
 }
 
+bool ShellBase::is_space_pin_active_(const std::string& space_id) const
+{
+    return (!main_app_ || main_app_->space_pins_shown()) &&
+           is_space_pinned_(space_id);
+}
+
 void ShellBase::pin_space_(const std::string& space_id)
 {
     if (!active_account_ || space_id.empty() || is_space_pinned_(space_id))
@@ -660,7 +666,7 @@ void ShellBase::refresh_space_picker_()
     if (!main_app_)
         return;
     std::vector<views::SpacePickerEntry> entries;
-    if (active_account_)
+    if (active_account_ && main_app_->space_pins_shown())
     {
         std::vector<RoomInfo> spaces;
         for (const auto& id : active_account_->pinned_spaces)
@@ -694,7 +700,7 @@ void ShellBase::hide_pinned_spaces_(std::vector<RoomInfo>& rooms) const
         return;
     rooms.erase(std::remove_if(rooms.begin(), rooms.end(),
                                [this](const RoomInfo& r)
-                               { return r.is_space && is_space_pinned_(r.id); }),
+                               { return r.is_space && is_space_pin_active_(r.id); }),
                 rooms.end());
 }
 

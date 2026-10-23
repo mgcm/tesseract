@@ -153,17 +153,30 @@ TEST_CASE("font_height_scale grows with larger fonts and never shrinks",
     CHECK(font_height_scale(FontRole::SenderName) == 1.0f);
 }
 
+#include "tk/theme.h"
+#include "tk/widget.h"
+#include "tk_test_surface.h"
 #include "views/MainAppWidget.h"
+#include "views/UserInfo.h"
 
 TEST_CASE("user strip height is 64 at default fonts and grows with them",
           "[font]")
 {
     ConfigGuard g;
     (void)font_role_pt(FontRole::Body, 11); // teaches the system base
-    CHECK(tesseract::views::MainAppWidget::user_strip_height() == 64.0f);
+    auto surface = TestSurface::create(1000, 700);
+    auto app = tk::create_root_widget<tesseract::views::MainAppWidget>(nullptr);
+    const auto strip_h = [&]
+    {
+        tk::LayoutCtx lc{surface->factory(), tk::Theme::light()};
+        app->measure(lc, {1000.0f, 700.0f});
+        app->arrange(lc, {0, 0, 1000.0f, 700.0f});
+        return app->user_info()->bounds().h;
+    };
+    CHECK(strip_h() == 64.0f);
 
     FontConfig c;
     c.base_pt = 22;
     set_font_config(c);
-    CHECK(tesseract::views::MainAppWidget::user_strip_height() > 64.0f);
+    CHECK(strip_h() > 64.0f);
 }

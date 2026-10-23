@@ -21,15 +21,6 @@
 namespace tesseract::views
 {
 
-float MainAppWidget::user_strip_height()
-{
-    // The strip holds a name line and a status/ID line (UserInfo).
-    const float scale =
-        std::max(tk::font_height_scale(tk::FontRole::SidebarName),
-                 tk::font_height_scale(tk::FontRole::SidebarPreview));
-    return std::ceil(kUserStripBaseH * scale);
-}
-
 
 namespace
 {
@@ -258,6 +249,10 @@ class MainAppWidget::SidebarWidget : public tk::Widget
 public:
     explicit SidebarWidget(tk::Host* host)
     {
+        auto picker = std::make_unique<SpacePickerView>();
+        picker_ = add_child(std::move(picker));
+        picker_->set_visible(false);
+
         auto nav = std::make_unique<SpaceNavWidget>();
         space_nav_ = add_child(std::move(nav));
         space_nav_->set_visible(false);
@@ -269,9 +264,12 @@ public:
         user_info_ = add_child(std::move(ui));
     }
 
+    SpacePickerView* space_picker() const { return picker_; }
     SpaceNavWidget* space_nav() const { return space_nav_; }
     RoomListView* room_list_view() const { return room_list_view_; }
     UserInfo* user_info() const { return user_info_; }
+    // Height of the user-info strip as of the last arrange().
+    float user_strip_h() const { return user_strip_h_; }
 
     void set_space_nav(bool show, std::string_view space_name,
                        std::string_view avatar_url)
@@ -292,30 +290,53 @@ public:
             space_nav_->set_avatar_provider(std::move(provider));
     }
 
+    // Width of the space-picker column (0 hides it).
+    void set_picker_width(float w) { picker_w_ = w; }
+
     tk::Size measure(tk::LayoutCtx&, tk::Size constraints) override
     {
         return {kSidebarW, constraints.h};
     }
 
+    // Vertical stack: [ picker | (space header + room list) ] over the
+    // full-width user-info strip, so the strip runs under the picker too.
     void arrange(tk::LayoutCtx& ctx, tk::Rect bounds) override
     {
         bounds_ = bounds;
 
+        // The strip is as tall as UserInfo needs for the current fonts, but
+        // never shorter than the design height.
+        if (user_info_)
+            user_strip_h_ = std::max(
+                kUserStripBaseH,
+                std::ceil(user_info_->measure(ctx, {bounds.w, bounds.h}).h));
+        const float user_strip_y = bounds.y + bounds.h - user_strip_h_;
+        if (user_info_)
+            user_info_->arrange(ctx, {bounds.x, user_strip_y, bounds.w, user_strip_h_});
+
+        const float pw = std::min(picker_w_, bounds.w);
+        if (picker_)
+        {
+            picker_->set_visible(pw > 0.0f);
+            picker_->arrange(ctx, pw > 0.0f
+                                      ? tk::Rect{bounds.x, bounds.y, pw,
+                                                 std::max(0.0f, user_strip_y - bounds.y)}
+                                      : tk::Rect{});
+        }
+
+        const float list_x = bounds.x + pw;
+        const float list_w = bounds.w - pw;
         float content_y = bounds.y;
         if (space_nav_visible_ && space_nav_)
         {
-            space_nav_->arrange(ctx, {bounds.x, bounds.y, bounds.w, kSpaceNavH});
+            space_nav_->arrange(ctx, {list_x, bounds.y, list_w, kSpaceNavH});
             content_y = bounds.y + kSpaceNavH;
         }
-
-        const float user_strip_y = bounds.y + bounds.h - MainAppWidget::user_strip_height();
-        if (user_info_)
-            user_info_->arrange(ctx, {bounds.x, user_strip_y, bounds.w, MainAppWidget::user_strip_height()});
 
         if (room_list_view_)
         {
             room_list_view_->arrange(ctx,
-                                     {bounds.x, content_y, bounds.w,
+                                     {list_x, content_y, list_w,
                                       std::max(0.0f, user_strip_y - content_y)});
         }
     }
@@ -325,8 +346,8 @@ public:
         const auto& pal = ctx.theme.palette;
         ctx.canvas.fill_rect(bounds_, pal.sidebar_bg);
 
-        const float strip_y = bounds_.y + bounds_.h - MainAppWidget::user_strip_height();
-        ctx.canvas.fill_rect({bounds_.x, strip_y, bounds_.w, MainAppWidget::user_strip_height()},
+        const float strip_y = bounds_.y + bounds_.h - user_strip_h_;
+        ctx.canvas.fill_rect({bounds_.x, strip_y, bounds_.w, user_strip_h_},
                              pal.sidebar_bg);
         ctx.canvas.fill_rect({bounds_.x, strip_y, bounds_.w, 1.0f},
                              pal.separator);
@@ -337,10 +358,14 @@ public:
 private:
     static constexpr float kSidebarW = MainAppWidget::kSidebarW;
     static constexpr float kSpaceNavH = MainAppWidget::kSpaceNavH;
+    static constexpr float kUserStripBaseH = MainAppWidget::kUserStripBaseH;
 
     SpaceNavWidget* space_nav_ = nullptr;
     RoomListView* room_list_view_ = nullptr;
     UserInfo* user_info_ = nullptr;
+    float user_strip_h_ = kUserStripBaseH;
+    SpacePickerView* picker_ = nullptr;
+    float picker_w_ = 0.0f;
     bool space_nav_visible_ = false;
 };
 
@@ -524,10 +549,6 @@ public:
 
     explicit RootLayoutWidget(tk::Host* host)
     {
-        auto picker = std::make_unique<SpacePickerView>();
-        picker_ = add_child(std::move(picker));
-        picker_->set_visible(false);
-
         auto sidebar = std::make_unique<SidebarWidget>(host);
         sidebar_ = add_child(std::move(sidebar));
 
@@ -572,7 +593,7 @@ public:
 
     SidebarWidget* sidebar() const { return sidebar_; }
     ChatPanelWidget* chat_panel() const { return chat_panel_; }
-    SpacePickerView* space_picker() const { return picker_; }
+    SpacePickerView* space_picker() const { return sidebar_->space_picker(); }
 
     // The picker only exists while at least one space is pinned, and only in
     // the two-pane layout (the narrow layout shows a single full-width pane).
@@ -583,6 +604,9 @@ public:
         if (host()) host()->mark_needs_relayout();
     }
     bool picker_shown() const { return picker_shown_; }
+    // Whether the layout has room for the picker column: not in the
+    // single-pane layout and not with the sidebar collapsed to icons.
+    bool picker_fits() const { return !is_narrow_ && !collapsed_; }
 
     Pane active_pane() const { return active_pane_; }
     // Requests its own relayout on an actual change — a custom enum-based
@@ -666,17 +690,11 @@ public:
             const float eff_w = collapsed_ ? collapsed_w_ : sidebar_w_;
             const float pw    = picker_w_();
 
-            if (picker_)
-            {
-                picker_->set_visible(pw > 0.0f);
-                picker_->arrange(ctx, pw > 0.0f
-                                          ? tk::Rect{bounds.x, bounds.y, pw, bounds.h}
-                                          : tk::Rect{});
-            }
             if (sidebar_)
             {
                 sidebar_->set_visible(true);
-                sidebar_->arrange(ctx, {bounds.x + pw, bounds.y, eff_w, bounds.h});
+                sidebar_->set_picker_width(pw);
+                sidebar_->arrange(ctx, {bounds.x, bounds.y, pw + eff_w, bounds.h});
             }
             if (chat_panel_)
             {
@@ -694,11 +712,6 @@ public:
         }
         if (grip_target_)
             grip_target_->arrange(ctx, {}); // no separator in narrow mode
-        if (picker_)
-        {
-            picker_->set_visible(false);
-            picker_->arrange(ctx, {});
-        }
 
         // Narrow: only the active pane is shown, full width. Icon-only mode is
         // dropped here (it's a single full-width pane). Both children still get
@@ -709,6 +722,7 @@ public:
         if (sidebar_)
         {
             sidebar_->set_visible(!show_room);
+            sidebar_->set_picker_width(0.0f);
             sidebar_->arrange(ctx, !show_room ? bounds : tk::Rect{});
         }
         if (chat_panel_)
@@ -857,7 +871,7 @@ private:
     // Width the picker column takes to the left of the room list.
     float picker_w_() const
     {
-        return picker_shown_ && !is_narrow_ ? SpacePickerView::kWidth : 0.0f;
+        return picker_shown_ && picker_fits() ? SpacePickerView::kWidth : 0.0f;
     }
 
     // x of the room-list / chat separator.
@@ -880,7 +894,9 @@ private:
     tk::Rect grip_rect_() const
     {
         const float sx = separator_x_();
-        const float cy = bounds_.y + bounds_.h - MainAppWidget::user_strip_height();
+        const float strip_h =
+            sidebar_ ? sidebar_->user_strip_h() : MainAppWidget::kUserStripBaseH;
+        const float cy = bounds_.y + bounds_.h - strip_h;
         return {sx - kGripR, cy - kGripR, kGripR * 2.0f, kGripR * 2.0f};
     }
 
@@ -959,7 +975,6 @@ private:
     }
 
     SidebarWidget* sidebar_ = nullptr;
-    SpacePickerView* picker_ = nullptr;
     bool picker_shown_ = false;
     ChatPanelWidget* chat_panel_ = nullptr;
     tk::KeyboardTarget* grip_target_ = nullptr;
@@ -1416,6 +1431,21 @@ void MainAppWidget::set_room_list_compact(bool compact)
         sidebar_->user_info()->set_icon_avatar_size(av);
     if (root_layout_)
         root_layout_->set_collapsed_width(sidebar_collapsed_width(av));
+}
+
+bool MainAppWidget::space_pins_shown() const
+{
+    return !root_layout_ || root_layout_->picker_fits();
+}
+
+void MainAppWidget::notify_pins_shown_()
+{
+    const bool shown = space_pins_shown();
+    if (shown == last_pins_shown_)
+        return;
+    last_pins_shown_ = shown;
+    if (on_space_pins_shown_changed)
+        on_space_pins_shown_changed(shown);
 }
 
 void MainAppWidget::set_sidebar_collapsed(bool collapsed)
@@ -2124,6 +2154,7 @@ void MainAppWidget::arrange(tk::LayoutCtx& ctx, tk::Rect bounds)
     // message search their full-bleed coverage.
     const bool was_narrow = root_layout_ && root_layout_->is_narrow();
     tk::Widget::arrange(ctx, bounds);
+    notify_pins_shown_();
 
     if (root_layout_ && !was_narrow && root_layout_->is_narrow())
     {
@@ -2135,6 +2166,7 @@ void MainAppWidget::arrange(tk::LayoutCtx& ctx, tk::Rect bounds)
                                           ? RootLayoutWidget::Pane::Room
                                           : RootLayoutWidget::Pane::List);
         root_layout_->arrange(ctx, bounds);
+        notify_pins_shown_();
     }
 
     // The floating call layer was arranged above before the compose bar's

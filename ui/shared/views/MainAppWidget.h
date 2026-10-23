@@ -8,7 +8,7 @@
 //   Sidebar (kSidebarW fixed)
 //     Space-nav bar (kSpaceNavH, hidden until navigating a space)
 //     RoomListView (flex)
-//     UserInfo (user_strip_height())
+//     UserInfo (as tall as its content needs, at least kUserStripBaseH)
 //   1px Separator
 //   Chat panel (flex)
 //     EncryptionReminderBanner (48px, hidden by default)
@@ -82,11 +82,6 @@ protected:
     TK_WIDGET_FACTORY_FRIEND(MainAppWidget)
 
 public:
-    // Height of the user strip at the bottom of the sidebar: 64 px at the
-    // default fonts, growing with the user's font config. Shells use this for
-    // right-click hit tests and popover anchoring.
-    static float user_strip_height();
-
     ~MainAppWidget() override = default;
 
     // ── Space navigation bar ──────────────────────────────────────────────
@@ -368,6 +363,14 @@ public:
     // state at startup. Safe to call before the first layout.
     void set_sidebar_width(float w);
     void set_sidebar_collapsed(bool collapsed);
+
+    // True while the layout has room for the pinned-space picker column; false
+    // in the single-pane layout and with the sidebar collapsed to icons. The
+    // shell treats pinned spaces as unpinned while this is false.
+    bool space_pins_shown() const;
+    // Fires from arrange() when space_pins_shown() flips. The tree is mid-
+    // layout, so the shell must defer any rebuild (post_to_ui).
+    std::function<void(bool shown)> on_space_pins_shown_changed;
     // Compact room list: name-only rows, and a slimmer icon-only column with a
     // smaller user-strip avatar.
     void set_room_list_compact(bool compact);
@@ -444,6 +447,8 @@ private:
 
     // Primary split layout
     RootLayoutWidget* root_layout_ = nullptr;
+    bool last_pins_shown_ = true;
+    void notify_pins_shown_();
     SidebarWidget* sidebar_ = nullptr;
     RoomListView* room_list_view_ = nullptr;
     UserInfo* user_info_ = nullptr;

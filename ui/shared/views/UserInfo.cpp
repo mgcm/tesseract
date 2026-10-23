@@ -26,19 +26,6 @@ constexpr float kHoverRadius = tesseract::visual::kRadiusSM;
 // reads the same way an active room does.
 constexpr float kActiveBarW = 3.0f;
 
-// MSC4426 status line's approximate slot height, used only by measure() to
-// estimate the row's natural height before any real text layout exists.
-// paint() computes the real height itself once it has built the emoji/text
-// layouts (see its own status-line comment) rather than relying on this
-// constant or on any backend's TextVAlign::Center — that request-a-box-
-// and-let-the-backend-centre-it approach turned out to behave differently
-// per backend (Qt centres within the box; CoreText on macOS ignores it and
-// always draws at the box's literal top, and a too-tight box can also make
-// CoreText drop a line that doesn't fit it entirely). Centring by hand from
-// each layout's own measure() is simple, has no such backend-specific
-// surprises, and is what paint() does now.
-constexpr float kUserInfoStatusRowH = 20.0f;
-
 // Slightly transparent ink for the Matrix ID line. The palette has a
 // dedicated `text_muted` token used by timestamps; we reuse it here.
 tk::Color id_colour(const tk::Theme& theme)
@@ -183,32 +170,38 @@ void UserInfo::invalidate_text()
 // Layout
 // ---------------------------------------------------------------------------
 
-tk::Size UserInfo::measure(tk::LayoutCtx&, tk::Size constraints)
+tk::Size UserInfo::measure(tk::LayoutCtx& ctx, tk::Size constraints)
 {
     // Width: take whatever the parent offers — the user-strip and the
     // picker rows both want to stretch to fill the column.
     const float w = constraints.w > 0 ? constraints.w : 0;
 
-    // Height: max(avatar, name + (id if shown)) + 2 × pad.
-    // We don't have a text layout here (factory not threaded into measure
-    // for plain widgets) so we approximate the text-column height from
-    // FontRole metric ranges. The numbers below match what the four
-    // backends actually emit for SidebarName (≈18 px) and SidebarPreview
-    // (≈14 px); paint() doesn't depend on these — they just feed the
-    // natural-height calculation.
-    // Grown with the user's font config (sized here for the default fonts).
-    const float name_scale = tk::font_height_scale(tk::FontRole::SidebarName);
-    const float small_scale = tk::font_height_scale(tk::FontRole::SidebarPreview);
-    const float kNameH = std::ceil(18.0f * name_scale);
-    const float kIdH = std::ceil(14.0f * small_scale);
-    const float status_row_h = std::ceil(kUserInfoStatusRowH * small_scale);
+    // Height: max(avatar, name + id (+ status row)) + 2 × pad, with each
+    // line's height taken from the backend's own metrics for the role paint()
+    // uses. A line's height depends on its font, not its text, so a sample
+    // string stands in for the real one (which may be empty or still loading).
+    const auto line_h = [&ctx](tk::FontRole role, std::string_view sample)
+    {
+        tk::TextStyle st;
+        st.role = role;
+        st.trim = tk::TextTrim::None;
+        const auto layout = ctx.factory.build_text(std::string(sample), st);
+        return layout ? layout->measure().h : 0.0f;
+    };
 
     float text_col_h = 0.0f;
     if (!icon_only_)
     {
-        text_col_h = kNameH + kUserInfoLineGap + kIdH;
+        text_col_h = line_h(tk::FontRole::SidebarName, "Ag") + kUserInfoLineGap +
+                     line_h(tk::FontRole::SidebarPreview, "Ag");
         if (status_line_enabled_)
-            text_col_h += kUserInfoLineGap + status_row_h;
+        {
+            // paint() sizes the row by the taller of the emoji (Body) and
+            // text (SidebarPreview) layouts.
+            text_col_h += kUserInfoLineGap +
+                          std::max(line_h(tk::FontRole::Body, "\xF0\x9F\x98\x80"),
+                                   line_h(tk::FontRole::SidebarPreview, "Ag"));
+        }
     }
     const float h = std::max(shown_avatar_(), text_col_h) + 2 * kUserInfoPadY;
     return {w, h};

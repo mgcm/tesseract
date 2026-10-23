@@ -5687,10 +5687,9 @@ void MainWindow::on_msg_right_click_(GtkGestureClick* gesture, int /*n_press*/,
     if (self->main_app_ && self->main_app_->user_info() &&
         self->main_app_->user_info()->on_secondary)
     {
-        const int surf_h =
-            gtk_widget_get_height(self->main_app_surface_->widget());
-        if (x < tesseract::visual::kSidebarWidth &&
-            y >= surf_h - tesseract::views::MainAppWidget::user_strip_height())
+        const auto& strip = self->main_app_->user_info()->bounds();
+        if (x >= strip.x && x < strip.right() && y >= strip.y &&
+            y < strip.bottom())
         {
             gtk_gesture_set_state(GTK_GESTURE(gesture),
                                   GTK_EVENT_SEQUENCE_CLAIMED);
