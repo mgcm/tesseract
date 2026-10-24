@@ -438,8 +438,7 @@ pub async fn start_call(
         // Set our own key first so the FrameCryptor can start encrypting
         // before we broadcast (avoids sending the key before frames are ready).
         sfus.primary.set_own_frame_key(&raw, idx as i32);
-        let recipients: Vec<(String, String)> =
-            initial_members.iter().map(|m| m.key()).collect();
+        let recipients: Vec<(String, String)> = initial_members.iter().map(|m| m.key()).collect();
         broadcast_key_to_members(client, &recipients, room_id, &lk_identity, &key_b64, idx).await;
     }
 
@@ -458,12 +457,13 @@ pub async fn start_call(
 
     let (member_tx, member_rx) = tokio::sync::mpsc::channel::<()>(4);
     let member_tx_h = member_tx.clone();
-    let member_handle = room.add_event_handler(move |_ev: SyncStateEvent<CallMemberEventContent>| {
-        let tx = member_tx_h.clone();
-        async move {
-            let _ = tx.try_send(());
-        }
-    });
+    let member_handle =
+        room.add_event_handler(move |_ev: SyncStateEvent<CallMemberEventContent>| {
+            let tx = member_tx_h.clone();
+            async move {
+                let _ = tx.try_send(());
+            }
+        });
     let member_guard = client.event_handler_drop_guard(member_handle);
     let reconcile_task = tokio::spawn(reconcile_loop(
         room.clone(),
@@ -763,8 +763,7 @@ async fn reconcile_loop(
                 let mgr = e2ee.lock();
                 (mgr.own_index(), mgr.own_key_b64())
             };
-            broadcast_key_to_members(&client, &joined, &room_id, &lk_identity, &key_b64, idx)
-                .await;
+            broadcast_key_to_members(&client, &joined, &room_id, &lk_identity, &key_b64, idx).await;
         }
 
         member_transports.replace(transport_map(&members, Some((join_ts, &local_focus))));
@@ -784,7 +783,9 @@ async fn reconcile_loop(
 
 /// Register a global m.rtc.member handler that fires `on_invitation` when
 /// another user opens a call slot. Called from sync.rs::start_sync.
-pub fn register_invitation_handler(client: &matrix_sdk::Client) -> matrix_sdk::event_handler::EventHandlerHandle {
+pub fn register_invitation_handler(
+    client: &matrix_sdk::Client,
+) -> matrix_sdk::event_handler::EventHandlerHandle {
     use matrix_sdk::ruma::events::SyncStateEvent;
 
     let client_clone = client.clone();
@@ -869,7 +870,9 @@ pub fn register_invitation_handler(client: &matrix_sdk::Client) -> matrix_sdk::e
 
 /// Register a handler for MSC3401 `org.matrix.msc3401.call.member` events.
 /// Element Web uses this format. Called alongside `register_invitation_handler`.
-pub fn register_msc3401_invitation_handler(client: &matrix_sdk::Client) -> matrix_sdk::event_handler::EventHandlerHandle {
+pub fn register_msc3401_invitation_handler(
+    client: &matrix_sdk::Client,
+) -> matrix_sdk::event_handler::EventHandlerHandle {
     use matrix_sdk::ruma::events::{
         call::member::{Application, CallMemberEventContent},
         SyncStateEvent,
@@ -905,7 +908,10 @@ pub fn register_msc3401_invitation_handler(client: &matrix_sdk::Client) -> matri
                 // expires, default 4h) has passed is equally not a live invitation. This
                 // also covers stale timeline replay redelivered via
                 // ClientFfi::sync_room_subscriptions when a room is (re-)opened.
-                if content.active_memberships(Some(origin_server_ts)).is_empty() {
+                if content
+                    .active_memberships(Some(origin_server_ts))
+                    .is_empty()
+                {
                     return;
                 }
 
@@ -933,7 +939,9 @@ pub fn register_msc3401_invitation_handler(client: &matrix_sdk::Client) -> matri
 /// Register a handler for stable `m.rtc.notification` and unstable
 /// `org.matrix.msc4075.rtc.notification` events (MSC4075).
 /// Fires `on_invitation` when a ring notification arrives from another user.
-pub fn register_rtc_notification_handler(client: &matrix_sdk::Client) -> Vec<matrix_sdk::event_handler::EventHandlerHandle> {
+pub fn register_rtc_notification_handler(
+    client: &matrix_sdk::Client,
+) -> Vec<matrix_sdk::event_handler::EventHandlerHandle> {
     use matrix_sdk::ruma::events::{
         rtc::notification::{CallIntent, NotificationType, RtcNotificationEventContent},
         SyncMessageLikeEvent,
@@ -1099,7 +1107,10 @@ mod invitation_staleness_tests {
 
     fn call_member_content(created_ts: MilliSecondsSinceUnixEpoch) -> CallMemberEventContent {
         CallMemberEventContent::new(
-            Application::Call(CallApplicationContent::new("123456".to_owned(), CallScope::Room)),
+            Application::Call(CallApplicationContent::new(
+                "123456".to_owned(),
+                CallScope::Room,
+            )),
             owned_device_id!("ABCDE"),
             ActiveFocus::Livekit(ActiveLivekitFocus::new()),
             vec![Focus::Livekit(LivekitFocus::new(
@@ -1179,8 +1190,18 @@ mod key_event_tests {
 
     #[test]
     fn rejects_other_room_or_application() {
-        assert!(check_key_event_fields("!r:x.org", &content("!other:x.org", "m.call", "DEV"), Some(Some("DEV"))).is_err());
-        assert!(check_key_event_fields("!r:x.org", &content("!r:x.org", "m.whiteboard", "DEV"), Some(Some("DEV"))).is_err());
+        assert!(check_key_event_fields(
+            "!r:x.org",
+            &content("!other:x.org", "m.call", "DEV"),
+            Some(Some("DEV"))
+        )
+        .is_err());
+        assert!(check_key_event_fields(
+            "!r:x.org",
+            &content("!r:x.org", "m.whiteboard", "DEV"),
+            Some(Some("DEV"))
+        )
+        .is_err());
     }
 
     #[test]
@@ -1233,7 +1254,10 @@ mod id_tests {
                 vec![8, 4, 4, 4, 12],
                 "{id}"
             );
-            assert!(id.chars().all(|c| c == '-' || c.is_ascii_hexdigit()), "{id}");
+            assert!(
+                id.chars().all(|c| c == '-' || c.is_ascii_hexdigit()),
+                "{id}"
+            );
             assert!(id.chars().all(|c| !c.is_ascii_uppercase()), "{id}");
             assert!(parts[2].starts_with('4'), "version nibble: {id}");
             assert!(

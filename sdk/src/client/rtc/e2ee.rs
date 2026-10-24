@@ -298,7 +298,10 @@ mod tests {
         let hk = Hkdf::<Sha256>::new(Some(b"livekit_frame"), &material);
         let mut expected = [0u8; 16];
         hk.expand(b"@a:x:DEV\x03", &mut expected).unwrap();
-        assert_eq!(E2eeManager::derive_frame_key(&material, "@a:x:DEV", 3), expected);
+        assert_eq!(
+            E2eeManager::derive_frame_key(&material, "@a:x:DEV", 3),
+            expected
+        );
     }
 
     #[test]
@@ -312,10 +315,16 @@ mod tests {
     fn own_frame_key_follows_own_key_and_index() {
         let mut mgr = E2eeManager::new();
         let before = mgr.own_frame_key("me");
-        assert_eq!(before, E2eeManager::derive_frame_key(mgr.own_raw_key(), "me", 0));
+        assert_eq!(
+            before,
+            E2eeManager::derive_frame_key(mgr.own_raw_key(), "me", 0)
+        );
         let (idx, b64) = mgr.rotate();
         assert_eq!(b64, mgr.own_key_b64());
-        assert_eq!(mgr.own_frame_key("me"), E2eeManager::derive_frame_key(mgr.own_raw_key(), "me", idx));
+        assert_eq!(
+            mgr.own_frame_key("me"),
+            E2eeManager::derive_frame_key(mgr.own_raw_key(), "me", idx)
+        );
         assert_ne!(mgr.own_frame_key("me"), before);
     }
 
@@ -348,8 +357,11 @@ mod tests {
     #[test]
     fn receive_peer_key_same_index_overwrites() {
         let mut mgr = E2eeManager::new();
-        mgr.receive_peer_key("p", 0, &Base64::encode_string(&[1u8; 32])).unwrap();
-        let second = mgr.receive_peer_key("p", 0, &Base64::encode_string(&[2u8; 32])).unwrap();
+        mgr.receive_peer_key("p", 0, &Base64::encode_string(&[1u8; 32]))
+            .unwrap();
+        let second = mgr
+            .receive_peer_key("p", 0, &Base64::encode_string(&[2u8; 32]))
+            .unwrap();
         assert_eq!(mgr.peer_keys["p"][&0], second);
         assert_eq!(mgr.peer_keys["p"].len(), 1);
     }

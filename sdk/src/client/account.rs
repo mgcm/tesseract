@@ -539,8 +539,7 @@ impl ClientFfi {
         use matrix_sdk::ruma::events::GlobalAccountDataEventType;
         use matrix_sdk::ruma::serde::Raw;
 
-        const SAVE_PREFS_SHUTDOWN_TIMEOUT: std::time::Duration =
-            std::time::Duration::from_secs(3);
+        const SAVE_PREFS_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
         let Some(client) = self.client.clone() else {
             return err("not logged in");
@@ -1352,10 +1351,15 @@ impl ClientFfi {
             // so a bridged 1:1 (you + bot + puppet) still matches as a DM.
             for room in client.joined_rooms() {
                 if room.is_direct().await.unwrap_or(false) {
-                    if let Ok(ids) = room.human_member_ids(matrix_sdk::RoomMemberships::JOIN).await {
+                    if let Ok(ids) = room
+                        .human_member_ids(matrix_sdk::RoomMemberships::JOIN)
+                        .await
+                    {
                         if ids.len() == 2
                             && ids.iter().any(|id| *id == uid)
-                            && client.user_id().is_some_and(|me| ids.iter().any(|id| id == me))
+                            && client
+                                .user_id()
+                                .is_some_and(|me| ids.iter().any(|id| id == me))
                         {
                             return room.room_id().to_string();
                         }
@@ -1823,9 +1827,12 @@ mod json_helper_tests {
 
     #[test]
     fn discovery_json_carries_all_three_fields() {
-        let v: serde_json::Value =
-            serde_json::from_str(&ClientFfi::discovery_json_str("https://hs.example.org", "", true))
-                .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&ClientFfi::discovery_json_str(
+            "https://hs.example.org",
+            "",
+            true,
+        ))
+        .unwrap();
         assert_eq!(v["base_url"], "https://hs.example.org");
         assert_eq!(v["error"], "");
         assert_eq!(v["supports_password"], true);

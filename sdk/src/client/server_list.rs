@@ -131,8 +131,14 @@ pub fn parse_server_list(json: &str) -> Vec<crate::ffi::ServerListEntryFfi> {
     let Ok(raw) = serde_json::from_str::<RawList>(json) else {
         return Vec::new();
     };
-    let public = raw.public_servers.into_iter().filter_map(|e| convert(e, true));
-    let private = raw.private_servers.into_iter().filter_map(|e| convert(e, false));
+    let public = raw
+        .public_servers
+        .into_iter()
+        .filter_map(|e| convert(e, true));
+    let private = raw
+        .private_servers
+        .into_iter()
+        .filter_map(|e| convert(e, false));
     public.chain(private).collect()
 }
 

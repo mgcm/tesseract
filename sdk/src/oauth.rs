@@ -20,7 +20,10 @@ use matrix_sdk::{
         registration::{ApplicationType, ClientMetadata, Localized, OAuthGrantType},
         ClientRegistrationData,
     },
+    config::RequestConfig,
+    cross_process_lock::CrossProcessLockConfig,
     encryption::{BackupDownloadStrategy, EncryptionSettings},
+    media::MediaRetentionPolicy,
     utils::{
         local_server::{
             LocalServerBuilder, LocalServerIpAddress, LocalServerResponse,
@@ -28,9 +31,6 @@ use matrix_sdk::{
         },
         UrlOrQuery,
     },
-    config::RequestConfig,
-    cross_process_lock::CrossProcessLockConfig,
-    media::MediaRetentionPolicy,
     Client, SqliteStoreConfig, ThreadingSupport,
 };
 use rand::RngCore;
@@ -337,7 +337,12 @@ pub(crate) async fn build_configured_client(
     // sensible default (400 MiB cache / 20 MiB per file / 60-day expiry, daily
     // automatic cleanup) once; it persists in matrix-sdk-media.sqlite3 and is
     // restored on every later client build, so only set it the first time.
-    if !client.media().media_retention_policy().await?.has_limitations() {
+    if !client
+        .media()
+        .media_retention_policy()
+        .await?
+        .has_limitations()
+    {
         client
             .media()
             .set_media_retention_policy(MediaRetentionPolicy::default())
@@ -809,7 +814,10 @@ mod describe_and_ua_tests {
         let ua = build_user_agent();
         let prefix = format!("Tesseract/{} (", env!("CARGO_PKG_VERSION"));
         assert!(ua.starts_with(&prefix), "{ua}");
-        assert!(ua.ends_with(&format!("; {})", std::env::consts::OS)), "{ua}");
+        assert!(
+            ua.ends_with(&format!("; {})", std::env::consts::OS)),
+            "{ua}"
+        );
         // MAS splits the parenthetical on ';': exactly two tokens must remain.
         let inner = &ua[prefix.len()..ua.len() - 1];
         assert_eq!(inner.matches(';').count(), 1, "{ua}");
@@ -819,7 +827,10 @@ mod describe_and_ua_tests {
     #[test]
     fn user_agent_is_a_valid_header_value() {
         let ua = build_user_agent();
-        assert!(matrix_sdk::reqwest::header::HeaderValue::from_str(&ua).is_ok(), "{ua}");
+        assert!(
+            matrix_sdk::reqwest::header::HeaderValue::from_str(&ua).is_ok(),
+            "{ua}"
+        );
     }
 
     #[test]

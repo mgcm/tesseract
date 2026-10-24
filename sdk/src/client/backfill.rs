@@ -26,6 +26,8 @@ pub(crate) struct BackfillPreview {
 }
 
 #[cfg(not(test))]
+use futures_util::StreamExt;
+#[cfg(not(test))]
 use matrix_sdk::ruma::OwnedRoomId;
 #[cfg(not(test))]
 use matrix_sdk::Client;
@@ -33,8 +35,6 @@ use matrix_sdk::Client;
 use matrix_sdk_ui::timeline::{
     MsgLikeContent, MsgLikeKind, RoomExt, TimelineDetails, TimelineItemContent, TimelineItemKind,
 };
-#[cfg(not(test))]
-use futures_util::StreamExt;
 #[cfg(not(test))]
 use parking_lot::Mutex;
 #[cfg(not(test))]
@@ -143,7 +143,11 @@ impl ClientFfi {
         let abort = self
             .rt
             .spawn(async move {
-                let _job = super::activity::begin("inactive-room-timestamp-backfill", "Backfill", super::activity::JobKind::OneShot);
+                let _job = super::activity::begin(
+                    "inactive-room-timestamp-backfill",
+                    "Backfill",
+                    super::activity::JobKind::OneShot,
+                );
                 let mut joinset = tokio::task::JoinSet::new();
 
                 for rid in to_backfill {
@@ -252,10 +256,7 @@ impl ClientFfi {
     }
 
     #[cfg(not(test))]
-    pub fn start_background_backfill(
-        &self,
-        room_ids: &cxx::CxxVector<cxx::CxxString>,
-    ) -> OpResult {
+    pub fn start_background_backfill(&self, room_ids: &cxx::CxxVector<cxx::CxxString>) -> OpResult {
         // Idempotent: if a previous orchestrator is still running, leave it
         // alone. Finished/aborted handles can be replaced.
         {
@@ -379,7 +380,11 @@ impl ClientFfi {
         let abort = self
             .rt
             .spawn(async move {
-                let _job = super::activity::begin("uncached-room-backfill", "Backfill", super::activity::JobKind::OneShot);
+                let _job = super::activity::begin(
+                    "uncached-room-backfill",
+                    "Backfill",
+                    super::activity::JobKind::OneShot,
+                );
                 // Process in batches of 50 so the event cache's internal broadcast
                 // channel is never overwhelmed. Subscribing all rooms at once
                 // produces a sync payload large enough to overflow the channel,
@@ -489,8 +494,7 @@ impl ClientFfi {
                                 Ok(p) => p,
                                 Err(_) => return,
                             };
-                            let Ok(preview) = backfill_room_silent(&client, &rid, 50).await
-                            else {
+                            let Ok(preview) = backfill_room_silent(&client, &rid, 50).await else {
                                 note_backfill_failure(&retry, rid.as_str());
                                 return;
                             };
@@ -579,10 +583,7 @@ impl ClientFfi {
     /// Idempotent: if a check is still in flight the call is a no-op.
     /// Called by the C++ shell whenever the visible room set changes.
     #[cfg(not(test))]
-    pub fn start_bridge_status_check(
-        &self,
-        room_ids: &cxx::CxxVector<cxx::CxxString>,
-    ) -> OpResult {
+    pub fn start_bridge_status_check(&self, room_ids: &cxx::CxxVector<cxx::CxxString>) -> OpResult {
         {
             let guard = self.bridge_check_task.lock();
             if let Some(h) = guard.as_ref() {
@@ -785,7 +786,11 @@ impl ClientFfi {
 
         self.rt
             .spawn(async move {
-                let _job = super::activity::begin("unread-prefetch", "Backfill", super::activity::JobKind::OneShot);
+                let _job = super::activity::begin(
+                    "unread-prefetch",
+                    "Backfill",
+                    super::activity::JobKind::OneShot,
+                );
                 let mut batch = initial;
                 loop {
                     let mut joinset = tokio::task::JoinSet::new();
@@ -1196,10 +1201,12 @@ pub(super) fn open_app_cache_db(data_dir: &std::path::Path) -> Option<rusqlite::
          );",
     )
     .ok()?;
-    conn.execute_batch(super::history_export::store::CREATE_TABLE_SQL).ok()?;
+    conn.execute_batch(super::history_export::store::CREATE_TABLE_SQL)
+        .ok()?;
     super::history_export::store::ensure_stop_at_ts_column(&conn).ok()?;
     ensure_bridge_status_columns(&conn).ok()?;
-    conn.execute_batch(super::room_media_store::CREATE_TABLE_SQL).ok()?;
+    conn.execute_batch(super::room_media_store::CREATE_TABLE_SQL)
+        .ok()?;
     prune_stale_backoff_and_cache_rows(&conn);
     Some(conn)
 }
@@ -1229,10 +1236,16 @@ fn ensure_bridge_status_columns(conn: &rusqlite::Connection) -> rusqlite::Result
         )?;
     }
     if !existing.contains("cap_threads") {
-        conn.execute("ALTER TABLE bridge_status ADD COLUMN cap_threads INTEGER", [])?;
+        conn.execute(
+            "ALTER TABLE bridge_status ADD COLUMN cap_threads INTEGER",
+            [],
+        )?;
     }
     if !existing.contains("checked_at") {
-        conn.execute("ALTER TABLE bridge_status ADD COLUMN checked_at INTEGER", [])?;
+        conn.execute(
+            "ALTER TABLE bridge_status ADD COLUMN checked_at INTEGER",
+            [],
+        )?;
     }
     Ok(())
 }
@@ -1577,7 +1590,12 @@ pub(super) fn replace_known_room_packs(
         let _ = conn.execute(
             "INSERT OR REPLACE INTO room_image_pack_cache \
              (room_id, state_key, display_name, checked_at) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![room_id, pack.source_state_key(), pack.display_name, checked_at],
+            rusqlite::params![
+                room_id,
+                pack.source_state_key(),
+                pack.display_name,
+                checked_at
+            ],
         );
     }
 }
@@ -2158,7 +2176,11 @@ mod known_room_pack_tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(
             rows[0],
-            ("!a:ex.org".to_owned(), "".to_owned(), "Room Pack".to_owned())
+            (
+                "!a:ex.org".to_owned(),
+                "".to_owned(),
+                "Room Pack".to_owned()
+            )
         );
     }
 
@@ -2205,7 +2227,10 @@ mod known_room_pack_tests {
         replace_known_room_packs(
             &conn,
             "!a:ex.org",
-            &[room_pack("", "Fresh Default"), room_pack("named", "Fresh Named")],
+            &[
+                room_pack("", "Fresh Default"),
+                room_pack("named", "Fresh Named"),
+            ],
             2000,
         );
         let mut rows = read_known_room_packs(&conn);
@@ -2213,8 +2238,16 @@ mod known_room_pack_tests {
         assert_eq!(
             rows,
             vec![
-                ("!a:ex.org".to_owned(), "".to_owned(), "Fresh Default".to_owned()),
-                ("!a:ex.org".to_owned(), "named".to_owned(), "Fresh Named".to_owned()),
+                (
+                    "!a:ex.org".to_owned(),
+                    "".to_owned(),
+                    "Fresh Default".to_owned()
+                ),
+                (
+                    "!a:ex.org".to_owned(),
+                    "named".to_owned(),
+                    "Fresh Named".to_owned()
+                ),
             ]
         );
     }

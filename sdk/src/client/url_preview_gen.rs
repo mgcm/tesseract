@@ -129,7 +129,11 @@ pub(super) fn parse_hs_preview_json(json: &str) -> Option<HsPreview> {
         .filter(|s| s.starts_with("mxc://"))
         .map(matrix_sdk::ruma::OwnedMxcUri::from)
         .filter(|m| m.is_valid());
-    let dim = |k: &str| num(k).and_then(|d| u32::try_from(d).ok()).filter(|&d| d > 0);
+    let dim = |k: &str| {
+        num(k)
+            .and_then(|d| u32::try_from(d).ok())
+            .filter(|&d| d > 0)
+    };
     let has_image = image_mxc.is_some();
     let p = HsPreview {
         title: text("og:title", crate::url_preview::MAX_TITLE_CHARS),
@@ -228,11 +232,12 @@ mod net {
                 crate::net_proxy::current(),
                 crate::net_proxy::ProxyMode::System | crate::net_proxy::ProxyMode::None
             );
-            let direct_http = if self.bundled_url_previews_direct.load(Ordering::Relaxed) && !explicit_proxy {
-                guarded_client(DIRECT_ATTEMPT_BUDGET)
-            } else {
-                None
-            };
+            let direct_http =
+                if self.bundled_url_previews_direct.load(Ordering::Relaxed) && !explicit_proxy {
+                    guarded_client(DIRECT_ATTEMPT_BUDGET)
+                } else {
+                    None
+                };
             // MSC4452: a homeserver that turned `/preview_url` off would only
             // answer 403, so don't ask it; direct fetches still run.
             // In an encrypted room the homeserver must not learn the links, so
@@ -290,7 +295,9 @@ mod net {
             if !homeserver_ok {
                 return None;
             }
-            tracing::debug!("url preview: direct fetch failed for {url}; falling back to homeserver");
+            tracing::debug!(
+                "url preview: direct fetch failed for {url}; falling back to homeserver"
+            );
         }
         homeserver_preview(client, encrypted, &url).await
     }
@@ -314,7 +321,9 @@ mod net {
         if !is_html_content_type(&ct) {
             return None;
         }
-        let bytes = super::super::media::read_body_capped(resp, url, super::super::media::MAX_URL_BYTES).await;
+        let bytes =
+            super::super::media::read_body_capped(resp, url, super::super::media::MAX_URL_BYTES)
+                .await;
         if bytes.is_empty() {
             return None;
         }
@@ -326,8 +335,15 @@ mod net {
         preview.url = meta.canonical_url;
         if let Some(image_url) = meta.image_url {
             if let Some((bytes, mime)) = direct_image(http, image_url).await {
-                preview.image =
-                    upload_preview_image(client, encrypted, bytes, mime, meta.image_width, meta.image_height).await;
+                preview.image = upload_preview_image(
+                    client,
+                    encrypted,
+                    bytes,
+                    mime,
+                    meta.image_width,
+                    meta.image_height,
+                )
+                .await;
             }
         }
         Some(preview)
@@ -347,7 +363,8 @@ mod net {
         if !mime.starts_with("image/") || mime == "image/svg+xml" {
             return None;
         }
-        let bytes = super::super::media::read_body_capped(resp, &label, MAX_PREVIEW_IMAGE_BYTES).await;
+        let bytes =
+            super::super::media::read_body_capped(resp, &label, MAX_PREVIEW_IMAGE_BYTES).await;
         // The header is the server's claim. Use the type the bytes sniff as, and
         // only when that is a raster image; a document labelled as an image is dropped.
         let sniffed = infer::get(&bytes)?.mime_type().to_owned();
@@ -404,9 +421,18 @@ mod net {
                 };
                 if let Ok(bytes) = client.media().get_media_content(&request, true).await {
                     if !bytes.is_empty() && bytes.len() <= MAX_PREVIEW_IMAGE_BYTES {
-                        let mime = hs.image_type.unwrap_or_else(|| "application/octet-stream".to_owned());
-                        preview.image =
-                            upload_preview_image(client, true, bytes, mime, hs.image_width, hs.image_height).await;
+                        let mime = hs
+                            .image_type
+                            .unwrap_or_else(|| "application/octet-stream".to_owned());
+                        preview.image = upload_preview_image(
+                            client,
+                            true,
+                            bytes,
+                            mime,
+                            hs.image_width,
+                            hs.image_height,
+                        )
+                        .await;
                     }
                 }
             }
@@ -432,7 +458,9 @@ mod net {
             PreviewImage::encrypted(file)
         } else {
             let parsed: mime::Mime = mime.parse().ok()?;
-            let mxc = super::super::account::upload_bytes(client, bytes, &parsed).await.ok()?;
+            let mxc = super::super::account::upload_bytes(client, bytes, &parsed)
+                .await
+                .ok()?;
             PreviewImage::plain(mxc)
         };
         img.size = size;
@@ -453,7 +481,11 @@ mod tests {
                     plus https://c.example https://d.example";
         assert_eq!(
             preview_candidate_urls(body),
-            vec!["https://a.example/x?y=1", "http://b.example", "https://c.example"]
+            vec![
+                "https://a.example/x?y=1",
+                "http://b.example",
+                "https://c.example"
+            ]
         );
         for u in preview_candidate_urls(body) {
             assert!(body.contains(&u));
@@ -484,15 +516,25 @@ mod tests {
     fn set_url_previews_only_touches_nonempty_text() {
         let mut text = RoomMessageEventContent::text_plain("https://a.example");
         set_url_previews(&mut text, Vec::new());
-        let MessageType::Text(t) = &text.msgtype else { panic!() };
+        let MessageType::Text(t) = &text.msgtype else {
+            panic!()
+        };
         assert!(t.url_previews.is_none());
 
-        set_url_previews(&mut text, vec![UrlPreview::matched_url("https://a.example".into())]);
-        let MessageType::Text(t) = &text.msgtype else { panic!() };
+        set_url_previews(
+            &mut text,
+            vec![UrlPreview::matched_url("https://a.example".into())],
+        );
+        let MessageType::Text(t) = &text.msgtype else {
+            panic!()
+        };
         assert_eq!(t.url_previews.as_ref().map(Vec::len), Some(1));
 
         let mut notice = RoomMessageEventContent::notice_plain("https://a.example");
-        set_url_previews(&mut notice, vec![UrlPreview::matched_url("https://a.example".into())]);
+        set_url_previews(
+            &mut notice,
+            vec![UrlPreview::matched_url("https://a.example".into())],
+        );
         let json = serde_json::to_value(&notice).unwrap();
         assert!(json.get("com.beeper.linkpreviews").is_none());
     }
@@ -513,9 +555,11 @@ mod tests {
     fn previews_json_round_trips_and_tolerates_garbage() {
         let mut p = UrlPreview::matched_url("https://a.example".into());
         p.title = Some("A".into());
-        p.image = Some(matrix_sdk::ruma::events::room::message::PreviewImage::plain(
-            "mxc://example.org/abc".into(),
-        ));
+        p.image = Some(
+            matrix_sdk::ruma::events::room::message::PreviewImage::plain(
+                "mxc://example.org/abc".into(),
+            ),
+        );
         let json = url_previews_to_json(&[p]);
         let back = parse_url_previews_json(&json);
         assert_eq!(back.len(), 1);
@@ -532,7 +576,10 @@ mod tests {
     fn generate_stub_is_empty_without_a_client() {
         let c = ClientFfi::new();
         c.set_bundled_url_previews(true, true);
-        assert_eq!(c.generate_url_previews("!r:example.org", "https://a.example"), "");
+        assert_eq!(
+            c.generate_url_previews("!r:example.org", "https://a.example"),
+            ""
+        );
     }
 
     #[test]
@@ -551,7 +598,10 @@ mod tests {
         assert_eq!(p.title.as_deref(), Some("Matrix.org"));
         assert_eq!(p.description.as_deref(), Some("The open protocol"));
         assert_eq!(p.canonical_url.as_deref(), Some("https://matrix.org/"));
-        assert_eq!(p.image_mxc.as_ref().map(|m| m.as_str()), Some("mxc://matrix.org/abc"));
+        assert_eq!(
+            p.image_mxc.as_ref().map(|m| m.as_str()),
+            Some("mxc://matrix.org/abc")
+        );
         assert_eq!((p.image_width, p.image_height), (Some(800), Some(400)));
         assert_eq!(p.image_type.as_deref(), Some("image/png"));
         assert_eq!(p.image_size, Some(1234));
@@ -559,8 +609,10 @@ mod tests {
 
     #[test]
     fn hs_preview_rejects_non_mxc_image_and_empty_bodies() {
-        let p = parse_hs_preview_json(r#"{"og:title":"T","og:image":"https://x/y.png","og:image:width":5}"#)
-            .unwrap();
+        let p = parse_hs_preview_json(
+            r#"{"og:title":"T","og:image":"https://x/y.png","og:image:width":5}"#,
+        )
+        .unwrap();
         assert_eq!(p.image_mxc, None);
         assert_eq!(p.image_width, None);
         assert_eq!(parse_hs_preview_json("{}"), None);

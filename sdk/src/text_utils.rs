@@ -33,7 +33,8 @@ pub fn find_url_spans(text: &str) -> Vec<UrlSpan> {
             s.get(..scheme.len())
                 .is_some_and(|p| p.eq_ignore_ascii_case(scheme))
         };
-        if link.kind() == &LinkKind::Url && (has_http_scheme("https://") || has_http_scheme("http://"))
+        if link.kind() == &LinkKind::Url
+            && (has_http_scheme("https://") || has_http_scheme("http://"))
         {
             spans.push(UrlSpan {
                 start: link.start(),
@@ -389,9 +390,15 @@ mod bidi_tests {
     #[test]
     fn removes_overrides_and_isolates_but_keeps_text() {
         // "invoice" followed by an RLO that would draw "fdp.exe" reversed.
-        assert_eq!(strip_bidi_overrides("invoice\u{202E}fdp.exe"), "invoicefdp.exe");
+        assert_eq!(
+            strip_bidi_overrides("invoice\u{202E}fdp.exe"),
+            "invoicefdp.exe"
+        );
         assert_eq!(strip_bidi_overrides("a\u{2066}b\u{2069}c"), "abc");
         // Right-to-left marks and plain Arabic/Hebrew text are unchanged.
-        assert_eq!(strip_bidi_overrides("\u{200F}שלום مرحبا"), "\u{200F}שלום مرحبا");
+        assert_eq!(
+            strip_bidi_overrides("\u{200F}שלום مرحبا"),
+            "\u{200F}שלום مرحبا"
+        );
     }
 }

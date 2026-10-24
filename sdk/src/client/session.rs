@@ -186,15 +186,24 @@ fn parse_federation_version(body: &serde_json::Value) -> (String, String) {
 
 /// `m.upload.size` from a media `/config` response; 0 when absent.
 fn parse_upload_limit(body: &serde_json::Value) -> u64 {
-    body.get("m.upload.size").and_then(|v| v.as_u64()).unwrap_or(0)
+    body.get("m.upload.size")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0)
 }
 
 /// Flow types from a `GET /login` response with the `m.login.` prefix
 /// stripped, in server order and without duplicates.
 fn parse_login_flows(body: &serde_json::Value) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    for flow in body.get("flows").and_then(|v| v.as_array()).into_iter().flatten() {
-        let Some(ty) = flow.get("type").and_then(|v| v.as_str()) else { continue };
+    for flow in body
+        .get("flows")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let Some(ty) = flow.get("type").and_then(|v| v.as_str()) else {
+            continue;
+        };
         let ty = ty.strip_prefix("m.login.").unwrap_or(ty).to_owned();
         if !out.contains(&ty) {
             out.push(ty);
@@ -291,7 +300,10 @@ async fn build_server_info(
         .iter()
         .filter_map(|v| {
             let (major, minor) = v.as_str()?.strip_prefix('v')?.split_once('.')?;
-            Some(SpecVersionFfi { major: major.parse().ok()?, minor: minor.parse().ok()? })
+            Some(SpecVersionFfi {
+                major: major.parse().ok()?,
+                minor: minor.parse().ok()?,
+            })
         })
         .collect();
     let has_feature = |name: &str| supported.features.contains(&name.into());
@@ -403,7 +415,10 @@ impl ClientFfi {
         // never retroactively given one.
         let key = *self.store_key.get_or_insert_with(oauth::generate_store_key);
 
-        match self.rt.block_on(oauth::begin(&hs, &path, register_account, &key)) {
+        match self
+            .rt
+            .block_on(oauth::begin(&hs, &path, register_account, &key))
+        {
             Ok(begin) => {
                 let auth_url = begin.auth_url;
                 let redirect_uri = begin.redirect_uri;
@@ -586,12 +601,9 @@ impl ClientFfi {
                     homeserver_url,
                     session,
                 } => {
-                    let client = oauth::build_configured_client(
-                        &homeserver_url,
-                        &path,
-                        store_key.as_ref(),
-                    )
-                    .await?;
+                    let client =
+                        oauth::build_configured_client(&homeserver_url, &path, store_key.as_ref())
+                            .await?;
                     client
                         .matrix_auth()
                         .restore_session(session, RoomLoadSettings::default())
@@ -849,11 +861,8 @@ impl ClientFfi {
         #[cfg(not(test))]
         if let Some(svc) = self.sync_service.take() {
             let _ = self.rt.block_on(async {
-                tokio::time::timeout(
-                    std::time::Duration::from_secs(30),
-                    svc.expire_sessions(),
-                )
-                .await
+                tokio::time::timeout(std::time::Duration::from_secs(30), svc.expire_sessions())
+                    .await
             });
         }
 
@@ -932,7 +941,10 @@ impl ClientFfi {
         };
 
         // The account is going away: stop routing its call events to its handler.
-        if self.rtc_sink_registered.swap(false, std::sync::atomic::Ordering::Relaxed) {
+        if self
+            .rtc_sink_registered
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
             if let Some(uid) = client.user_id() {
                 super::rtc::unregister_sink(uid.as_str());
             }
@@ -1111,7 +1123,11 @@ mod wipe_local_stores_tests {
 
         for name in ALL {
             let kept = *name == "session.json" || *name == "thread_read_state.db";
-            assert_eq!(dir.join(name).exists(), kept, "{name}: expected kept={kept}");
+            assert_eq!(
+                dir.join(name).exists(),
+                kept,
+                "{name}: expected kept={kept}"
+            );
         }
         let _ = fs::remove_dir_all(&dir);
     }
@@ -1211,7 +1227,10 @@ mod envelope_tests {
     fn unknown_auth_tag_fails_cleanly_rather_than_panicking() {
         let json = r#"{"auth":"carrier_pigeon"}"#;
         let result: Result<SessionEnvelope, _> = serde_json::from_str(json);
-        assert!(result.is_err(), "unknown auth tag must be rejected, not silently accepted");
+        assert!(
+            result.is_err(),
+            "unknown auth tag must be rejected, not silently accepted"
+        );
     }
 
     /// Every `session.json` persisted before the SessionEnvelope migration has
@@ -1258,7 +1277,10 @@ mod envelope_tests {
         let SessionEnvelope::OAuth { user, .. } = serde_json::from_str(&json).unwrap() else {
             panic!("expected OAuth variant");
         };
-        assert_eq!(user.tokens.refresh_token.as_deref(), Some("oauth-refresh-token"));
+        assert_eq!(
+            user.tokens.refresh_token.as_deref(),
+            Some("oauth-refresh-token")
+        );
         assert_eq!(user.meta.device_id.as_str(), "DEVICEID");
     }
 
@@ -1317,18 +1339,27 @@ mod envelope_tests {
     #[test]
     fn non_object_json_is_rejected() {
         for json in ["null", "[]", "\"oauth\"", "42"] {
-            assert!(serde_json::from_str::<SessionEnvelope>(json).is_err(), "{json}");
+            assert!(
+                serde_json::from_str::<SessionEnvelope>(json).is_err(),
+                "{json}"
+            );
         }
     }
 
     #[test]
     fn native_envelope_with_refresh_token_roundtrips() {
-        let SessionEnvelope::Native { homeserver_url, mut session } = sample_native_envelope()
+        let SessionEnvelope::Native {
+            homeserver_url,
+            mut session,
+        } = sample_native_envelope()
         else {
             unreachable!()
         };
         session.tokens.refresh_token = Some("rt".to_owned());
-        let env = SessionEnvelope::Native { homeserver_url, session };
+        let env = SessionEnvelope::Native {
+            homeserver_url,
+            session,
+        };
         let json = serde_json::to_string(&env).unwrap();
         let SessionEnvelope::Native { session, .. } = serde_json::from_str(&json).unwrap() else {
             panic!("expected Native variant");
@@ -1375,7 +1406,11 @@ mod ffi_state_tests {
         let mut c = ClientFfi::new();
         let r = c.restore_session(r#"{"auth":"carrier_pigeon"}"#);
         assert!(!r.ok);
-        assert!(r.message.starts_with("parse session JSON:"), "{}", r.message);
+        assert!(
+            r.message.starts_with("parse session JSON:"),
+            "{}",
+            r.message
+        );
         assert!(r.message.contains("carrier_pigeon"), "{}", r.message);
         assert!(c.client.is_none());
     }
@@ -1385,7 +1420,11 @@ mod ffi_state_tests {
         let mut c = ClientFfi::new();
         let r = c.restore_session("");
         assert!(!r.ok);
-        assert!(r.message.starts_with("parse session JSON:"), "{}", r.message);
+        assert!(
+            r.message.starts_with("parse session JSON:"),
+            "{}",
+            r.message
+        );
     }
 
     #[test]
@@ -1434,7 +1473,9 @@ mod ffi_state_tests {
 
 #[cfg(test)]
 mod capability_tests {
-    use super::{parse_federation_version, parse_login_flows, parse_upload_limit, preview_url_enabled};
+    use super::{
+        parse_federation_version, parse_login_flows, parse_upload_limit, preview_url_enabled,
+    };
     use serde_json::json;
 
     #[test]
@@ -1452,7 +1493,10 @@ mod capability_tests {
 
     #[test]
     fn upload_limit_defaults_to_zero() {
-        assert_eq!(parse_upload_limit(&json!({ "m.upload.size": 52428800 })), 52_428_800);
+        assert_eq!(
+            parse_upload_limit(&json!({ "m.upload.size": 52428800 })),
+            52_428_800
+        );
         assert_eq!(parse_upload_limit(&json!({})), 0);
         assert_eq!(parse_upload_limit(&serde_json::Value::Null), 0);
     }

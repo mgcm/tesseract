@@ -1,4 +1,4 @@
-﻿//! LiveKit room connection and media track management.
+//! LiveKit room connection and media track management.
 //!
 //! This module wraps the `livekit` crate. The API calls here target livekit
 //! ~0.7; minor adjustments may be needed once the crate is first compiled.
@@ -70,7 +70,13 @@ impl SharedKeys {
     /// rotation can still be decrypted when the participant first appears).
     /// `sender_device_id` may be empty when the event didn't name one; the
     /// key then applies to every device of the sender (see `key_owner_matches`).
-    pub fn store(&self, sender_user_id: &str, sender_device_id: &str, index: i32, raw_key: Vec<u8>) {
+    pub fn store(
+        &self,
+        sender_user_id: &str,
+        sender_device_id: &str,
+        index: i32,
+        raw_key: Vec<u8>,
+    ) {
         self.pending
             .lock()
             .unwrap()
@@ -104,7 +110,8 @@ impl SharedKeys {
                     "e2ee: set_key for participant {id_str} \
                      (from {sender_user_id}/{sender_device_id} index={index})"
                 );
-                self.key_provider.set_key(&identity, index, raw_key.to_vec());
+                self.key_provider
+                    .set_key(&identity, index, raw_key.to_vec());
                 applied += 1;
             }
         }
@@ -124,7 +131,10 @@ fn key_owner_matches(identity: &str, user_id: &str, device_id: &str) -> bool {
     if device_id.is_empty() {
         return matches!(parse_lk_identity(identity), Some((user, Some(_))) if user == user_id);
     }
-    match identity.strip_prefix(user_id).and_then(|rest| rest.strip_prefix(':')) {
+    match identity
+        .strip_prefix(user_id)
+        .and_then(|rest| rest.strip_prefix(':'))
+    {
         Some(id_device) => id_device == device_id,
         None => false,
     }
@@ -243,14 +253,30 @@ impl RtcEventSink for FilteredSink {
     fn on_session_ended(&self, session_id: u64, reason: &str) {
         self.inner.on_session_ended(session_id, reason);
     }
-    fn on_video_frame(&self, session_id: u64, participant_id: &str, width: u32, height: u32, rgba: Vec<u8>) {
+    fn on_video_frame(
+        &self,
+        session_id: u64,
+        participant_id: &str,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) {
         if self.ok(participant_id) {
-            self.inner.on_video_frame(session_id, participant_id, width, height, rgba);
+            self.inner
+                .on_video_frame(session_id, participant_id, width, height, rgba);
         }
     }
-    fn on_screen_frame(&self, session_id: u64, participant_id: &str, width: u32, height: u32, rgba: Vec<u8>) {
+    fn on_screen_frame(
+        &self,
+        session_id: u64,
+        participant_id: &str,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) {
         if self.ok(participant_id) {
-            self.inner.on_screen_frame(session_id, participant_id, width, height, rgba);
+            self.inner
+                .on_screen_frame(session_id, participant_id, width, height, rgba);
         }
     }
     fn on_audio_frame(
@@ -262,8 +288,13 @@ impl RtcEventSink for FilteredSink {
         num_channels: u32,
     ) {
         if self.ok(participant_id) {
-            self.inner
-                .on_audio_frame(session_id, participant_id, samples, sample_rate, num_channels);
+            self.inner.on_audio_frame(
+                session_id,
+                participant_id,
+                samples,
+                sample_rate,
+                num_channels,
+            );
         }
     }
     fn accepts_participant(&self, participant_id: &str) -> bool {
@@ -408,7 +439,10 @@ impl LiveKitRoom {
         // Emit local participant immediately so the call overlay populates even
         // when no remote participants have joined yet.
         if let Some(ref s) = sink {
-            s.on_participant_joined(session_id, local_participant_info(&room.local_participant()));
+            s.on_participant_joined(
+                session_id,
+                local_participant_info(&room.local_participant()),
+            );
         }
 
         let local_identity = room.local_participant().identity().as_str().to_owned();
@@ -462,7 +496,10 @@ impl LiveKitRoom {
     /// frame (see `video_unmute_pending`), so a camera that is missing or
     /// held by another app never goes live as a placeholder stream.
     pub fn set_video_muted(&self, muted: bool) {
-        let mut pending = self.video_unmute_pending.lock().unwrap_or_else(|e| e.into_inner());
+        let mut pending = self
+            .video_unmute_pending
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if muted {
             *pending = false;
             self.video_publication.mute();
@@ -497,7 +534,10 @@ impl LiveKitRoom {
         };
         self.video_source.capture_frame(&frame);
         {
-            let mut pending = self.video_unmute_pending.lock().unwrap_or_else(|e| e.into_inner());
+            let mut pending = self
+                .video_unmute_pending
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if *pending {
                 *pending = false;
                 self.video_publication.unmute();
@@ -545,7 +585,10 @@ impl LiveKitRoom {
             .publish_track(LocalTrack::Video(screen_track), opts)
             .await?;
         *self.screen_source.lock().unwrap_or_else(|e| e.into_inner()) = Some(screen_source);
-        *self.screen_publication.lock().unwrap_or_else(|e| e.into_inner()) = Some(pub_);
+        *self
+            .screen_publication
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(pub_);
         // LocalTrackPublished only logs (see spawn_event_task below) — emit the
         // participant update ourselves so the UI creates the local ":screen"
         // tile. Without this, is_screen_sharing never flips true for the local
@@ -567,7 +610,11 @@ impl LiveKitRoom {
     /// unambiguous signal (RoomEvent::TrackUnpublished on their side) that the
     /// track is gone.
     pub fn stop_screen_share(&self) {
-        let pub_ = self.screen_publication.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let pub_ = self
+            .screen_publication
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         *self.screen_source.lock().unwrap_or_else(|e| e.into_inner()) = None;
         if let Some(pub_) = pub_ {
             pub_.mute();
@@ -728,7 +775,13 @@ impl RemoteSfuRoom {
         );
         info!("rtc: connected to remote SFU {server_url} (session {session_id})");
         let sink = FilteredSink::wrap(sink, sfu_url, &members, String::new());
-        Ok(Self { room, session_id, sink, shared, event_task })
+        Ok(Self {
+            room,
+            session_id,
+            sink,
+            shared,
+            event_task,
+        })
     }
 
     pub fn apply_peer_key(
@@ -1277,7 +1330,10 @@ mod participant_filter_tests {
     #[test]
     fn hashed_identity_is_not_a_participant() {
         let m = members(&[]);
-        assert!(!m.allows("https://sfu.a", "W9SGZNapjtEwbxf1GgfA6thQiWT4zZvHrJHxWIj/lJs"));
+        assert!(!m.allows(
+            "https://sfu.a",
+            "W9SGZNapjtEwbxf1GgfA6thQiWT4zZvHrJHxWIj/lJs"
+        ));
     }
 
     #[test]
@@ -1310,19 +1366,43 @@ mod participant_filter_tests {
 
     #[test]
     fn a_server_name_with_a_port_still_matches_its_device() {
-        assert!(key_owner_matches("@b:x.org:8448:PHONE", "@b:x.org:8448", "PHONE"));
-        assert!(!key_owner_matches("@b:x.org:8448:LAPTOP", "@b:x.org:8448", "PHONE"));
-        assert!(key_owner_matches("@b:x.org:8448:PHONE", "@b:x.org:8448", ""));
+        assert!(key_owner_matches(
+            "@b:x.org:8448:PHONE",
+            "@b:x.org:8448",
+            "PHONE"
+        ));
+        assert!(!key_owner_matches(
+            "@b:x.org:8448:LAPTOP",
+            "@b:x.org:8448",
+            "PHONE"
+        ));
+        assert!(key_owner_matches(
+            "@b:x.org:8448:PHONE",
+            "@b:x.org:8448",
+            ""
+        ));
         // A different user, whose id is this one's without the port.
-        assert!(!key_owner_matches("@b:x.org:8448:PHONE", "@b:x.org", "PHONE"));
+        assert!(!key_owner_matches(
+            "@b:x.org:8448:PHONE",
+            "@b:x.org",
+            "PHONE"
+        ));
     }
 
     #[test]
     fn an_empty_device_key_does_not_leak_to_a_ported_server_user() {
         assert!(!key_owner_matches("@b:x.org:8448:PHONE", "@b:x.org", ""));
-        assert!(key_owner_matches("@b:x.org:8448:PHONE", "@b:x.org:8448", ""));
+        assert!(key_owner_matches(
+            "@b:x.org:8448:PHONE",
+            "@b:x.org:8448",
+            ""
+        ));
         assert!(key_owner_matches("@b:x.org:8448", "@b:x.org:8448", ""));
-        assert!(key_owner_matches("@b:[::1]:8448:PHONE", "@b:[::1]:8448", ""));
+        assert!(key_owner_matches(
+            "@b:[::1]:8448:PHONE",
+            "@b:[::1]:8448",
+            ""
+        ));
         assert!(!key_owner_matches("@b:[::1]:8448:PHONE", "@b:[::1]", ""));
     }
 }
@@ -1356,12 +1436,28 @@ mod helper_tests {
             ("@b:x.org:8448", "@b:x.org", "8448"),
         ];
         for (id, user, device) in cases {
-            assert_eq!(split_identity(id), (user.to_owned(), device.to_owned()), "{id}");
+            assert_eq!(
+                split_identity(id),
+                (user.to_owned(), device.to_owned()),
+                "{id}"
+            );
         }
-        assert_eq!(matrix_user_id_from_lk_identity("@b:x.org:8448:PHONE"), Some("@b:x.org:8448"));
-        assert_eq!(matrix_user_id_from_lk_identity("@b:[::1]:8448:P"), Some("@b:[::1]:8448"));
-        assert_eq!(matrix_user_id_from_lk_identity("@b:[::1]:P"), Some("@b:[::1]"));
-        assert_eq!(matrix_user_id_from_lk_identity("@b:x.org:8448"), Some("@b:x.org"));
+        assert_eq!(
+            matrix_user_id_from_lk_identity("@b:x.org:8448:PHONE"),
+            Some("@b:x.org:8448")
+        );
+        assert_eq!(
+            matrix_user_id_from_lk_identity("@b:[::1]:8448:P"),
+            Some("@b:[::1]:8448")
+        );
+        assert_eq!(
+            matrix_user_id_from_lk_identity("@b:[::1]:P"),
+            Some("@b:[::1]")
+        );
+        assert_eq!(
+            matrix_user_id_from_lk_identity("@b:x.org:8448"),
+            Some("@b:x.org")
+        );
     }
 
     #[test]
@@ -1373,8 +1469,14 @@ mod helper_tests {
 
     #[test]
     fn matrix_user_id_from_identity_cuts_at_the_second_colon() {
-        assert_eq!(matrix_user_id_from_lk_identity("@a:x.org:DEV"), Some("@a:x.org"));
-        assert_eq!(matrix_user_id_from_lk_identity("@a:x.org:DE:V"), Some("@a:x.org"));
+        assert_eq!(
+            matrix_user_id_from_lk_identity("@a:x.org:DEV"),
+            Some("@a:x.org")
+        );
+        assert_eq!(
+            matrix_user_id_from_lk_identity("@a:x.org:DE:V"),
+            Some("@a:x.org")
+        );
     }
 
     #[test]
@@ -1503,7 +1605,10 @@ mod helper_tests {
     #[test]
     fn member_transports_replace_swaps_the_whole_map() {
         let m = MemberTransports::default();
-        m.replace(HashMap::from([(("@a:x".to_owned(), "D".to_owned()), "sfu1".to_owned())]));
+        m.replace(HashMap::from([(
+            ("@a:x".to_owned(), "D".to_owned()),
+            "sfu1".to_owned(),
+        )]));
         assert!(m.allows("sfu1", "@a:x:D"));
         assert!(!m.allows("sfu2", "@a:x:D"));
         m.replace(HashMap::new());
@@ -1520,13 +1625,19 @@ mod helper_tests {
             self.0.lock().unwrap().push(format!("invite:{room_id}"));
         }
         fn on_participant_joined(&self, _: u64, info: RtcParticipantInfo) {
-            self.0.lock().unwrap().push(format!("joined:{}", info.participant_id));
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("joined:{}", info.participant_id));
         }
         fn on_participant_left(&self, _: u64, id: &str) {
             self.0.lock().unwrap().push(format!("left:{id}"));
         }
         fn on_participant_updated(&self, _: u64, info: RtcParticipantInfo) {
-            self.0.lock().unwrap().push(format!("updated:{}", info.participant_id));
+            self.0
+                .lock()
+                .unwrap()
+                .push(format!("updated:{}", info.participant_id));
         }
         fn on_session_ended(&self, _: u64, reason: &str) {
             self.0.lock().unwrap().push(format!("ended:{reason}"));
@@ -1561,7 +1672,10 @@ mod helper_tests {
         let members = MemberTransports::default();
         members.replace(HashMap::from([
             (("@b:x".to_owned(), "D".to_owned()), "sfu-here".to_owned()),
-            (("@c:x".to_owned(), "D".to_owned()), "sfu-elsewhere".to_owned()),
+            (
+                ("@c:x".to_owned(), "D".to_owned()),
+                "sfu-elsewhere".to_owned(),
+            ),
         ]));
         let sink = FilteredSink::wrap(
             Some(rec.clone() as Arc<dyn RtcEventSink>),

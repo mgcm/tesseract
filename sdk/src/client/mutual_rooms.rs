@@ -30,9 +30,7 @@ pub(super) fn mutual_rooms_mode_for(
     has_feature: impl Fn(&str) -> bool,
     spec_versions: &[crate::ffi::SpecVersionFfi],
 ) -> u8 {
-    let spec_stable = spec_versions
-        .iter()
-        .any(|v| (v.major, v.minor) >= (1, 19));
+    let spec_stable = spec_versions.iter().any(|v| (v.major, v.minor) >= (1, 19));
     if spec_stable || has_feature(STABLE_FLAG) {
         MUTUAL_ROOMS_STABLE
     } else if UNSTABLE_FLAGS.iter().any(|f| has_feature(f)) {
@@ -155,7 +153,10 @@ mod tests {
 
     #[test]
     fn mode_none_without_flags() {
-        assert_eq!(mutual_rooms_mode_for(|_| false, &[ver(1, 11)]), MUTUAL_ROOMS_NONE);
+        assert_eq!(
+            mutual_rooms_mode_for(|_| false, &[ver(1, 11)]),
+            MUTUAL_ROOMS_NONE
+        );
     }
 
     #[test]
@@ -171,12 +172,27 @@ mod tests {
 
     #[test]
     fn mode_stable_for_stable_flag_or_spec_1_19() {
-        assert_eq!(mutual_rooms_mode_for(|f| f == STABLE_FLAG, &[ver(1, 11)]), MUTUAL_ROOMS_STABLE);
-        assert_eq!(mutual_rooms_mode_for(|_| false, &[ver(1, 11), ver(1, 19)]), MUTUAL_ROOMS_STABLE);
-        assert_eq!(mutual_rooms_mode_for(|_| false, &[ver(2, 0)]), MUTUAL_ROOMS_STABLE);
+        assert_eq!(
+            mutual_rooms_mode_for(|f| f == STABLE_FLAG, &[ver(1, 11)]),
+            MUTUAL_ROOMS_STABLE
+        );
+        assert_eq!(
+            mutual_rooms_mode_for(|_| false, &[ver(1, 11), ver(1, 19)]),
+            MUTUAL_ROOMS_STABLE
+        );
+        assert_eq!(
+            mutual_rooms_mode_for(|_| false, &[ver(2, 0)]),
+            MUTUAL_ROOMS_STABLE
+        );
         // Stable wins over an unstable flag.
-        assert_eq!(mutual_rooms_mode_for(|_| true, &[ver(1, 12)]), MUTUAL_ROOMS_STABLE);
-        assert_eq!(mutual_rooms_mode_for(|_| false, &[ver(1, 18)]), MUTUAL_ROOMS_NONE);
+        assert_eq!(
+            mutual_rooms_mode_for(|_| true, &[ver(1, 12)]),
+            MUTUAL_ROOMS_STABLE
+        );
+        assert_eq!(
+            mutual_rooms_mode_for(|_| false, &[ver(1, 18)]),
+            MUTUAL_ROOMS_NONE
+        );
     }
 
     #[test]

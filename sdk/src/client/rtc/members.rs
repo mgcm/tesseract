@@ -251,7 +251,8 @@ mod tests {
     /// stay ties for the state-key tie-break tests).
     fn ts(ms: u32) -> MilliSecondsSinceUnixEpoch {
         static BASE: std::sync::OnceLock<UInt> = std::sync::OnceLock::new();
-        let base = *BASE.get_or_init(|| MilliSecondsSinceUnixEpoch::now().0 - UInt::from(60_000u32));
+        let base =
+            *BASE.get_or_init(|| MilliSecondsSinceUnixEpoch::now().0 - UInt::from(60_000u32));
         MilliSecondsSinceUnixEpoch(base + UInt::from(ms))
     }
 
@@ -302,7 +303,12 @@ mod tests {
 
     #[test]
     fn multi_sfu_uses_own_first_focus() {
-        let m = one(content("D1", "multi_sfu", "https://sfu.b.org", None), "k", "@b:b.org", 1);
+        let m = one(
+            content("D1", "multi_sfu", "https://sfu.b.org", None),
+            "k",
+            "@b:b.org",
+            1,
+        );
         assert_eq!(m[0].focus_selection, "multi_sfu");
         assert_eq!(
             transport_of(&m[0], &m, None).unwrap().service_url,
@@ -312,54 +318,132 @@ mod tests {
 
     #[test]
     fn oldest_membership_follows_oldest_member() {
-        let mut all = one(content("D1", "oldest_membership", "https://sfu.b.org", None), "kb", "@b:b.org", 100);
-        all.extend(one(content("D2", "oldest_membership", "https://sfu.c.org", None), "kc", "@c:c.org", 50));
-        assert_eq!(transport_of(&all[0], &all, None).unwrap().service_url, "https://sfu.c.org");
-        assert_eq!(transport_of(&all[1], &all, None).unwrap().service_url, "https://sfu.c.org");
+        let mut all = one(
+            content("D1", "oldest_membership", "https://sfu.b.org", None),
+            "kb",
+            "@b:b.org",
+            100,
+        );
+        all.extend(one(
+            content("D2", "oldest_membership", "https://sfu.c.org", None),
+            "kc",
+            "@c:c.org",
+            50,
+        ));
+        assert_eq!(
+            transport_of(&all[0], &all, None).unwrap().service_url,
+            "https://sfu.c.org"
+        );
+        assert_eq!(
+            transport_of(&all[1], &all, None).unwrap().service_url,
+            "https://sfu.c.org"
+        );
     }
 
     #[test]
     fn oldest_membership_counts_our_own_membership() {
-        let all = one(content("D1", "oldest_membership", "https://sfu.b.org", None), "kb", "@b:b.org", 100);
-        let own = LkFocus { service_url: "https://sfu.a.org".into(), alias: "!r".into() };
+        let all = one(
+            content("D1", "oldest_membership", "https://sfu.b.org", None),
+            "kb",
+            "@b:b.org",
+            100,
+        );
+        let own = LkFocus {
+            service_url: "https://sfu.a.org".into(),
+            alias: "!r".into(),
+        };
         // we joined before b, so b (legacy) publishes on our SFU
         assert_eq!(
-            transport_of(&all[0], &all, Some((ts(10), &own))).unwrap().service_url,
+            transport_of(&all[0], &all, Some((ts(10), &own)))
+                .unwrap()
+                .service_url,
             "https://sfu.a.org"
         );
     }
 
     #[test]
     fn created_ts_beats_origin_server_ts() {
-        let mut all = one(content("D1", "oldest_membership", "https://sfu.b.org", Some(ts(10))), "kb", "@b:b.org", 900);
-        all.extend(one(content("D2", "oldest_membership", "https://sfu.c.org", None), "kc", "@c:c.org", 50));
-        assert_eq!(transport_of(&all[1], &all, None).unwrap().service_url, "https://sfu.b.org");
+        let mut all = one(
+            content("D1", "oldest_membership", "https://sfu.b.org", Some(ts(10))),
+            "kb",
+            "@b:b.org",
+            900,
+        );
+        all.extend(one(
+            content("D2", "oldest_membership", "https://sfu.c.org", None),
+            "kc",
+            "@c:c.org",
+            50,
+        ));
+        assert_eq!(
+            transport_of(&all[1], &all, None).unwrap().service_url,
+            "https://sfu.b.org"
+        );
     }
 
     #[test]
     fn oldest_tie_broken_by_state_key() {
-        let mut all = one(content("D1", "oldest_membership", "https://sfu.b.org", None), "kb", "@b:b.org", 5);
-        all.extend(one(content("D2", "oldest_membership", "https://sfu.c.org", None), "ka", "@c:c.org", 5));
-        assert_eq!(transport_of(&all[0], &all, None).unwrap().service_url, "https://sfu.c.org");
+        let mut all = one(
+            content("D1", "oldest_membership", "https://sfu.b.org", None),
+            "kb",
+            "@b:b.org",
+            5,
+        );
+        all.extend(one(
+            content("D2", "oldest_membership", "https://sfu.c.org", None),
+            "ka",
+            "@c:c.org",
+            5,
+        ));
+        assert_eq!(
+            transport_of(&all[0], &all, None).unwrap().service_url,
+            "https://sfu.c.org"
+        );
     }
 
     #[test]
     fn unknown_selection_has_no_transport() {
-        let m = one(content("D1", "something_new", "https://sfu.b.org", None), "k", "@b:b.org", 1);
+        let m = one(
+            content("D1", "something_new", "https://sfu.b.org", None),
+            "k",
+            "@b:b.org",
+            1,
+        );
         assert!(transport_of(&m[0], &m, None).is_none());
     }
 
     #[test]
     fn own_device_excluded_other_device_not() {
-        assert!(one(content("MYDEV", "multi_sfu", "https://sfu.a.org", None), "k", "@me:a.org", 1).is_empty());
-        assert_eq!(one(content("OTHER", "multi_sfu", "https://sfu.a.org", None), "k", "@me:a.org", 1).len(), 1);
+        assert!(one(
+            content("MYDEV", "multi_sfu", "https://sfu.a.org", None),
+            "k",
+            "@me:a.org",
+            1
+        )
+        .is_empty());
+        assert_eq!(
+            one(
+                content("OTHER", "multi_sfu", "https://sfu.a.org", None),
+                "k",
+                "@me:a.org",
+                1
+            )
+            .len(),
+            1
+        );
     }
 
     #[test]
     fn leave_and_expired_are_ignored() {
         assert!(one(CallMemberEventContent::new_empty(None), "k", "@b:b.org", 1).is_empty());
         let long_ago = MilliSecondsSinceUnixEpoch(UInt::from(1_000u32));
-        assert!(one(content("D1", "multi_sfu", "https://sfu.b.org", Some(long_ago)), "k", "@b:b.org", 1).is_empty());
+        assert!(one(
+            content("D1", "multi_sfu", "https://sfu.b.org", Some(long_ago)),
+            "k",
+            "@b:b.org",
+            1
+        )
+        .is_empty());
     }
 
     #[test]
@@ -371,19 +455,50 @@ mod tests {
 
     #[test]
     fn desired_sfus_excludes_local_and_dedups() {
-        let mut all = one(content("D1", "multi_sfu", "https://sfu.b.org", None), "k1", "@b:b.org", 1);
-        all.extend(one(content("D2", "multi_sfu", "https://sfu.b.org", None), "k2", "@c:b.org", 2));
-        all.extend(one(content("D3", "multi_sfu", "https://sfu.a.org", None), "k3", "@d:a.org", 3));
+        let mut all = one(
+            content("D1", "multi_sfu", "https://sfu.b.org", None),
+            "k1",
+            "@b:b.org",
+            1,
+        );
+        all.extend(one(
+            content("D2", "multi_sfu", "https://sfu.b.org", None),
+            "k2",
+            "@c:b.org",
+            2,
+        ));
+        all.extend(one(
+            content("D3", "multi_sfu", "https://sfu.a.org", None),
+            "k3",
+            "@d:a.org",
+            3,
+        ));
         let want = desired_sfus(&all, None, "https://sfu.a.org");
-        assert_eq!(want.into_iter().collect::<Vec<_>>(), vec!["https://sfu.b.org".to_owned()]);
+        assert_eq!(
+            want.into_iter().collect::<Vec<_>>(),
+            vec!["https://sfu.b.org".to_owned()]
+        );
     }
 
     #[test]
     fn transport_map_lists_each_members_sfu() {
-        let mut all = one(content("D1", "multi_sfu", "https://sfu.b.org", None), "k1", "@b:b.org", 1);
-        all.extend(one(content("D2", "something_new", "https://sfu.c.org", None), "k2", "@c:c.org", 2));
+        let mut all = one(
+            content("D1", "multi_sfu", "https://sfu.b.org", None),
+            "k1",
+            "@b:b.org",
+            1,
+        );
+        all.extend(one(
+            content("D2", "something_new", "https://sfu.c.org", None),
+            "k2",
+            "@c:c.org",
+            2,
+        ));
         let map = transport_map(&all, None);
-        assert_eq!(map.get(&("@b:b.org".to_owned(), "D1".to_owned())).unwrap(), "https://sfu.b.org");
+        assert_eq!(
+            map.get(&("@b:b.org".to_owned(), "D1".to_owned())).unwrap(),
+            "https://sfu.b.org"
+        );
         assert!(!map.contains_key(&("@c:c.org".to_owned(), "D2".to_owned())));
     }
 
@@ -399,20 +514,53 @@ mod tests {
 
     #[test]
     fn participants_exclude_this_device_leave_and_expired() {
-        assert!(participants(&content("MYDEV", "multi_sfu", "https://s", None), "@me:a.org", 1).is_empty());
-        assert_eq!(participants(&content("OTHER", "multi_sfu", "https://s", None), "@me:a.org", 1).len(), 1);
+        assert!(participants(
+            &content("MYDEV", "multi_sfu", "https://s", None),
+            "@me:a.org",
+            1
+        )
+        .is_empty());
+        assert_eq!(
+            participants(
+                &content("OTHER", "multi_sfu", "https://s", None),
+                "@me:a.org",
+                1
+            )
+            .len(),
+            1
+        );
         assert!(participants(&CallMemberEventContent::new_empty(None), "@b:b.org", 1).is_empty());
         let long_ago = MilliSecondsSinceUnixEpoch(UInt::from(1_000u32));
-        assert!(participants(&content("D", "multi_sfu", "https://s", Some(long_ago)), "@b:b.org", 1).is_empty());
+        assert!(participants(
+            &content("D", "multi_sfu", "https://s", Some(long_ago)),
+            "@b:b.org",
+            1
+        )
+        .is_empty());
     }
 
     #[test]
     fn summary_orders_by_join_time_and_dedups_users() {
-        let mut all = participants(&content("D1", "multi_sfu", "https://s", None), "@late:b.org", 50);
-        all.extend(participants(&content("D2", "multi_sfu", "https://s", None), "@early:b.org", 10));
-        all.extend(participants(&content("D3", "multi_sfu", "https://s", None), "@late:b.org", 60));
+        let mut all = participants(
+            &content("D1", "multi_sfu", "https://s", None),
+            "@late:b.org",
+            50,
+        );
+        all.extend(participants(
+            &content("D2", "multi_sfu", "https://s", None),
+            "@early:b.org",
+            10,
+        ));
+        all.extend(participants(
+            &content("D3", "multi_sfu", "https://s", None),
+            "@late:b.org",
+            60,
+        ));
         let (users, intent) = summarize_participants(all);
-        assert_eq!(users, vec!["@early:b.org".to_owned(), "@late:b.org".to_owned()]);
+        assert_eq!(
+            users,
+            vec!["@early:b.org".to_owned(), "@late:b.org".to_owned()]
+        );
         assert_eq!(intent, "");
     }
 
@@ -423,15 +571,27 @@ mod tests {
             joined_at: ts(1),
             intent,
         };
-        assert_eq!(summarize_participants(vec![p("@a:x", Some("audio"))]).1, "audio");
-        assert_eq!(summarize_participants(vec![p("@a:x", Some("audio")), p("@b:x", Some("video"))]).1, "video");
+        assert_eq!(
+            summarize_participants(vec![p("@a:x", Some("audio"))]).1,
+            "audio"
+        );
+        assert_eq!(
+            summarize_participants(vec![p("@a:x", Some("audio")), p("@b:x", Some("video"))]).1,
+            "video"
+        );
         assert_eq!(summarize_participants(vec![p("@a:x", None)]).1, "");
     }
 
     #[test]
     fn created_ts_survives_serialization() {
         let created = ts(7);
-        let json = serde_json::to_value(content("D1", "multi_sfu", "https://sfu.b.org", Some(created))).unwrap();
+        let json = serde_json::to_value(content(
+            "D1",
+            "multi_sfu",
+            "https://sfu.b.org",
+            Some(created),
+        ))
+        .unwrap();
         assert_eq!(json["created_ts"], serde_json::to_value(created).unwrap());
         assert_eq!(json["focus_active"]["focus_selection"], "multi_sfu");
     }

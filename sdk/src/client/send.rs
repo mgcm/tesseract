@@ -35,9 +35,10 @@ fn begin_upload_progress(
     handler: &Option<Arc<parking_lot::Mutex<super::SendHandler>>>,
     request_id: u64,
     expected_total: usize,
-) -> (eyeball::SharedObservable<matrix_sdk::TransmissionProgress>,
-      tokio::task::JoinHandle<()>)
-{
+) -> (
+    eyeball::SharedObservable<matrix_sdk::TransmissionProgress>,
+    tokio::task::JoinHandle<()>,
+) {
     let progress: eyeball::SharedObservable<matrix_sdk::TransmissionProgress> =
         eyeball::SharedObservable::default();
     let mut subscriber = progress.subscribe();
@@ -45,7 +46,9 @@ fn begin_upload_progress(
 
     if request_id != 0 {
         if let Some(h) = &handler {
-            h.lock().0.on_upload_progress(request_id, 0, expected_total as u64);
+            h.lock()
+                .0
+                .on_upload_progress(request_id, 0, expected_total as u64);
         }
     }
 
@@ -59,10 +62,15 @@ fn begin_upload_progress(
                 // encrypted rooms, framing overhead) into this observable.
                 // Clamp both values to the selected payload size so those
                 // secondary bytes never expand the taskbar denominator.
-                let total = if expected_total == 0 { p.total } else { expected_total };
+                let total = if expected_total == 0 {
+                    p.total
+                } else {
+                    expected_total
+                };
                 let current = p.current.min(total);
-                h.lock().0.on_upload_progress(
-                    request_id, current as u64, total as u64);
+                h.lock()
+                    .0
+                    .on_upload_progress(request_id, current as u64, total as u64);
             }
         }
     });
@@ -543,7 +551,11 @@ impl ClientFfi {
     /// `pub(crate)` so other `client::` submodules (e.g. `maps`) can reuse it
     /// for their own `RoomMessageEventContent`-based sends.
     #[cfg(not(test))]
-    pub(crate) fn dispatch_room_msg_(&self, room_id: &str, content: RoomMessageEventContent) -> OpResult {
+    pub(crate) fn dispatch_room_msg_(
+        &self,
+        room_id: &str,
+        content: RoomMessageEventContent,
+    ) -> OpResult {
         self.dispatch_room_content_(room_id, content.into(), "send/message")
     }
 
@@ -576,7 +588,8 @@ impl ClientFfi {
                 guard.get(&room_id).map(|h| h.timeline.clone())
             };
             if let Some(timeline) = maybe_tl {
-                return match self.block_on_cancellable(async move { timeline.send(content).await }) {
+                return match self.block_on_cancellable(async move { timeline.send(content).await })
+                {
                     Some(Ok(_)) => ok(""),
                     Some(Err(e)) => err(e.to_string()),
                     None => err("cancelled"),
@@ -874,7 +887,9 @@ impl ClientFfi {
             RoomMessageEventContent::text_html(body, &html)
         };
         content.mentions = mentions;
-        content.relates_to = Some(Relation::Reply(Reply::new(InReplyTo::new(event_id.clone()))));
+        content.relates_to = Some(Relation::Reply(Reply::new(InReplyTo::new(
+            event_id.clone(),
+        ))));
         set_url_previews(&mut content, parse_url_previews_json(url_previews_json));
         let own_id = client.user_id().map(|u| u.to_owned());
         match self.block_on_cancellable(async move {
@@ -889,7 +904,12 @@ impl ClientFfi {
             .await
             .ok()
             .and_then(|r| r.ok())
-            .and_then(|ev| ev.raw().get_field::<matrix_sdk::ruma::OwnedUserId>("sender").ok().flatten());
+            .and_then(|ev| {
+                ev.raw()
+                    .get_field::<matrix_sdk::ruma::OwnedUserId>("sender")
+                    .ok()
+                    .flatten()
+            });
             // The event came from the server, so only a user the room already
             // knows as a member is mentioned, never an arbitrary id it names.
             let author = match author {
@@ -934,7 +954,14 @@ impl ClientFfi {
         formatted_body: &str,
         url_previews_json: &str,
     ) -> OpResult {
-        self.send_thread_inner(room_id, thread_root, "", body, formatted_body, url_previews_json)
+        self.send_thread_inner(
+            room_id,
+            thread_root,
+            "",
+            body,
+            formatted_body,
+            url_previews_json,
+        )
     }
 
     #[cfg(not(test))]
@@ -1018,7 +1045,9 @@ impl ClientFfi {
             msg.mentions = mentions;
             set_url_previews(&mut msg, parse_url_previews_json(url_previews_json));
             if in_reply_to.is_empty() {
-                return match self.block_on_cancellable(async move { timeline.send(msg.into()).await }) {
+                return match self
+                    .block_on_cancellable(async move { timeline.send(msg.into()).await })
+                {
                     Some(Ok(_)) => ok(""),
                     Some(Err(e)) => err(e.to_string()),
                     None => err("cancelled"),
@@ -1028,7 +1057,9 @@ impl ClientFfi {
                 Ok(id) => id,
                 Err(e) => return err(format!("invalid in_reply_to id: {e}")),
             };
-            return match self.block_on_cancellable(async move { timeline.send_reply(msg.into(), reply_id).await }) {
+            return match self.block_on_cancellable(async move {
+                timeline.send_reply(msg.into(), reply_id).await
+            }) {
                 Some(Ok(_)) => ok(""),
                 Some(Err(e)) => err(e.to_string()),
                 None => err("cancelled"),
@@ -1566,7 +1597,8 @@ impl ClientFfi {
         let Some(client) = self.client.clone() else {
             // Not logged in: resolve the upload, or its pending entry never clears.
             if let Some(h) = &self.handler {
-                h.lock().on_upload_complete(request_id, false, "not logged in");
+                h.lock()
+                    .on_upload_complete(request_id, false, "not logged in");
             }
             return;
         };
@@ -1614,8 +1646,8 @@ impl ClientFfi {
                 use super::gif::GifMedia;
                 let mime_owned = mime.clone();
                 let size = bytes.len();
-                let (progress, watcher) = begin_upload_progress(
-                    &progress_handler, request_id, size);
+                let (progress, watcher) =
+                    begin_upload_progress(&progress_handler, request_id, size);
                 let result: Result<(), String> = async {
                     let media = if room.encryption_state().is_encrypted() {
                         let mut cur = std::io::Cursor::new(bytes.clone());
@@ -1626,7 +1658,8 @@ impl ClientFfi {
                             .map_err(|e| e.to_string())?;
                         GifMedia::Encrypted(serde_json::to_value(&file).map_err(|e| e.to_string())?)
                     } else {
-                        let mxc_uri = client.media()
+                        let mxc_uri = client
+                            .media()
                             .upload(&mime_owned, bytes.clone(), None)
                             .with_send_progress_observable(progress.clone())
                             .await
@@ -1663,8 +1696,16 @@ impl ClientFfi {
 
             let info = AttachmentInfo::Image(BaseImageInfo {
                 // 0 means unknown, as the synchronous path maps it.
-                width: if width != 0 { UInt::new(width as u64) } else { None },
-                height: if height != 0 { UInt::new(height as u64) } else { None },
+                width: if width != 0 {
+                    UInt::new(width as u64)
+                } else {
+                    None
+                },
+                height: if height != 0 {
+                    UInt::new(height as u64)
+                } else {
+                    None
+                },
                 size: UInt::new(bytes.len() as u64),
                 blurhash: None,
                 is_animated: None,
@@ -1683,8 +1724,16 @@ impl ClientFfi {
                 }
             };
             match do_send_attachment_with_progress(
-                room, filename, mime, bytes, config, &progress_handler,
-                request_id).await {
+                room,
+                filename,
+                mime,
+                bytes,
+                config,
+                &progress_handler,
+                request_id,
+            )
+            .await
+            {
                 Ok(()) => deliver(true, ""),
                 Err(e) => deliver(false, &e),
             }
@@ -1726,7 +1775,8 @@ impl ClientFfi {
         let Some(client) = self.client.clone() else {
             // Not logged in: resolve the upload, or its pending entry never clears.
             if let Some(h) = &self.handler {
-                h.lock().on_upload_complete(request_id, false, "not logged in");
+                h.lock()
+                    .on_upload_complete(request_id, false, "not logged in");
             }
             return;
         };
@@ -1785,8 +1835,16 @@ impl ClientFfi {
                 }
             };
             match do_send_attachment_with_progress(
-                room, filename, mime, bytes, config, &progress_handler,
-                request_id).await {
+                room,
+                filename,
+                mime,
+                bytes,
+                config,
+                &progress_handler,
+                request_id,
+            )
+            .await
+            {
                 Ok(()) => deliver(true, ""),
                 Err(e) => deliver(false, &e),
             }
@@ -1827,7 +1885,8 @@ impl ClientFfi {
         let Some(client) = self.client.clone() else {
             // Not logged in: resolve the upload, or its pending entry never clears.
             if let Some(h) = &self.handler {
-                h.lock().on_upload_complete(request_id, false, "not logged in");
+                h.lock()
+                    .on_upload_complete(request_id, false, "not logged in");
             }
             return;
         };
@@ -1896,8 +1955,16 @@ impl ClientFfi {
                 }
             };
             match do_send_attachment_with_progress(
-                room, filename, mime, bytes, config, &progress_handler,
-                request_id).await {
+                room,
+                filename,
+                mime,
+                bytes,
+                config,
+                &progress_handler,
+                request_id,
+            )
+            .await
+            {
                 Ok(()) => deliver(true, ""),
                 Err(e) => deliver(false, &e),
             }
@@ -1944,7 +2011,8 @@ impl ClientFfi {
         let Some(client) = self.client.clone() else {
             // Not logged in: resolve the upload, or its pending entry never clears.
             if let Some(h) = &self.handler {
-                h.lock().on_upload_complete(request_id, false, "not logged in");
+                h.lock()
+                    .on_upload_complete(request_id, false, "not logged in");
             }
             return;
         };
@@ -2028,8 +2096,16 @@ impl ClientFfi {
                 }
             };
             match do_send_attachment_with_progress(
-                room, filename, mime, bytes, config, &progress_handler,
-                request_id).await {
+                room,
+                filename,
+                mime,
+                bytes,
+                config,
+                &progress_handler,
+                request_id,
+            )
+            .await
+            {
                 Ok(()) => deliver(true, ""),
                 Err(e) => deliver(false, &e),
             }
@@ -2099,7 +2175,8 @@ impl ClientFfi {
         let Some(client) = self.client.clone() else {
             // Not logged in: resolve the upload, or its pending entry never clears.
             if let Some(h) = &self.handler {
-                h.lock().on_upload_complete(request_id, false, "not logged in");
+                h.lock()
+                    .on_upload_complete(request_id, false, "not logged in");
             }
             return;
         };
@@ -2131,7 +2208,11 @@ impl ClientFfi {
             for mut item in items {
                 // Originals can be sent unmodified, so strip EXIF/GPS/XMP here
                 // as the single-image and file paths do (content-based).
-                item.bytes = strip_gallery_item_bytes(&item.kind, std::mem::take(&mut item.bytes), &item.mime_type);
+                item.bytes = strip_gallery_item_bytes(
+                    &item.kind,
+                    std::mem::take(&mut item.bytes),
+                    &item.mime_type,
+                );
                 if matches!(item.kind.as_str(), "audio" | "video") {
                     match strip_av_owned(std::mem::take(&mut item.bytes)) {
                         Ok(v) => item.bytes = v,
@@ -2423,8 +2504,7 @@ impl ClientFfi {
             };
             let waveform_f32 = normalise_waveform(&waveform);
             let info = BaseAudioInfo {
-                duration: (duration_ms > 0)
-                    .then(|| Duration::from_millis(duration_ms)),
+                duration: (duration_ms > 0).then(|| Duration::from_millis(duration_ms)),
                 size: UInt::new(ogg_bytes.len() as u64),
                 waveform: (!waveform_f32.is_empty()).then_some(waveform_f32),
             };
@@ -2442,8 +2522,15 @@ impl ClientFfi {
             }
             let mime: mime::Mime = "audio/ogg; codecs=opus".parse().unwrap();
             match do_send_attachment_with_progress(
-                room, "voice-message.ogg".to_owned(), mime, ogg_bytes, config,
-                &progress_handler, request_id).await
+                room,
+                "voice-message.ogg".to_owned(),
+                mime,
+                ogg_bytes,
+                config,
+                &progress_handler,
+                request_id,
+            )
+            .await
             {
                 Ok(()) => deliver(true, ""),
                 Err(e) => deliver(false, &e),
@@ -2682,7 +2769,10 @@ impl ClientFfi {
     #[cfg(not(test))]
     pub fn fully_read_marker(&self, room_id: &str) -> crate::ffi::FullyReadMarkerFfi {
         use matrix_sdk::ruma::events::fully_read::FullyReadEventContent;
-        let none = || crate::ffi::FullyReadMarkerFfi { event_id: String::new(), ts_ms: 0 };
+        let none = || crate::ffi::FullyReadMarkerFfi {
+            event_id: String::new(),
+            ts_ms: 0,
+        };
         let _enter = self.rt.enter();
         let Some(client) = self.client.as_ref() else {
             return none();
@@ -2709,14 +2799,22 @@ impl ClientFfi {
                     .unwrap_or(0),
                 Err(_) => 0,
             };
-            Some(crate::ffi::FullyReadMarkerFfi { event_id: event_id.to_string(), ts_ms })
+            Some(crate::ffi::FullyReadMarkerFfi {
+                event_id: event_id.to_string(),
+                ts_ms,
+            })
         };
-        self.block_on_cancellable(fut).flatten().unwrap_or_else(none)
+        self.block_on_cancellable(fut)
+            .flatten()
+            .unwrap_or_else(none)
     }
 
     #[cfg(test)]
     pub fn fully_read_marker(&self, _room_id: &str) -> crate::ffi::FullyReadMarkerFfi {
-        crate::ffi::FullyReadMarkerFfi { event_id: String::new(), ts_ms: 0 }
+        crate::ffi::FullyReadMarkerFfi {
+            event_id: String::new(),
+            ts_ms: 0,
+        }
     }
 
     /// Timestamp (ms) of the newest content event in the room's in-memory
@@ -2735,8 +2833,7 @@ impl ClientFfi {
             let (cache, _handles) = room.event_cache().await.ok()?;
             cache
                 .rfind_map_event_in_memory_by(|ev| {
-                    is_dated_content_event(ev)
-                        .then(|| ev.timestamp().map(|ts| u64::from(ts.get())))
+                    is_dated_content_event(ev).then(|| ev.timestamp().map(|ts| u64::from(ts.get())))
                 })
                 .await
                 .ok()
@@ -2843,9 +2940,9 @@ impl ClientFfi {
             .and_then(|svc| {
                 svc.items().iter().find_map(|it| {
                     (it.root_event.event_id == root).then(|| {
-                        it.latest_event.as_ref().map(|e| {
-                            (e.event_id.clone(), u64::from(e.timestamp.get()))
-                        })
+                        it.latest_event
+                            .as_ref()
+                            .map(|e| (e.event_id.clone(), u64::from(e.timestamp.get())))
                     })
                 })
             })
@@ -2860,10 +2957,9 @@ impl ClientFfi {
         let room_task = room.clone();
         let target_task = target.clone();
         let root_task = root.clone();
-        let result = self
-            .block_on_cancellable(
-                async move { send_thread_receipt_pair(&room_task, root_task, target_task).await },
-            );
+        let result = self.block_on_cancellable(async move {
+            send_thread_receipt_pair(&room_task, root_task, target_task).await
+        });
         match result {
             Some(Ok(())) => {
                 // Optimistic marker (keyed by thread root, matching
@@ -3054,7 +3150,9 @@ impl ClientFfi {
             Some(reason.to_owned())
         };
 
-        match self.block_on_cancellable(async move { tl.redact(&item_id, reason_opt.as_deref()).await }) {
+        match self
+            .block_on_cancellable(async move { tl.redact(&item_id, reason_opt.as_deref()).await })
+        {
             Some(Ok(_)) => ok(""),
             Some(Err(e)) => err(e.to_string()),
             None => err("cancelled"),
@@ -3209,7 +3307,12 @@ impl ClientFfi {
     }
 
     #[cfg(test)]
-    pub fn send_caption_edit(&self, _room_id: &str, _event_id: &str, _new_caption: &str) -> OpResult {
+    pub fn send_caption_edit(
+        &self,
+        _room_id: &str,
+        _event_id: &str,
+        _new_caption: &str,
+    ) -> OpResult {
         err("not logged in")
     }
 
@@ -3363,7 +3466,9 @@ impl ClientFfi {
             } else {
                 Thread::without_fallback(root)
             }));
-            return match self.block_on_cancellable(async move { timeline.send(content.into()).await }) {
+            return match self
+                .block_on_cancellable(async move { timeline.send(content.into()).await })
+            {
                 Some(Ok(_)) => ok(""),
                 Some(Err(e)) => err(e.to_string()),
                 None => err("cancelled"),
@@ -3598,8 +3703,12 @@ async fn send_thread_receipt_pair(
         target.clone(),
     )
     .await?;
-    room.send_single_receipt(ReceiptType::ReadPrivate, ReceiptThread::Thread(root), target)
-        .await
+    room.send_single_receipt(
+        ReceiptType::ReadPrivate,
+        ReceiptThread::Thread(root),
+        target,
+    )
+    .await
 }
 
 /// Whether `ev` is a message-like event the user would call content: a
@@ -3709,9 +3818,7 @@ mod content_event_tests {
 mod helper_tests {
     use super::*;
     use matrix_sdk::room::reply::EnforceThread;
-    use matrix_sdk::ruma::events::room::message::{
-        MessageType, Relation, ReplyWithinThread,
-    };
+    use matrix_sdk::ruma::events::room::message::{MessageType, Relation, ReplyWithinThread};
     use matrix_sdk::ruma::{event_id, EventId};
 
     // -- matrix_to_target ----------------------------------------------------
@@ -3761,11 +3868,26 @@ mod helper_tests {
 
     #[test]
     fn extract_href_handles_each_quoting_style() {
-        assert_eq!(extract_href(r#"<a href="https://x/y">"#).as_deref(), Some("https://x/y"));
-        assert_eq!(extract_href("<a href='https://x/y'>").as_deref(), Some("https://x/y"));
-        assert_eq!(extract_href("<a href=https://x/y>").as_deref(), Some("https://x/y"));
-        assert_eq!(extract_href("<a href=https://x/y rel=nofollow>").as_deref(), Some("https://x/y"));
-        assert_eq!(extract_href(r#"<a class="c" href="u">"#).as_deref(), Some("u"));
+        assert_eq!(
+            extract_href(r#"<a href="https://x/y">"#).as_deref(),
+            Some("https://x/y")
+        );
+        assert_eq!(
+            extract_href("<a href='https://x/y'>").as_deref(),
+            Some("https://x/y")
+        );
+        assert_eq!(
+            extract_href("<a href=https://x/y>").as_deref(),
+            Some("https://x/y")
+        );
+        assert_eq!(
+            extract_href("<a href=https://x/y rel=nofollow>").as_deref(),
+            Some("https://x/y")
+        );
+        assert_eq!(
+            extract_href(r#"<a class="c" href="u">"#).as_deref(),
+            Some("u")
+        );
     }
 
     #[test]
@@ -3812,7 +3934,8 @@ mod helper_tests {
 
     #[test]
     fn derive_mentions_room_sentinel_keeps_surrounding_text() {
-        let (m, out) = derive_mentions(r#"hey <a href="https://matrix.to/#/@room">@room</a>, look"#);
+        let (m, out) =
+            derive_mentions(r#"hey <a href="https://matrix.to/#/@room">@room</a>, look"#);
         assert!(m.unwrap().room);
         assert_eq!(out, "hey @room, look");
     }
@@ -3858,7 +3981,9 @@ mod helper_tests {
     #[test]
     fn thread_content_plain_body_has_fallback_relation() {
         let msg = build_thread_message_content("hi", "", root(), None);
-        assert!(matches!(msg.msgtype, MessageType::Text(ref t) if t.body == "hi" && t.formatted.is_none()));
+        assert!(
+            matches!(msg.msgtype, MessageType::Text(ref t) if t.body == "hi" && t.formatted.is_none())
+        );
         let Some(Relation::Thread(t)) = &msg.relates_to else {
             panic!("expected thread relation");
         };
@@ -3922,7 +4047,9 @@ mod helper_tests {
 
     #[test]
     fn media_reply_thread_with_reply_targets_the_reply_within_thread() {
-        let r = build_media_reply("$reply:x.org", "$root:x.org").unwrap().unwrap();
+        let r = build_media_reply("$reply:x.org", "$root:x.org")
+            .unwrap()
+            .unwrap();
         assert_eq!(r.event_id.as_str(), "$reply:x.org");
         assert!(matches!(
             r.enforce_thread,
@@ -3932,7 +4059,11 @@ mod helper_tests {
 
     #[test]
     fn media_reply_rejects_malformed_event_ids() {
-        for (reply, thread) in [("not an event id", ""), ("", "not an event id"), ("bad id", "$r:x")] {
+        for (reply, thread) in [
+            ("not an event id", ""),
+            ("", "not an event id"),
+            ("bad id", "$r:x"),
+        ] {
             let e = build_media_reply(reply, thread).err().expect("must fail");
             assert!(e.starts_with("invalid reply event id"), "{e}");
         }
@@ -3950,7 +4081,8 @@ mod helper_tests {
 
     #[test]
     fn parse_image_info_reads_standard_fields() {
-        let i = ClientFfi::parse_image_info(r#"{"w":640,"h":480,"mimetype":"image/png","size":123}"#);
+        let i =
+            ClientFfi::parse_image_info(r#"{"w":640,"h":480,"mimetype":"image/png","size":123}"#);
         assert_eq!(i.width.map(u64::from), Some(640));
         assert_eq!(i.height.map(u64::from), Some(480));
         assert_eq!(i.mimetype.as_deref(), Some("image/png"));
@@ -4021,22 +4153,44 @@ mod gallery_strip_tests {
     fn gallery_images_are_stripped_files_only_if_photos_audio_video_never() {
         assert!(has(TIFF, b"SECRETMAKE"));
         // An image item gets the full stripper (content decides, not the mime).
-        assert!(!has(&strip_gallery_item_bytes("image", TIFF.to_vec(), "application/octet-stream"), b"SECRETMAKE"));
+        assert!(!has(
+            &strip_gallery_item_bytes("image", TIFF.to_vec(), "application/octet-stream"),
+            b"SECRETMAKE"
+        ));
         // A file item that is not a photo container is sent byte-identical.
-        assert_eq!(strip_gallery_item_bytes("file", TIFF.to_vec(), "image/tiff"), TIFF);
-        assert_eq!(strip_gallery_item_bytes("file", SVG.to_vec(), "image/svg+xml"), SVG);
+        assert_eq!(
+            strip_gallery_item_bytes("file", TIFF.to_vec(), "image/tiff"),
+            TIFF
+        );
+        assert_eq!(
+            strip_gallery_item_bytes("file", SVG.to_vec(), "image/svg+xml"),
+            SVG
+        );
         for kind in ["audio", "video"] {
-            assert_eq!(strip_gallery_item_bytes(kind, TIFF.to_vec(), "image/tiff"), TIFF, "{kind}");
+            assert_eq!(
+                strip_gallery_item_bytes(kind, TIFF.to_vec(), "image/tiff"),
+                TIFF,
+                "{kind}"
+            );
         }
         // Nothing to strip: bytes come back unchanged.
-        assert_eq!(strip_gallery_item_bytes("image", b"plain".to_vec(), "image/png"), b"plain");
+        assert_eq!(
+            strip_gallery_item_bytes("image", b"plain".to_vec(), "image/png"),
+            b"plain"
+        );
     }
 
     #[test]
     fn upload_helper_scopes_match_the_send_paths() {
         // send_image_async / send_file_async both go through strip_owned.
-        assert!(!has(&strip_owned(TIFF.to_vec(), "image/tiff", StripScope::Image), b"SECRETMAKE"));
-        assert_eq!(strip_owned(TIFF.to_vec(), "image/tiff", StripScope::File), TIFF);
+        assert!(!has(
+            &strip_owned(TIFF.to_vec(), "image/tiff", StripScope::Image),
+            b"SECRETMAKE"
+        ));
+        assert_eq!(
+            strip_owned(TIFF.to_vec(), "image/tiff", StripScope::File),
+            TIFF
+        );
     }
 }
 
@@ -4048,7 +4202,9 @@ mod gallery_strip_tests {
 /// dropped so the forward doesn't ping the original recipients again. An
 /// undecrypted `m.room.encrypted` event is refused rather than forwarded as
 /// ciphertext.
-fn forwardable_content(envelope: &serde_json::Value) -> Result<(String, serde_json::Value), String> {
+fn forwardable_content(
+    envelope: &serde_json::Value,
+) -> Result<(String, serde_json::Value), String> {
     let event_type = envelope["type"]
         .as_str()
         .ok_or_else(|| "missing event type".to_owned())?;
@@ -4170,7 +4326,8 @@ mod forwardable_content_tests {
 
     #[test]
     fn sticker_and_poll_are_forwarded() {
-        let sticker = json!({ "type": "m.sticker", "content": { "body": "s", "url": "mxc://x/y" } });
+        let sticker =
+            json!({ "type": "m.sticker", "content": { "body": "s", "url": "mxc://x/y" } });
         assert_eq!(forwardable_content(&sticker).unwrap().0, "m.sticker");
         let poll = json!({ "type": "m.poll.start", "content": { "m.poll": {} } });
         assert_eq!(forwardable_content(&poll).unwrap().0, "m.poll.start");

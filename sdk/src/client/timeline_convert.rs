@@ -184,14 +184,10 @@ pub(crate) fn utd_message_for_cause(
         UtdCause::VerificationViolation => "\u{1}utd_identity_changed",
         UtdCause::UnsignedDevice => "\u{1}utd_unsigned_device",
         UtdCause::UnknownDevice => "\u{1}utd_unknown_device",
-        UtdCause::HistoricalMessageAndBackupIsDisabled => {
-            "\u{1}utd_backup_off"
-        }
+        UtdCause::HistoricalMessageAndBackupIsDisabled => "\u{1}utd_backup_off",
         UtdCause::WithheldForUnverifiedOrInsecureDevice => "\u{1}utd_withheld_insecure",
         UtdCause::WithheldBySender => "\u{1}utd_withheld_sender",
-        UtdCause::HistoricalMessageAndDeviceIsUnverified => {
-            "\u{1}utd_verify_device"
-        }
+        UtdCause::HistoricalMessageAndDeviceIsUnverified => "\u{1}utd_verify_device",
         UtdCause::Unknown => "\u{1}utd_unknown",
     }
 }
@@ -204,9 +200,10 @@ pub(crate) fn utd_message_for_cause(
 fn crypto_send_block_code(error: &matrix_sdk::Error) -> Option<(&'static str, Vec<String>)> {
     use matrix_sdk_base::store::QueueWedgeError;
     match QueueWedgeError::from(error) {
-        QueueWedgeError::IdentityViolations { users } => {
-            Some(("identity_violation", users.iter().map(|u| u.to_string()).collect()))
-        }
+        QueueWedgeError::IdentityViolations { users } => Some((
+            "identity_violation",
+            users.iter().map(|u| u.to_string()).collect(),
+        )),
         QueueWedgeError::InsecureDevices { user_device_map } => Some((
             "insecure_devices",
             user_device_map.keys().map(|u| u.to_string()).collect(),
@@ -476,8 +473,9 @@ pub(super) fn resanitized_formatted_body_from_json(
     else {
         return fallback;
     };
-    let remove_reply_fallback =
-        json.pointer("/content/m.relates_to/m.in_reply_to").is_some();
+    let remove_reply_fallback = json
+        .pointer("/content/m.relates_to/m.in_reply_to")
+        .is_some();
     crate::html_sanitize::sanitize_formatted_body(raw_html, remove_reply_fallback)
 }
 
@@ -527,7 +525,10 @@ pub(crate) fn live_location_fields(
 /// MSC3381: anything that is not explicitly "disclosed" (including unknown
 /// custom kinds) is treated as undisclosed.
 pub(crate) fn poll_is_disclosed(kind: &matrix_sdk::ruma::events::poll::start::PollKind) -> bool {
-    matches!(kind, matrix_sdk::ruma::events::poll::start::PollKind::Disclosed)
+    matches!(
+        kind,
+        matrix_sdk::ruma::events::poll::start::PollKind::Disclosed
+    )
 }
 
 pub(crate) struct PollFields {
@@ -563,7 +564,11 @@ pub(crate) fn poll_fields(
             }
         })
         .collect();
-    PollFields { answers, total_votes, results_visible }
+    PollFields {
+        answers,
+        total_votes,
+        results_visible,
+    }
 }
 
 /// Compute the human-readable action for a m.room.pinned_events state-event
@@ -656,8 +661,7 @@ pub(crate) fn membership_event_visible(
     show: bool,
     me: Option<&str>,
 ) -> bool {
-    show
-        || msg_type != "m.room.member"
+    show || msg_type != "m.room.member"
         || (is_profile_action(action) && me.is_some_and(|m| m == target_user_id))
 }
 
@@ -965,8 +969,7 @@ pub(super) fn extract_in_reply_to(
             let id = details.event_id.to_string();
             let (rname, rbody, rfmt, img_url, img_enc) = match &details.event {
                 TimelineDetails::Ready(replied) => {
-                    let (name, snippet, formatted, _ts) =
-                        embedded_event_preview(replied);
+                    let (name, snippet, formatted, _ts) = embedded_event_preview(replied);
                     let (iu, ie) = reply_image_source(replied);
                     (name, snippet, formatted, iu, ie)
                 }
@@ -1029,11 +1032,11 @@ pub(super) async fn timeline_item_to_ffi(
                     .unwrap_or_default();
                 let body = pinned_events_action(&new_ids, &old_ids);
                 let SenderProfileFfi {
-        sender_name,
-        sender_avatar_url,
-        sender_status_emoji,
-        sender_status_text,
-    } = sender_profile_ffi(event_item.sender_profile());
+                    sender_name,
+                    sender_avatar_url,
+                    sender_status_emoji,
+                    sender_status_text,
+                } = sender_profile_ffi(event_item.sender_profile());
                 return Some(TimelineEvent {
                     room_id: room_id.to_owned(),
                     msg_type: "m.room.pinned_events".to_owned(),
@@ -1064,11 +1067,11 @@ pub(super) async fn timeline_item_to_ffi(
                     .and_then(|pc| pc.name.clone())
                     .unwrap_or_default();
                 let SenderProfileFfi {
-        sender_name,
-        sender_avatar_url,
-        sender_status_emoji,
-        sender_status_text,
-    } = sender_profile_ffi(event_item.sender_profile());
+                    sender_name,
+                    sender_avatar_url,
+                    sender_status_emoji,
+                    sender_status_text,
+                } = sender_profile_ffi(event_item.sender_profile());
                 return Some(TimelineEvent {
                     room_id: room_id.to_owned(),
                     msg_type: "m.room.name".to_owned(),
@@ -1182,11 +1185,11 @@ pub(super) async fn timeline_item_to_ffi(
             return None;
         };
         let SenderProfileFfi {
-        sender_name,
-        sender_avatar_url,
-        sender_status_emoji,
-        sender_status_text,
-    } = sender_profile_ffi(event_item.sender_profile());
+            sender_name,
+            sender_avatar_url,
+            sender_status_emoji,
+            sender_status_text,
+        } = sender_profile_ffi(event_item.sender_profile());
         return Some(TimelineEvent {
             room_id: room_id.to_owned(),
             msg_type: "m.room.member".to_owned(),
@@ -1236,12 +1239,24 @@ pub(super) async fn timeline_item_to_ffi(
                     // (identity-change warning, verifying this device):
                     // offer Retry, which unwedges it (`retry_send`).
                     Some((code, users)) => ("failed".to_owned(), code.to_owned(), true, txn, users),
-                    None => ("failed".to_owned(), error.to_string(), *is_recoverable, txn, Vec::new()),
+                    None => (
+                        "failed".to_owned(),
+                        error.to_string(),
+                        *is_recoverable,
+                        txn,
+                        Vec::new(),
+                    ),
                 },
                 _ => (String::new(), String::new(), false, txn, Vec::new()),
             }
         } else {
-            (String::new(), String::new(), false, String::new(), Vec::new())
+            (
+                String::new(),
+                String::new(),
+                false,
+                String::new(),
+                Vec::new(),
+            )
         };
 
     // Undecryptable messages: matrix-sdk-ui surfaces them as a MsgLikeKind
@@ -1261,11 +1276,11 @@ pub(super) async fn timeline_item_to_ffi(
         };
         let body = utd_message_for_cause(cause).to_owned();
         let SenderProfileFfi {
-        sender_name,
-        sender_avatar_url,
-        sender_status_emoji,
-        sender_status_text,
-    } = sender_profile_ffi(event_item.sender_profile());
+            sender_name,
+            sender_avatar_url,
+            sender_status_emoji,
+            sender_status_text,
+        } = sender_profile_ffi(event_item.sender_profile());
         return Some(TimelineEvent {
             event_id: event_item
                 .event_id()
@@ -1294,11 +1309,11 @@ pub(super) async fn timeline_item_to_ffi(
     }) = event_item.content()
     {
         let SenderProfileFfi {
-        sender_name,
-        sender_avatar_url,
-        sender_status_emoji,
-        sender_status_text,
-    } = sender_profile_ffi(event_item.sender_profile());
+            sender_name,
+            sender_avatar_url,
+            sender_status_emoji,
+            sender_status_text,
+        } = sender_profile_ffi(event_item.sender_profile());
         // Receipts on a tombstone are meaningless — the original event
         // is gone; the redacted placeholder doesn't carry a reading
         // audience worth surfacing.
@@ -1345,11 +1360,11 @@ pub(super) async fn timeline_item_to_ffi(
         let w = c.info.width.map(u64::from).unwrap_or(0);
         let h = c.info.height.map(u64::from).unwrap_or(0);
         let SenderProfileFfi {
-        sender_name,
-        sender_avatar_url,
-        sender_status_emoji,
-        sender_status_text,
-    } = sender_profile_ffi(event_item.sender_profile());
+            sender_name,
+            sender_avatar_url,
+            sender_status_emoji,
+            sender_status_text,
+        } = sender_profile_ffi(event_item.sender_profile());
         let reactions = collect_reactions(event_item, room, me).await;
         let read_receipts = collect_read_receipts(event_item, room, me).await;
         let (
@@ -1600,11 +1615,11 @@ pub(super) async fn timeline_item_to_ffi(
             _ => "",
         };
         let SenderProfileFfi {
-        sender_name,
-        sender_avatar_url,
-        sender_status_emoji,
-        sender_status_text,
-    } = sender_profile_ffi(event_item.sender_profile());
+            sender_name,
+            sender_avatar_url,
+            sender_status_emoji,
+            sender_status_text,
+        } = sender_profile_ffi(event_item.sender_profile());
         return Some(TimelineEvent {
             room_id: room_id.to_owned(),
             msg_type: "org.matrix.msc4075.rtc.notification".to_owned(),
@@ -2103,20 +2118,14 @@ mod pinned_action_tests {
 
     #[test]
     fn mixed_change() {
-        assert_eq!(
-            pinned_events_action(&["$b"], &["$a"]),
-            "\u{1}pin_changed"
-        );
+        assert_eq!(pinned_events_action(&["$b"], &["$a"]), "\u{1}pin_changed");
     }
 
     #[test]
     fn no_change() {
         // Callers should filter out no-op state events (old == new) before calling.
         // The fallthrough branch returns this, but a real caller won't reach it.
-        assert_eq!(
-            pinned_events_action(&["$a"], &["$a"]),
-            "\u{1}pin_changed"
-        );
+        assert_eq!(pinned_events_action(&["$a"], &["$a"]), "\u{1}pin_changed");
     }
 }
 
@@ -2127,32 +2136,94 @@ mod profile_change_tests {
     #[test]
     fn maps_each_combination() {
         assert_eq!(profile_change_action(None, None), None);
-        assert_eq!(profile_change_action(Some(true), None), Some("avatar_changed"));
-        assert_eq!(profile_change_action(Some(false), None), Some("avatar_removed"));
-        assert_eq!(profile_change_action(None, Some(true)), Some("display_name_changed"));
-        assert_eq!(profile_change_action(None, Some(false)), Some("display_name_removed"));
-        assert_eq!(profile_change_action(Some(true), Some(false)), Some("profile_changed"));
-        assert_eq!(profile_change_action(Some(false), Some(true)), Some("profile_changed"));
+        assert_eq!(
+            profile_change_action(Some(true), None),
+            Some("avatar_changed")
+        );
+        assert_eq!(
+            profile_change_action(Some(false), None),
+            Some("avatar_removed")
+        );
+        assert_eq!(
+            profile_change_action(None, Some(true)),
+            Some("display_name_changed")
+        );
+        assert_eq!(
+            profile_change_action(None, Some(false)),
+            Some("display_name_removed")
+        );
+        assert_eq!(
+            profile_change_action(Some(true), Some(false)),
+            Some("profile_changed")
+        );
+        assert_eq!(
+            profile_change_action(Some(false), Some(true)),
+            Some("profile_changed")
+        );
     }
 
     #[test]
     fn own_profile_changes_are_always_visible() {
         let me = Some("@me:x");
         // Hidden membership events stay hidden...
-        assert!(!membership_event_visible("m.room.member", "joined", "@me:x", false, me));
-        assert!(!membership_event_visible("m.room.member", "left", "@other:x", false, me));
+        assert!(!membership_event_visible(
+            "m.room.member",
+            "joined",
+            "@me:x",
+            false,
+            me
+        ));
+        assert!(!membership_event_visible(
+            "m.room.member",
+            "left",
+            "@other:x",
+            false,
+            me
+        ));
         // ...others' profile changes too...
-        assert!(!membership_event_visible("m.room.member", "avatar_changed", "@other:x", false, me));
+        assert!(!membership_event_visible(
+            "m.room.member",
+            "avatar_changed",
+            "@other:x",
+            false,
+            me
+        ));
         // ...but your own profile changes show regardless of the setting.
-        for a in ["avatar_changed", "avatar_removed", "display_name_changed",
-                  "display_name_removed", "profile_changed"] {
-            assert!(membership_event_visible("m.room.member", a, "@me:x", false, me), "{a}");
+        for a in [
+            "avatar_changed",
+            "avatar_removed",
+            "display_name_changed",
+            "display_name_removed",
+            "profile_changed",
+        ] {
+            assert!(
+                membership_event_visible("m.room.member", a, "@me:x", false, me),
+                "{a}"
+            );
         }
         // No known user: nothing is "own".
-        assert!(!membership_event_visible("m.room.member", "avatar_changed", "@me:x", false, None));
+        assert!(!membership_event_visible(
+            "m.room.member",
+            "avatar_changed",
+            "@me:x",
+            false,
+            None
+        ));
         // The setting shows everything; other event types are unaffected.
-        assert!(membership_event_visible("m.room.member", "joined", "@o:x", true, me));
-        assert!(membership_event_visible("m.room.message", "", "", false, me));
+        assert!(membership_event_visible(
+            "m.room.member",
+            "joined",
+            "@o:x",
+            true,
+            me
+        ));
+        assert!(membership_event_visible(
+            "m.room.message",
+            "",
+            "",
+            false,
+            me
+        ));
     }
 
     #[test]
@@ -2388,7 +2459,9 @@ mod bundled_url_preview_tests {
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].image_url, "mxc://beeper.com/enc123");
         // Same JSON shape `split_source` emits, so the media-fetch path is shared.
-        assert!(out[0].image_encrypted_json.contains("mxc://beeper.com/enc123"));
+        assert!(out[0]
+            .image_encrypted_json
+            .contains("mxc://beeper.com/enc123"));
         assert!(out[0].image_encrypted_json.contains("A256CTR"));
     }
 
@@ -2582,7 +2655,11 @@ mod poll_fields_tests {
 
     fn answers() -> Vec<(String, String, Vec<String>)> {
         vec![
-            ("a".into(), "Alpha".into(), vec!["@me:x".into(), "@bob:x".into()]),
+            (
+                "a".into(),
+                "Alpha".into(),
+                vec!["@me:x".into(), "@bob:x".into()],
+            ),
             ("b".into(), "Beta".into(), vec!["@carol:x".into()]),
             ("c".into(), "Gamma".into(), vec![]),
         ]
@@ -2680,10 +2757,8 @@ mod gallery_item_ffi_tests {
 
     #[test]
     fn file_item_extracts_source_filename_size() {
-        let mut content = FileMessageEventContent::plain(
-            "report.pdf".to_owned(),
-            url("mxc://example.org/file1"),
-        );
+        let mut content =
+            FileMessageEventContent::plain("report.pdf".to_owned(), url("mxc://example.org/file1"));
         content.filename = Some("report.pdf".to_owned());
         let mut info = FileInfo::new();
         info.size = UInt::new(4096);
@@ -2767,7 +2842,14 @@ mod geo_uri_tests {
 
     #[test]
     fn non_finite_and_out_of_range_geo_uris_are_refused() {
-        for uri in ["geo:NaN,0", "geo:0,inf", "geo:1e999,0", "geo:91,0", "geo:0,181", "geo:-90.5,0"] {
+        for uri in [
+            "geo:NaN,0",
+            "geo:0,inf",
+            "geo:1e999,0",
+            "geo:91,0",
+            "geo:0,181",
+            "geo:-90.5,0",
+        ] {
             assert_eq!(parse_geo_uri(uri), None, "{uri}");
         }
         assert_eq!(parse_geo_uri("geo:85,180;u=35"), Some((85.0, 180.0)));

@@ -16,20 +16,20 @@ mod crash_reporter;
 mod highlight;
 mod html_sanitize;
 mod image_packs;
+mod jxl;
 mod maps_link;
 mod markdown;
 mod matrix_uri;
-mod media_type_check;
 mod media_preview;
+mod media_type_check;
 mod net_guard;
 mod net_proxy;
 mod oauth;
-mod upsert_media_store;
 #[cfg(feature = "legacy_login")]
 mod password_login;
-mod jxl;
 mod recent_emoji;
 mod text_utils;
+mod upsert_media_store;
 mod url_preview;
 mod waveform;
 mod waveform_store;
@@ -755,12 +755,7 @@ pub mod ffi {
         pub fn on_image_packs_updated(&self) {}
         pub fn on_account_prefs_updated(&self, _json: &str) {}
         pub fn on_media_preview_config_updated(&self, _json: &str) {}
-        pub fn on_upload_progress(
-            &self,
-            _request_id: u64,
-            _current_bytes: u64,
-            _total_bytes: u64,
-        ) {
+        pub fn on_upload_progress(&self, _request_id: u64, _current_bytes: u64, _total_bytes: u64) {
         }
         pub fn on_threads_updated(&self, _room_id: &str) {}
         pub fn on_bot_commands_updated(&self, _room_id: &str) {}

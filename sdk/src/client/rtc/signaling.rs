@@ -225,7 +225,11 @@ pub async fn is_call_room(room: &matrix_sdk::Room) -> bool {
 /// creation type so it never drifts out of sync with it: `"m.call"` for a
 /// dedicated call room, `"m.room"` otherwise.
 pub async fn send_msc3401_call_open(room: &matrix_sdk::Room, call_id: &str) -> anyhow::Result<()> {
-    let intent = if is_call_room(room).await { "m.call" } else { "m.room" };
+    let intent = if is_call_room(room).await {
+        "m.call"
+    } else {
+        "m.room"
+    };
     let content = Msc3401CallEventContent {
         intent: intent.to_owned(),
         kind: "m.video".to_owned(),
@@ -288,11 +292,13 @@ fn msc3401_state_key(
         .strip_prefix(&format!("{user_id}:"))
         .unwrap_or(membership_id);
     let uid: matrix_sdk::ruma::OwnedUserId = user_id.parse().context("invalid user_id")?;
-    Ok(matrix_sdk::ruma::events::call::member::CallMemberStateKey::new(
-        uid,
-        Some(format!("{session_part}_m.call")),
-        true,
-    ))
+    Ok(
+        matrix_sdk::ruma::events::call::member::CallMemberStateKey::new(
+            uid,
+            Some(format!("{session_part}_m.call")),
+            true,
+        ),
+    )
 }
 
 /// The join time of our own membership as receivers see it: the `created_ts`
@@ -420,8 +426,8 @@ fn msc3401_member_body(
         // The membership is valid for 4h after joining; extend it on every
         // refresh so a long call does not expire while created_ts stays fixed.
         created_ts.map(|c| {
-            let elapsed_ms = u64::from(MilliSecondsSinceUnixEpoch::now().0)
-                .saturating_sub(u64::from(c.0));
+            let elapsed_ms =
+                u64::from(MilliSecondsSinceUnixEpoch::now().0).saturating_sub(u64::from(c.0));
             std::time::Duration::from_millis(elapsed_ms) + std::time::Duration::from_secs(4 * 3600)
         }),
     );
@@ -449,28 +455,52 @@ mod member_body_tests {
 
     #[test]
     fn join_advertises_multi_sfu_and_our_local_sfu_first() {
-        let body = msc3401_member_body("", "DEV", "@a:x.org:DEV", "https://jwt.x.org", "!r:x.org", false, None)
-            .unwrap();
+        let body = msc3401_member_body(
+            "",
+            "DEV",
+            "@a:x.org:DEV",
+            "https://jwt.x.org",
+            "!r:x.org",
+            false,
+            None,
+        )
+        .unwrap();
         assert_eq!(body["focus_active"]["type"], "livekit");
         assert_eq!(body["focus_active"]["focus_selection"], "multi_sfu");
-        assert_eq!(body["foci_preferred"][0]["livekit_service_url"], "https://jwt.x.org");
+        assert_eq!(
+            body["foci_preferred"][0]["livekit_service_url"],
+            "https://jwt.x.org"
+        );
         assert_eq!(body["foci_preferred"][0]["livekit_alias"], "!r:x.org");
         assert_eq!(body["device_id"], "DEV");
         assert_eq!(body["membershipID"], "@a:x.org:DEV");
-        assert!(body.get("created_ts").is_none(), "initial join carries no created_ts");
+        assert!(
+            body.get("created_ts").is_none(),
+            "initial join carries no created_ts"
+        );
     }
 
     #[test]
     fn refresh_keeps_created_ts_and_extends_expires() {
-        let created = MilliSecondsSinceUnixEpoch(
-            MilliSecondsSinceUnixEpoch::now().0 - UInt::from(60_000u32),
-        );
-        let body = msc3401_member_body("", "DEV", "@a:x.org:DEV", "https://jwt.x.org", "!r", true, Some(created))
-            .unwrap();
+        let created =
+            MilliSecondsSinceUnixEpoch(MilliSecondsSinceUnixEpoch::now().0 - UInt::from(60_000u32));
+        let body = msc3401_member_body(
+            "",
+            "DEV",
+            "@a:x.org:DEV",
+            "https://jwt.x.org",
+            "!r",
+            true,
+            Some(created),
+        )
+        .unwrap();
         assert_eq!(body["created_ts"], serde_json::to_value(created).unwrap());
         // 4h plus the ~60 s already elapsed
         let expires = body["expires"].as_u64().unwrap();
-        assert!(expires >= 4 * 3600 * 1000 + 59_000 && expires < 4 * 3600 * 1000 + 70_000, "{expires}");
+        assert!(
+            expires >= 4 * 3600 * 1000 + 59_000 && expires < 4 * 3600 * 1000 + 70_000,
+            "{expires}"
+        );
     }
 }
 
@@ -511,9 +541,7 @@ pub async fn schedule_delayed_msc3401_leave(
 ) -> Option<String> {
     use matrix_sdk::ruma::{
         api::client::delayed_events::{delayed_state_event, DelayParameters},
-        events::{
-            call::member::CallMemberEventContent, AnyStateEventContent, StateEventType,
-        },
+        events::{call::member::CallMemberEventContent, AnyStateEventContent, StateEventType},
     };
 
     let state_key = msc3401_state_key(user_id, membership_id).ok()?;
@@ -820,7 +848,9 @@ mod tests {
 
         let group = super::rtc_notification_body(false, 1, "", "DEV");
         assert_eq!(group["notification_type"], "notification");
-        assert!(group["m.mentions"].as_object().is_some_and(|m| m.is_empty()));
+        assert!(group["m.mentions"]
+            .as_object()
+            .is_some_and(|m| m.is_empty()));
         assert!(group.get("m.call.intent").is_none());
     }
 
@@ -919,7 +949,13 @@ mod tests {
             json!({"type": "livekit", "livekit_service_url": "u", "livekit_alias": "a", "extra": 1}),
         )
         .unwrap();
-        assert_eq!((preferred.livekit_service_url.as_str(), preferred.livekit_alias.as_str()), ("u", "a"));
+        assert_eq!(
+            (
+                preferred.livekit_service_url.as_str(),
+                preferred.livekit_alias.as_str()
+            ),
+            ("u", "a")
+        );
         // Entirely empty object is tolerated.
         let empty: RtcFocus = serde_json::from_value(json!({})).unwrap();
         assert!(empty.kind.is_empty());
@@ -932,10 +968,18 @@ mod tests {
             livekit_alias: "a".into(),
         };
         let v = serde_json::to_value(&t).unwrap();
-        assert_eq!(v, json!({"type": "livekit", "livekit_service_url": "u", "livekit_alias": "a"}));
-        let RtcTransport::LiveKit { livekit_service_url, livekit_alias } =
-            serde_json::from_value(v).unwrap();
-        assert_eq!((livekit_service_url.as_str(), livekit_alias.as_str()), ("u", "a"));
+        assert_eq!(
+            v,
+            json!({"type": "livekit", "livekit_service_url": "u", "livekit_alias": "a"})
+        );
+        let RtcTransport::LiveKit {
+            livekit_service_url,
+            livekit_alias,
+        } = serde_json::from_value(v).unwrap();
+        assert_eq!(
+            (livekit_service_url.as_str(), livekit_alias.as_str()),
+            ("u", "a")
+        );
         assert!(serde_json::from_value::<RtcTransport>(json!({"type": "other"})).is_err());
     }
 
@@ -1018,7 +1062,10 @@ mod tests {
         }))
         .unwrap();
         assert!(c.call_intent.is_none());
-        assert!(serde_json::to_value(&c).unwrap().get("m.call.intent").is_none());
+        assert!(serde_json::to_value(&c)
+            .unwrap()
+            .get("m.call.intent")
+            .is_none());
         let c: Msc4075RtcNotificationEventContent = serde_json::from_value(json!({
             "notification_type": "ring", "sender_ts": 5, "lifetime": 1, "m.call.intent": "audio"
         }))

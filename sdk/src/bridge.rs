@@ -63,7 +63,11 @@ pub fn validate_proxy_url(url: &str) -> bool {
     super::net_proxy::validate_proxy_url(url)
 }
 
-pub fn check_media_file(filename: &str, declared_mime: &str, head: &[u8]) -> ffi::MediaTypeCheckFfi {
+pub fn check_media_file(
+    filename: &str,
+    declared_mime: &str,
+    head: &[u8],
+) -> ffi::MediaTypeCheckFfi {
     use super::media_type_check::{check, Verdict};
     let r = check(filename, declared_mime, head);
     ffi::MediaTypeCheckFfi {
@@ -1918,7 +1922,13 @@ pub mod ffi {
         /// the C++ side needs this to report a real final length to Media
         /// Foundation instead of a growing partial size, which its reader
         /// otherwise mistakes for having caught up to EOF.
-        fn on_media_chunk(self: &EventHandlerBridge, request_id: u64, chunk: &[u8], status: u8, total_size: u64);
+        fn on_media_chunk(
+            self: &EventHandlerBridge,
+            request_id: u64,
+            chunk: &[u8],
+            status: u8,
+            total_size: u64,
+        );
 
         /// Fired when an async URL-preview fetch started via
         /// `get_url_preview_async` completes. `request_id` is the correlation
@@ -1957,11 +1967,7 @@ pub mod ffi {
         /// Fired when an async server-info fetch started via
         /// `get_server_info_async` completes (`ok` false on failure or when
         /// not logged in).
-        fn on_server_info_ready(
-            self: &EventHandlerBridge,
-            request_id: u64,
-            info: &ServerInfoFfi,
-        );
+        fn on_server_info_ready(self: &EventHandlerBridge, request_id: u64, info: &ServerInfoFfi);
 
         /// Fired when an async `media_preview_config_async` fetch completes.
         /// `config_json` is `{"media_previews":N,"invite_avatars":bool}`.
@@ -2255,11 +2261,7 @@ pub mod ffi {
 
         /// Compare a received file's name, declared mime and leading bytes
         /// (pass up to ~8 KiB) before handing it to an OS viewer.
-        fn check_media_file(
-            filename: &str,
-            declared_mime: &str,
-            head: &[u8],
-        ) -> MediaTypeCheckFfi;
+        fn check_media_file(filename: &str, declared_mime: &str, head: &[u8]) -> MediaTypeCheckFfi;
 
         // ----- Local waveform generation -----
 
@@ -2832,10 +2834,8 @@ pub mod ffi {
         /// path. Silent: emits no `on_message_event` / `on_timeline_reset`
         /// callbacks for the rooms it visits. The persistent SDK event
         /// cache is what gets warmed.
-        fn start_background_backfill(
-            self: &ClientFfi,
-            room_ids: &CxxVector<CxxString>,
-        ) -> OpResult;
+        fn start_background_backfill(self: &ClientFfi, room_ids: &CxxVector<CxxString>)
+            -> OpResult;
 
         /// Cancel an in-progress background backfill. No-op if none is
         /// running. Also called automatically from `stop_sync` and `Drop`.
@@ -2855,10 +2855,8 @@ pub mod ffi {
         /// newly discovered bridged room changes what the UI shows. Idempotent
         /// while a check is already in flight. Called by the shell when the
         /// visible room set changes (same pattern as start_background_backfill).
-        fn start_bridge_status_check(
-            self: &ClientFfi,
-            room_ids: &CxxVector<CxxString>,
-        ) -> OpResult;
+        fn start_bridge_status_check(self: &ClientFfi, room_ids: &CxxVector<CxxString>)
+            -> OpResult;
 
         /// One-shot prefetch of recent messages for the given unread rooms into
         /// the SDK event cache, so opening them is instant. The caller passes
@@ -2870,8 +2868,7 @@ pub mod ffi {
         /// concurrency on a task independent of the inactive-grouping backfill,
         /// so the two never abort each other. Silent (no callbacks). Idempotent
         /// while a prefetch is in flight.
-        fn start_unread_prefetch(self: &ClientFfi, room_ids: &CxxVector<CxxString>)
-            -> OpResult;
+        fn start_unread_prefetch(self: &ClientFfi, room_ids: &CxxVector<CxxString>) -> OpResult;
 
         /// Cancel an in-progress unread prefetch. No-op if none is running.
         /// Also called automatically from `stop_sync` and `Drop`.
@@ -2970,8 +2967,7 @@ pub mod ffi {
         /// and classify the resolved target. Blocking — call only from a
         /// background thread, never the UI thread. Returns `matched: false`
         /// on any failure, non-coordinate target, or timeout.
-        fn resolve_maps_shortlink(self: &ClientFfi, url: &str, timeout_ms: u64)
-            -> MapsLinkResult;
+        fn resolve_maps_shortlink(self: &ClientFfi, url: &str, timeout_ms: u64) -> MapsLinkResult;
 
         /// Send `body` as an `m.location` event (MSC3488) at the given
         /// coordinates. `body` is the plain-text fallback shown by clients
@@ -3306,7 +3302,8 @@ pub mod ffi {
         /// latest cached event in `room_id`, plus `m.fully_read` when
         /// `include_fully_read` is set. Used to clear the unread badge.
         /// Does not require a subscription.
-        fn mark_room_as_read(self: &ClientFfi, room_id: &str, include_fully_read: bool) -> OpResult;
+        fn mark_room_as_read(self: &ClientFfi, room_id: &str, include_fully_read: bool)
+            -> OpResult;
 
         /// Move the `m.fully_read` marker ("New messages" divider) to
         /// `event_id` in `room_id`. Does not require a subscription.
@@ -3641,7 +3638,12 @@ pub mod ffi {
         /// on completion. Does not pin a C++ worker thread. `group_id` (0 for
         /// never-cancelled) registers the task so `cancel_media_group` can
         /// abort it, same as `fetch_url_async`.
-        fn fetch_source_bytes_async(self: &ClientFfi, request_id: u64, group_id: u64, source_json: &str);
+        fn fetch_source_bytes_async(
+            self: &ClientFfi,
+            request_id: u64,
+            group_id: u64,
+            source_json: &str,
+        );
 
         /// Fetch only the first `max_bytes` of a media source's underlying
         /// file via a raw authenticated Range GET, bypassing the SDK's media
@@ -3649,12 +3651,21 @@ pub mod ffi {
         /// full-file key). Returns raw bytes (possibly the full file, if the
         /// homeserver ignores Range and it's under `max_bytes`) or an empty
         /// Vec on failure.
-        fn fetch_source_prefix_bytes(self: &ClientFfi, source_json: &str, max_bytes: u64) -> Vec<u8>;
+        fn fetch_source_prefix_bytes(
+            self: &ClientFfi,
+            source_json: &str,
+            max_bytes: u64,
+        ) -> Vec<u8>;
 
         /// Non-blocking counterpart of `fetch_source_prefix_bytes`. Spawns the
         /// fetch on the tokio runtime and fires `on_media_ready(request_id,
         /// bytes)` on completion. Does not pin a C++ worker thread.
-        fn fetch_source_prefix_async(self: &ClientFfi, request_id: u64, source_json: &str, max_bytes: u64);
+        fn fetch_source_prefix_async(
+            self: &ClientFfi,
+            request_id: u64,
+            source_json: &str,
+            max_bytes: u64,
+        );
 
         /// Streaming counterpart of `fetch_source_bytes_async`: delivers the
         /// file incrementally via `on_media_chunk(request_id, chunk, status)`
@@ -3663,7 +3674,12 @@ pub mod ffi {
         /// cancelled) registers the task under the same registry
         /// `cancel_media_group` already drains — a cancelled request never
         /// delivers a terminal status.
-        fn fetch_source_stream_async(self: &ClientFfi, request_id: u64, group_id: u64, source_json: &str);
+        fn fetch_source_stream_async(
+            self: &ClientFfi,
+            request_id: u64,
+            group_id: u64,
+            source_json: &str,
+        );
 
         /// Classifies whether `prefix` (the leading bytes of a media file —
         /// e.g. already fetched via `fetch_source_prefix_bytes`/`_async`) is
@@ -3698,7 +3714,11 @@ pub mod ffi {
         /// `current_version`. Blocks the calling thread (call from a worker,
         /// never from the UI thread). Returns `UpdateResult::has_update ==
         /// false` on any network error or when already up-to-date.
-        fn check_for_aur_update(self: &ClientFfi, pkgname: &str, current_version: &str) -> UpdateResult;
+        fn check_for_aur_update(
+            self: &ClientFfi,
+            pkgname: &str,
+            current_version: &str,
+        ) -> UpdateResult;
 
         // ----- Async media downloads (non-blocking) -----
 
@@ -3876,11 +3896,7 @@ pub mod ffi {
         /// not the client is a member. Accepts a room ID (`!id:server`) or
         /// alias (`#alias:server`). Returns a JSON object on success or an
         /// empty string on error. Blocks the calling thread.
-        fn get_room_summary(
-            self: &ClientFfi,
-            room_id_or_alias: &str,
-            via: &Vec<String>,
-        ) -> String;
+        fn get_room_summary(self: &ClientFfi, room_id_or_alias: &str, via: &Vec<String>) -> String;
         /// Return the cached MSC3266 room summary for `room_id` from
         /// `app_cache.db`, or an empty string when no entry exists.
         /// Synchronous, DB-only — no network. Safe to call from any thread.
@@ -4633,7 +4649,12 @@ pub mod ffi {
         /// not logged in or when the `calls` feature is disabled. On success the
         /// session is stored inside `ClientFfi`; subsequent `rtc_*` calls operate
         /// on it. `slot_id` is typically `"call#default"`.
-        fn rtc_start_call(self: &mut ClientFfi, room_id: &str, slot_id: &str, audio_only: bool) -> OpResult;
+        fn rtc_start_call(
+            self: &mut ClientFfi,
+            room_id: &str,
+            slot_id: &str,
+            audio_only: bool,
+        ) -> OpResult;
 
         /// Gracefully leave the active call and release its resources. No-op when
         /// no call is active or when the `calls` feature is disabled.

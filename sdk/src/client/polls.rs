@@ -1,12 +1,12 @@
 //! MSC3381 poll sending: start, respond, end. Wire format is the unstable
 //! `org.matrix.msc3381.poll.*` set.
 
-use crate::ffi::OpResult;
 #[cfg(test)]
 use super::err;
 use super::ClientFfi;
 #[cfg(not(test))]
 use super::{err, ok, parse_room_id, try_op};
+use crate::ffi::OpResult;
 
 use matrix_sdk::ruma::events::poll::{
     start::PollKind,
@@ -42,7 +42,11 @@ pub(crate) fn build_poll_start(
         .collect();
     let answers = UnstablePollAnswers::try_from(list).map_err(|e| e.to_string())?;
     let mut block = UnstablePollStartContentBlock::new(question, answers);
-    block.kind = if disclosed { PollKind::Disclosed } else { PollKind::Undisclosed };
+    block.kind = if disclosed {
+        PollKind::Disclosed
+    } else {
+        PollKind::Undisclosed
+    };
     let max = max_selections.clamp(1, texts.len() as u32);
     block.max_selections = u8::try_from(max).unwrap_or(1).into();
 
@@ -50,7 +54,9 @@ pub(crate) fn build_poll_start(
     for (i, t) in texts.iter().enumerate() {
         fallback.push_str(&format!("\n{}. {t}", i + 1));
     }
-    Ok(NewUnstablePollStartEventContent::plain_text(fallback, block))
+    Ok(NewUnstablePollStartEventContent::plain_text(
+        fallback, block,
+    ))
 }
 
 impl ClientFfi {
@@ -68,9 +74,9 @@ impl ClientFfi {
             poll::unstable_start::UnstablePollStartEventContent, AnyMessageLikeEventContent,
         };
         let content = match build_poll_start(question, answers, max_selections, disclosed) {
-            Ok(c) => AnyMessageLikeEventContent::UnstablePollStart(
-                UnstablePollStartEventContent::New(c),
-            ),
+            Ok(c) => {
+                AnyMessageLikeEventContent::UnstablePollStart(UnstablePollStartEventContent::New(c))
+            }
             Err(e) => return err(e),
         };
         self.dispatch_room_content_(room_id, content, "send/poll")
@@ -100,9 +106,10 @@ impl ClientFfi {
             poll::unstable_response::UnstablePollResponseEventContent, AnyMessageLikeEventContent,
         };
         self.send_poll_event_(room_id, poll_event_id, |id| {
-            AnyMessageLikeEventContent::UnstablePollResponse(
-                UnstablePollResponseEventContent::new(answer_ids.clone(), id),
-            )
+            AnyMessageLikeEventContent::UnstablePollResponse(UnstablePollResponseEventContent::new(
+                answer_ids.clone(),
+                id,
+            ))
         })
     }
 

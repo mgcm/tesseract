@@ -26,10 +26,10 @@ mod media_gate;
 mod media_gate_registry;
 mod media_origin;
 mod media_queue;
+mod mutual_rooms;
 mod notifications;
 mod pins;
 mod polls;
-mod mutual_rooms;
 mod profile_fields;
 mod qr_grant;
 mod recovery;
@@ -435,7 +435,13 @@ fn fallback_data_base() -> PathBuf {
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "user".to_owned())
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .take(32)
         .collect();
     let temp = std::env::temp_dir();
@@ -444,7 +450,9 @@ fn fallback_data_base() -> PathBuf {
     {
         use std::os::unix::fs::{DirBuilderExt, MetadataExt};
         let private = |p: &std::path::Path| -> bool {
-            let Ok(meta) = std::fs::symlink_metadata(p) else { return false };
+            let Ok(meta) = std::fs::symlink_metadata(p) else {
+                return false;
+            };
             // Our uid, read from a file this process just created.
             let probe = temp.join(format!(".tesseract-uid-{}", std::process::id()));
             let uid = std::fs::OpenOptions::new()
@@ -837,7 +845,8 @@ pub struct ClientFfi {
     /// `super::fetch_room_bot_commands`. Read by `list_room_bot_commands`
     /// without blocking; empty for a room never visited this session.
     #[cfg(not(test))]
-    pub(super) bot_commands: Arc<Mutex<HashMap<OwnedRoomId, Vec<crate::bot_commands::CommandDescription>>>>,
+    pub(super) bot_commands:
+        Arc<Mutex<HashMap<OwnedRoomId, Vec<crate::bot_commands::CommandDescription>>>>,
     /// Serializes every account-data read-modify-write (`recent_emoji_bump`,
     /// `save_sticker_to_user_pack`, `toggle_favorite_sticker`). Matrix
     /// account-data is last-write-wins with no server-side merge, so two
@@ -1180,7 +1189,8 @@ async fn send_fully_read(
     event_id: matrix_sdk::ruma::OwnedEventId,
 ) -> matrix_sdk::Result<()> {
     use matrix_sdk::room::Receipts;
-    room.send_multiple_receipts(Receipts::new().fully_read_marker(event_id)).await
+    room.send_multiple_receipts(Receipts::new().fully_read_marker(event_id))
+        .await
 }
 
 /// Encode raw 16-bit mono PCM samples (48 kHz) into an Ogg/Opus byte stream.
@@ -1271,8 +1281,7 @@ impl ClientFfi {
         // matrix_sdk the same way the persisted setting is; anything else is
         // taken as a full EnvFilter directive string.
         const LEVELS: [&str; 5] = ["error", "warn", "info", "debug", "trace"];
-        let level_filter =
-            |level: &str| format!("matrix_sdk={level},matrix_sdk::http_client=off");
+        let level_filter = |level: &str| format!("matrix_sdk={level},matrix_sdk::http_client=off");
         let level = if LEVELS.contains(&log_level) {
             log_level
         } else {
@@ -1702,12 +1711,14 @@ const ROOM_STATE_CACHE_ROOMS: usize = 8;
 /// by every consumer that needs to filter a room's live state for some
 /// event type — see `fetch_room_state_cached`.
 #[cfg(not(test))]
-pub(super) type RoomStateCache = Arc<Mutex<
-    std::collections::HashMap<
-        OwnedRoomId,
-        Arc<Vec<matrix_sdk::ruma::serde::Raw<matrix_sdk::ruma::events::AnyStateEvent>>>,
+pub(super) type RoomStateCache = Arc<
+    Mutex<
+        std::collections::HashMap<
+            OwnedRoomId,
+            Arc<Vec<matrix_sdk::ruma::serde::Raw<matrix_sdk::ruma::events::AnyStateEvent>>>,
+        >,
     >,
->>;
+>;
 
 /// One full `GET /rooms/{roomId}/state` per room, shared by every consumer
 /// that needs to filter a room's live state for some event type (MSC2545
@@ -1911,7 +1922,11 @@ pub(super) async fn room_pack_event_types_for_key(
     for &ev_type_str in crate::image_packs::room_pack_types(legacy_compat) {
         let has_content = state.iter().any(|raw| {
             raw.get_field::<String>("type").ok().flatten().as_deref() == Some(ev_type_str)
-                && raw.get_field::<String>("state_key").ok().flatten().as_deref()
+                && raw
+                    .get_field::<String>("state_key")
+                    .ok()
+                    .flatten()
+                    .as_deref()
                     == Some(state_key)
         });
         if has_content {
@@ -1937,10 +1952,9 @@ async fn discover_and_parse_room_packs(
 ) -> Vec<crate::image_packs::ImagePack> {
     let mut room_name: Option<String> = None;
     let mut packs = Vec::new();
-    for (state_key, content) in
-        fetch_all_room_pack_contents(client, cache, room_id, legacy_compat)
-            .await
-            .unwrap_or_default()
+    for (state_key, content) in fetch_all_room_pack_contents(client, cache, room_id, legacy_compat)
+        .await
+        .unwrap_or_default()
     {
         let source = crate::image_packs::PackSource::Room {
             room_id: room_id_str.to_owned(),
@@ -1962,7 +1976,11 @@ async fn discover_and_parse_room_packs(
         if pack.display_name.is_empty() {
             if room_name.is_none() {
                 room_name = Some(match client.get_room(room_id) {
-                    Some(r) => r.display_name().await.map(|n| n.to_string()).unwrap_or_default(),
+                    Some(r) => r
+                        .display_name()
+                        .await
+                        .map(|n| n.to_string())
+                        .unwrap_or_default(),
                     None => String::new(),
                 });
             }
@@ -2061,8 +2079,11 @@ async fn fetch_room_pack(
                     return None;
                 }
                 if pack.display_name.is_empty() {
-                    pack.display_name =
-                        room.display_name().await.map(|n| n.to_string()).unwrap_or_default();
+                    pack.display_name = room
+                        .display_name()
+                        .await
+                        .map(|n| n.to_string())
+                        .unwrap_or_default();
                 }
                 return Some(pack);
             }
@@ -2124,7 +2145,11 @@ async fn fetch_room_pack(
     }
     if pack.display_name.is_empty() {
         pack.display_name = match client.get_room(room_id) {
-            Some(r) => r.display_name().await.map(|n| n.to_string()).unwrap_or_default(),
+            Some(r) => r
+                .display_name()
+                .await
+                .map(|n| n.to_string())
+                .unwrap_or_default(),
             None => String::new(),
         };
     }
@@ -2646,7 +2671,9 @@ fn latest_event_preview(value: &matrix_sdk::latest_events::LatestEventValue) -> 
                         thumbnail_url: url,
                     }
                 }
-                AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::UnstablePollStart(ev)) => {
+                AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::UnstablePollStart(
+                    ev,
+                )) => {
                     use matrix_sdk::ruma::events::poll::unstable_start::UnstablePollStartEventContent;
                     let Some(orig) = ev.as_original() else {
                         return LatestPreview::default();
@@ -2690,9 +2717,9 @@ fn latest_event_sender(
                 AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::Sticker(ev)) => {
                     ev.as_original().map(|e| e.sender.clone())
                 }
-                AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::UnstablePollStart(ev)) => {
-                    ev.as_original().map(|e| e.sender.clone())
-                }
+                AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::UnstablePollStart(
+                    ev,
+                )) => ev.as_original().map(|e| e.sender.clone()),
                 _ => None,
             }
         }
@@ -2837,7 +2864,10 @@ pub(super) async fn dm_other_user(room: &Room, me: &UserId) -> Option<crate::ffi
     if active.saturating_sub(service) != 2 {
         return None;
     }
-    if let Ok(ids) = room.human_member_ids(matrix_sdk::RoomMemberships::JOIN).await {
+    if let Ok(ids) = room
+        .human_member_ids(matrix_sdk::RoomMemberships::JOIN)
+        .await
+    {
         let mut real = ids.iter().filter(|id| **id != *me);
         if let Some(first) = real.next() {
             if real.next().is_none() {
@@ -2900,13 +2930,20 @@ fn latest_valid_edit_body(
     relations_json
         .iter()
         .filter(|json| {
-            json.pointer("/content/m.relates_to/rel_type").and_then(|v| v.as_str())
+            json.pointer("/content/m.relates_to/rel_type")
+                .and_then(|v| v.as_str())
                 == Some("m.replace")
-                && json.pointer("/content/m.relates_to/event_id").and_then(|v| v.as_str())
+                && json
+                    .pointer("/content/m.relates_to/event_id")
+                    .and_then(|v| v.as_str())
                     == Some(target_event_id)
                 && json.pointer("/sender").and_then(|v| v.as_str()) == Some(target_sender)
         })
-        .max_by_key(|json| json.pointer("/origin_server_ts").and_then(|v| v.as_u64()).unwrap_or(0))
+        .max_by_key(|json| {
+            json.pointer("/origin_server_ts")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+        })
         .and_then(|json| json.pointer("/content/m.new_content"))
         .and_then(|new_content| serde_json::from_value::<MessageType>(new_content.clone()).ok())
         .map(|msgtype| message_type_preview(&msgtype))
@@ -3047,13 +3084,17 @@ pub(super) fn parse_bridge_network_info(
         network: Option<NetworkOrProtocol>,
         protocol: Option<NetworkOrProtocol>,
     }
-    let content: BridgeContent =
-        serde_json::from_value(content.clone()).unwrap_or_default();
+    let content: BridgeContent = serde_json::from_value(content.clone()).unwrap_or_default();
     let name = content
         .network
         .as_ref()
         .and_then(|n| n.displayname.clone())
-        .or_else(|| content.protocol.as_ref().and_then(|p| p.displayname.clone()));
+        .or_else(|| {
+            content
+                .protocol
+                .as_ref()
+                .and_then(|p| p.displayname.clone())
+        });
     let avatar = content
         .network
         .as_ref()
@@ -3074,8 +3115,7 @@ pub(super) fn parse_bridge_capabilities(
     struct Features {
         thread: Option<i64>,
     }
-    let features: Features =
-        serde_json::from_value(room_features.clone()).unwrap_or_default();
+    let features: Features = serde_json::from_value(room_features.clone()).unwrap_or_default();
     crate::ffi::BridgeCapabilities {
         threads: features.thread.is_some_and(|t| t >= 1),
     }
@@ -3283,7 +3323,11 @@ pub(super) async fn build_room_info_unfiltered(
                 // active_memberships() filters out expired memberships using
                 // origin_server_ts as the fallback for created_ts; non-empty
                 // result means at least one participant is still in the call.
-                if !o.content.active_memberships(Some(o.origin_server_ts)).is_empty() {
+                if !o
+                    .content
+                    .active_memberships(Some(o.origin_server_ts))
+                    .is_empty()
+                {
                     active = true;
                 }
                 if let (Some(u), Some(d)) = (own_user, own_device) {
@@ -3345,7 +3389,12 @@ pub(super) async fn build_room_info_unfiltered(
                 })
                 .map(|c| parse_bridge_capabilities(&c))
                 .unwrap_or_default();
-            (true, name.unwrap_or_default(), avatar.unwrap_or_default(), caps)
+            (
+                true,
+                name.unwrap_or_default(),
+                avatar.unwrap_or_default(),
+                caps,
+            )
         } else {
             // Persistent cache from SQLite — written by start_bridge_status_check.
             let guard = app_cache_db.lock();
@@ -3362,9 +3411,7 @@ pub(super) async fn build_room_info_unfiltered(
                                 row.get::<_, Option<String>>(1)?.unwrap_or_default(),
                                 row.get::<_, Option<String>>(2)?.unwrap_or_default(),
                                 crate::ffi::BridgeCapabilities {
-                                    threads: row
-                                        .get::<_, Option<bool>>(3)?
-                                        .unwrap_or(false),
+                                    threads: row.get::<_, Option<bool>>(3)?.unwrap_or(false),
                                 },
                             ))
                         },
@@ -3384,7 +3431,10 @@ pub(super) async fn build_room_info_unfiltered(
             _ => "shared".to_string(),
         }
     };
-    let join_rule = room.join_rule().map(|r| r.as_str().to_owned()).unwrap_or_default();
+    let join_rule = room
+        .join_rule()
+        .map(|r| r.as_str().to_owned())
+        .unwrap_or_default();
     let guest_access = matches!(
         room.guest_access(),
         matrix_sdk::ruma::events::room::guest_access::GuestAccess::CanJoin
@@ -3642,9 +3692,7 @@ pub(super) struct RoomListFingerprintKey {
 ///
 /// Not `#[cfg(not(test))]`: it is pure (operates on `RoomInfo` only) so it can
 /// be unit-tested without a live client.
-pub(super) fn room_list_fingerprint(
-    rooms: &[crate::ffi::RoomInfo],
-) -> Vec<RoomListFingerprintKey> {
+pub(super) fn room_list_fingerprint(rooms: &[crate::ffi::RoomInfo]) -> Vec<RoomListFingerprintKey> {
     let mut tmp: Vec<&crate::ffi::RoomInfo> = rooms.iter().collect();
     tmp.sort_by(|a, b| {
         let au = a.notification_count > 0 || a.highlight_count > 0;
@@ -3849,7 +3897,13 @@ pub(super) async fn build_invite_infos(client: &Client) -> Vec<crate::ffi::Invit
                         ),
                     }
                 }
-                Err(_) => (String::new(), String::new(), String::new(), 0, String::new()),
+                Err(_) => (
+                    String::new(),
+                    String::new(),
+                    String::new(),
+                    0,
+                    String::new(),
+                ),
             };
 
         result.push(crate::ffi::InviteInfo {
@@ -3972,7 +4026,9 @@ mod tests {
     #[test]
     fn merge_via_dedups_in_order_and_drops_empties() {
         let v = merge_via(
-            ["b.org", "", "a.org", "b.org"].into_iter().map(String::from),
+            ["b.org", "", "a.org", "b.org"]
+                .into_iter()
+                .map(String::from),
         );
         assert_eq!(v, vec!["b.org".to_string(), "a.org".to_string()]);
     }
@@ -4006,17 +4062,39 @@ mod tests {
         let fp = |r: &crate::ffi::RoomInfo| room_list_fingerprint(std::slice::from_ref(r));
         let before = fp(&fresh());
         let mut changed: Vec<crate::ffi::RoomInfo> = Vec::new();
-        let mut r = fresh(); r.notification_count = 3; changed.push(r);
-        let mut r = fresh(); r.highlight_count = 1; changed.push(r);
-        let mut r = fresh(); r.muted = true; changed.push(r);
-        let mut r = fresh(); r.is_direct = true; changed.push(r);
-        let mut r = fresh(); r.last_message_body = "hi".into(); changed.push(r);
-        let mut r = fresh(); r.last_message_sender_name = "Ann".into(); changed.push(r);
-        let mut r = fresh(); r.last_message_kind = "m.image".into(); changed.push(r);
-        let mut r = fresh(); r.last_message_sticker_url = "mxc://x/s".into(); changed.push(r);
-        let mut r = fresh(); r.last_message_thumbnail_url = "mxc://x/t".into(); changed.push(r);
+        let mut r = fresh();
+        r.notification_count = 3;
+        changed.push(r);
+        let mut r = fresh();
+        r.highlight_count = 1;
+        changed.push(r);
+        let mut r = fresh();
+        r.muted = true;
+        changed.push(r);
+        let mut r = fresh();
+        r.is_direct = true;
+        changed.push(r);
+        let mut r = fresh();
+        r.last_message_body = "hi".into();
+        changed.push(r);
+        let mut r = fresh();
+        r.last_message_sender_name = "Ann".into();
+        changed.push(r);
+        let mut r = fresh();
+        r.last_message_kind = "m.image".into();
+        changed.push(r);
+        let mut r = fresh();
+        r.last_message_sticker_url = "mxc://x/s".into();
+        changed.push(r);
+        let mut r = fresh();
+        r.last_message_thumbnail_url = "mxc://x/t".into();
+        changed.push(r);
         for (i, r) in changed.iter().enumerate() {
-            assert_ne!(before, fp(r), "field change #{i} must change the fingerprint");
+            assert_ne!(
+                before,
+                fp(r),
+                "field change #{i} must change the fingerprint"
+            );
         }
     }
 
@@ -4311,8 +4389,7 @@ mod tests {
         let latest = event_id!("$latest:server");
         // Acked reply is used verbatim even when the thread list knows a
         // different (newer) latest reply.
-        let (target, ts) =
-            pick_thread_receipt_target(root, Some(acked), Some((latest, 999)));
+        let (target, ts) = pick_thread_receipt_target(root, Some(acked), Some((latest, 999)));
         assert_eq!(target, acked);
         assert_eq!(ts, 0, "ts only carried when acked == list latest");
     }
@@ -4322,8 +4399,7 @@ mod tests {
         use matrix_sdk::ruma::event_id;
         let root = event_id!("$root:server");
         let latest = event_id!("$latest:server");
-        let (target, ts) =
-            pick_thread_receipt_target(root, Some(latest), Some((latest, 4242)));
+        let (target, ts) = pick_thread_receipt_target(root, Some(latest), Some((latest, 4242)));
         assert_eq!(target, latest);
         assert_eq!(ts, 4242);
     }
@@ -4334,8 +4410,7 @@ mod tests {
         let root = event_id!("$root:server");
         let latest = event_id!("$latest:server");
         // No acked id, but the thread list has a latest reply.
-        let (target, ts) =
-            pick_thread_receipt_target(root, None, Some((latest, 7)));
+        let (target, ts) = pick_thread_receipt_target(root, None, Some((latest, 7)));
         assert_eq!(target, latest);
         assert_eq!(ts, 7);
         // Nothing known at all → the root, as a last resort.
@@ -4576,17 +4651,11 @@ mod tests {
     #[test]
     fn set_low_power_mode_roundtrips() {
         let c = ClientFfi::new();
-        assert!(!c
-            .low_power_mode
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!c.low_power_mode.load(std::sync::atomic::Ordering::Relaxed));
         c.set_low_power_mode(true);
-        assert!(c
-            .low_power_mode
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(c.low_power_mode.load(std::sync::atomic::Ordering::Relaxed));
         c.set_low_power_mode(false);
-        assert!(!c
-            .low_power_mode
-            .load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!c.low_power_mode.load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]
@@ -4847,7 +4916,13 @@ mod tests {
     #[test]
     fn send_reply_not_logged_in() {
         let c = ClientFfi::new();
-        let r = c.send_reply("!room:example.com", "$event:example.com", "reply body", "", "");
+        let r = c.send_reply(
+            "!room:example.com",
+            "$event:example.com",
+            "reply body",
+            "",
+            "",
+        );
         assert!(!r.ok);
     }
 
@@ -4902,14 +4977,27 @@ mod tests {
     #[test]
     fn send_thread_reply_not_logged_in() {
         let c = ClientFfi::new();
-        let r = c.send_thread_reply("!room:server", "$root:server", "$reply:server", "hi", "", "");
+        let r = c.send_thread_reply(
+            "!room:server",
+            "$root:server",
+            "$reply:server",
+            "hi",
+            "",
+            "",
+        );
         assert!(!r.ok);
     }
 
     #[test]
     fn send_edit_not_logged_in() {
         let c = ClientFfi::new();
-        let r = c.send_edit("!room:example.com", "$event:example.com", "new body", "", "");
+        let r = c.send_edit(
+            "!room:example.com",
+            "$event:example.com",
+            "new body",
+            "",
+            "",
+        );
         assert!(!r.ok);
     }
 
@@ -5399,9 +5487,9 @@ mod tests_latest_event_body {
             true,
         )
         .unwrap();
-        let content = SerializableEventContent::new(&AnyMessageLikeEventContent::UnstablePollStart(
-            UnstablePollStartEventContent::New(new),
-        ))
+        let content = SerializableEventContent::new(
+            &AnyMessageLikeEventContent::UnstablePollStart(UnstablePollStartEventContent::New(new)),
+        )
         .unwrap();
         let v = LatestEventValue::LocalIsSending(LocalLatestEventValue {
             timestamp: MilliSecondsSinceUnixEpoch(ruma::uint!(0)),
@@ -5415,7 +5503,10 @@ mod tests_latest_event_body {
     #[test]
     fn poll_permalink_preview_falls_back_without_question() {
         assert_eq!(super::poll_permalink_preview(""), "\u{1}poll");
-        assert_eq!(super::poll_permalink_preview("Lunch?"), "\u{1}poll\u{1}Lunch?");
+        assert_eq!(
+            super::poll_permalink_preview("Lunch?"),
+            "\u{1}poll\u{1}Lunch?"
+        );
     }
 
     #[test]
@@ -5538,10 +5629,7 @@ mod tests_pinned_event_edit_body {
 
     #[test]
     fn no_relations_returns_none() {
-        assert_eq!(
-            latest_valid_edit_body(&[], "$orig", "@a:e.com"),
-            None
-        );
+        assert_eq!(latest_valid_edit_body(&[], "$orig", "@a:e.com"), None);
     }
 
     #[test]
@@ -5556,7 +5644,10 @@ mod tests_pinned_event_edit_body {
     #[test]
     fn edit_from_different_sender_ignored() {
         let relations = [replacement("@mallory:e.com", 2, "$e1", "not my edit")];
-        assert_eq!(latest_valid_edit_body(&relations, "$orig", "@a:e.com"), None);
+        assert_eq!(
+            latest_valid_edit_body(&relations, "$orig", "@a:e.com"),
+            None
+        );
     }
 
     #[test]
@@ -5564,7 +5655,10 @@ mod tests_pinned_event_edit_body {
         let mut edit = replacement("@a:e.com", 2, "$e1", "wrong target");
         edit["content"]["m.relates_to"]["event_id"] = serde_json::json!("$other");
         let relations = [edit];
-        assert_eq!(latest_valid_edit_body(&relations, "$orig", "@a:e.com"), None);
+        assert_eq!(
+            latest_valid_edit_body(&relations, "$orig", "@a:e.com"),
+            None
+        );
     }
 
     #[test]
@@ -5585,7 +5679,10 @@ mod tests_pinned_event_edit_body {
         let mut edit = replacement("@a:e.com", 2, "$e1", "annotation");
         edit["content"]["m.relates_to"]["rel_type"] = serde_json::json!("m.annotation");
         let relations = [edit];
-        assert_eq!(latest_valid_edit_body(&relations, "$orig", "@a:e.com"), None);
+        assert_eq!(
+            latest_valid_edit_body(&relations, "$orig", "@a:e.com"),
+            None
+        );
     }
 }
 
@@ -5898,18 +5995,36 @@ mod html_preview_tests {
             "shown"
         );
         // A bare attribute, with or without a value, hides the span.
-        assert_eq!(html_first_line("a <span data-mx-spoiler>x</span> b"), "a  b");
-        assert_eq!(html_first_line(r#"a <SPAN DATA-MX-SPOILER="why">x</SPAN> b"#), "a  b");
+        assert_eq!(
+            html_first_line("a <span data-mx-spoiler>x</span> b"),
+            "a  b"
+        );
+        assert_eq!(
+            html_first_line(r#"a <SPAN DATA-MX-SPOILER="why">x</SPAN> b"#),
+            "a  b"
+        );
     }
 
     #[test]
     fn has_attribute_reads_attribute_names_only() {
         use super::has_attribute;
         assert!(has_attribute("span data-mx-spoiler", "data-mx-spoiler"));
-        assert!(has_attribute("span class=\"a b\" data-mx-spoiler=\"r\"", "data-mx-spoiler"));
-        assert!(has_attribute("span class=a  data-mx-spoiler", "data-mx-spoiler"));
-        assert!(!has_attribute("span title=\"x data-mx-spoiler y\"", "data-mx-spoiler"));
-        assert!(!has_attribute("span title=data-mx-spoiler", "data-mx-spoiler"));
+        assert!(has_attribute(
+            "span class=\"a b\" data-mx-spoiler=\"r\"",
+            "data-mx-spoiler"
+        ));
+        assert!(has_attribute(
+            "span class=a  data-mx-spoiler",
+            "data-mx-spoiler"
+        ));
+        assert!(!has_attribute(
+            "span title=\"x data-mx-spoiler y\"",
+            "data-mx-spoiler"
+        ));
+        assert!(!has_attribute(
+            "span title=data-mx-spoiler",
+            "data-mx-spoiler"
+        ));
         assert!(!has_attribute("span", "data-mx-spoiler"));
     }
 
@@ -5924,8 +6039,14 @@ mod html_preview_tests {
         assert_eq!(strip_plain_reply_fallback(body), "The reply");
         assert_eq!(strip_plain_reply_fallback("plain text"), "plain text");
         // A quote that is not a reply fallback (no blank line after it) stays.
-        assert_eq!(strip_plain_reply_fallback("> quoted\nnext"), "> quoted\nnext");
+        assert_eq!(
+            strip_plain_reply_fallback("> quoted\nnext"),
+            "> quoted\nnext"
+        );
         // A user's own blockquote followed by a blank line is not a fallback.
-        assert_eq!(strip_plain_reply_fallback("> some quote\n\nmy comment"), "> some quote\n\nmy comment");
+        assert_eq!(
+            strip_plain_reply_fallback("> some quote\n\nmy comment"),
+            "> some quote\n\nmy comment"
+        );
     }
 }

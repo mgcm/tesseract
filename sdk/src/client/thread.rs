@@ -718,8 +718,10 @@ impl ClientFfi {
         // unread / mention you (matches Element). A failed lookup fails open
         // (treated as followed) so a flaky network never hides activity.
         if self.thread_subscriptions_enabled() {
-            let roots: Vec<OwnedEventId> =
-                items.iter().map(|it| it.root_event.event_id.clone()).collect();
+            let roots: Vec<OwnedEventId> = items
+                .iter()
+                .map(|it| it.root_event.event_id.clone())
+                .collect();
             let room_task = room.clone();
             let followed: Vec<bool> = self
                 .rt
@@ -1122,8 +1124,12 @@ async fn apply_thread_chips(
                 let (latest_name, latest_body, latest_ts) = match &item.latest_event {
                     Some(le) => {
                         let (_id, n, b, t) = thread_list_event_preview(le);
-                        if prefer_thread_list_preview(&b, t, &ev.thread_latest_body, ev.thread_latest_ts)
-                        {
+                        if prefer_thread_list_preview(
+                            &b,
+                            t,
+                            &ev.thread_latest_body,
+                            ev.thread_latest_ts,
+                        ) {
                             (n, b, t)
                         } else {
                             (
@@ -1352,7 +1358,11 @@ mod thread_unread_tests {
 
     #[test]
     fn mention_by_user_id() {
-        assert!(any_mention(&["@me:server", "@other:server"], false, "@me:server"));
+        assert!(any_mention(
+            &["@me:server", "@other:server"],
+            false,
+            "@me:server"
+        ));
         assert!(!any_mention(&["@other:server"], false, "@me:server"));
     }
 

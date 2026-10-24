@@ -11,7 +11,10 @@ use crate::ffi::OpResult;
 use std::sync::Arc;
 
 #[cfg(not(test))]
-use super::{build_invite_infos, build_knocked_room_infos, build_room_info_unfiltered, require_room, stop_fut, try_op};
+use super::{
+    build_invite_infos, build_knocked_room_infos, build_room_info_unfiltered, require_room,
+    stop_fut, try_op,
+};
 
 #[cfg(not(test))]
 use matrix_sdk::ruma::OwnedRoomId;
@@ -69,8 +72,9 @@ impl From<matrix_sdk::room_preview::RoomPreview> for RoomSummaryJson {
     }
 }
 
-type SpaceSummaryTasks =
-    std::sync::Arc<parking_lot::Mutex<std::collections::HashMap<String, Vec<(u64, tokio::task::AbortHandle)>>>>;
+type SpaceSummaryTasks = std::sync::Arc<
+    parking_lot::Mutex<std::collections::HashMap<String, Vec<(u64, tokio::task::AbortHandle)>>>,
+>;
 
 /// Register a `get_space_child_summary_async` task's abort handle under
 /// `space_id` so `abort_space_summary_group` can abort it later. Prunes
@@ -213,7 +217,11 @@ impl ClientFfi {
                 return Vec::new();
             }
             self.rt
-                .block_on(build_room_info_unfiltered(&client, &room, &self.app_cache_db))
+                .block_on(build_room_info_unfiltered(
+                    &client,
+                    &room,
+                    &self.app_cache_db,
+                ))
                 .into_iter()
                 .collect()
         }
@@ -852,7 +860,10 @@ impl ClientFfi {
         // `::new()` then mutate the field.
         let mut invitee = InviteUserId::new(user_id.to_owned());
         invitee.reason = Some(reason.to_owned());
-        let request = Request::new(room.room_id().to_owned(), InvitationRecipient::UserId(invitee));
+        let request = Request::new(
+            room.room_id().to_owned(),
+            InvitationRecipient::UserId(invitee),
+        );
         room.client().send(request).await?;
         room.mark_members_missing();
         Ok(())
@@ -866,7 +877,10 @@ impl ClientFfi {
     /// rather than failing the whole creation, matching `invite_user_async`'s
     /// existing fire-and-forget tolerance.
     #[cfg(not(test))]
-    async fn invite_pending_with_reason(room: &matrix_sdk::Room, opts: &crate::ffi::RoomCreateOptionsFfi) {
+    async fn invite_pending_with_reason(
+        room: &matrix_sdk::Room,
+        opts: &crate::ffi::RoomCreateOptionsFfi,
+    ) {
         use matrix_sdk::ruma::UserId;
 
         if opts.invite_reason.is_empty() {
@@ -984,14 +998,14 @@ impl ClientFfi {
             return;
         }
 
-        let request = match Self::build_create_room_request(&options, options.invite_reason.is_empty())
-        {
-            Ok(r) => r,
-            Err(e) => {
-                deliver(false, "", &e);
-                return;
-            }
-        };
+        let request =
+            match Self::build_create_room_request(&options, options.invite_reason.is_empty()) {
+                Ok(r) => r,
+                Err(e) => {
+                    deliver(false, "", &e);
+                    return;
+                }
+            };
 
         let in_flight = self.in_flight.clone();
         #[cfg(debug_assertions)]
@@ -1415,7 +1429,11 @@ impl ClientFfi {
         };
         let handler = self.handler.clone();
         let id_str = room_id_or_alias.to_owned();
-        let reason_opt = if reason.is_empty() { None } else { Some(reason.to_owned()) };
+        let reason_opt = if reason.is_empty() {
+            None
+        } else {
+            Some(reason.to_owned())
+        };
         let seed = parse_server_names(via);
         let stop_rx = self.stop_rx.clone();
 
@@ -1737,8 +1755,7 @@ impl ClientFfi {
     }
 
     #[cfg(test)]
-    pub fn remove_room_from_space_async(&self, _request_id: u64, _space_id: &str, _room_id: &str) {
-    }
+    pub fn remove_room_from_space_async(&self, _request_id: u64, _space_id: &str, _room_id: &str) {}
 
     #[cfg(not(test))]
     pub fn invite_user_async(&self, request_id: u64, room_id: &str, user_id: &str, reason: &str) {
@@ -1830,8 +1847,7 @@ impl ClientFfi {
     }
 
     #[cfg(test)]
-    pub fn ban_user_async(&self, _request_id: u64, _room_id: &str, _user_id: &str, _reason: &str) {
-    }
+    pub fn ban_user_async(&self, _request_id: u64, _room_id: &str, _user_id: &str, _reason: &str) {}
 
     /// Non-blocking unban. Same delivery contract as `kick_user_async`.
     #[cfg(not(test))]
@@ -2325,9 +2341,10 @@ impl ClientFfi {
                 "org.matrix.msc4143.rtc.member",
             ))
             .or_else(|| {
-                pl.events.get(&matrix_sdk::ruma::events::TimelineEventType::from(
-                    "org.matrix.msc3401.call.member",
-                ))
+                pl.events
+                    .get(&matrix_sdk::ruma::events::TimelineEventType::from(
+                        "org.matrix.msc3401.call.member",
+                    ))
             })
             .map(|v| i64::from(*v))
             .unwrap_or_else(|| i64::from(pl.state_default));
@@ -2567,13 +2584,15 @@ impl ClientFfi {
         }
         let Some(client) = self.client.clone() else {
             if let Some(ref h) = self.handler {
-                h.lock().on_room_security_state_ready(request_id, &defaults());
+                h.lock()
+                    .on_room_security_state_ready(request_id, &defaults());
             }
             return;
         };
         let Ok(rid) = matrix_sdk::ruma::RoomId::parse(room_id) else {
             if let Some(ref h) = self.handler {
-                h.lock().on_room_security_state_ready(request_id, &defaults());
+                h.lock()
+                    .on_room_security_state_ready(request_id, &defaults());
             }
             return;
         };
@@ -2611,8 +2630,7 @@ impl ClientFfi {
                         // is on (there is no valid "off" content for this type).
                         "m.room.encryption" => is_encrypted = true,
                         "m.room.join_rules" => {
-                            if let Ok(Some(content)) =
-                                raw.get_field::<serde_json::Value>("content")
+                            if let Ok(Some(content)) = raw.get_field::<serde_json::Value>("content")
                             {
                                 join_rule = content
                                     .get("join_rule")
@@ -2622,16 +2640,14 @@ impl ClientFfi {
                             }
                         }
                         "m.room.guest_access" => {
-                            if let Ok(Some(content)) =
-                                raw.get_field::<serde_json::Value>("content")
+                            if let Ok(Some(content)) = raw.get_field::<serde_json::Value>("content")
                             {
                                 guest_access = content.get("guest_access").and_then(|v| v.as_str())
                                     == Some("can_join");
                             }
                         }
                         "m.room.history_visibility" => {
-                            if let Ok(Some(content)) =
-                                raw.get_field::<serde_json::Value>("content")
+                            if let Ok(Some(content)) = raw.get_field::<serde_json::Value>("content")
                             {
                                 history_visibility = content
                                     .get("history_visibility")
@@ -2840,10 +2856,11 @@ impl ClientFfi {
                 Some(None) => return err("could not download the image"),
                 Some(Some(b)) => b,
             };
-            let (data, mime_str) = match crate::avatar_image::make_square_avatar(&bytes, AVATAR_MAX_SIDE) {
-                Ok(r) => r,
-                Err(e) => return err(e),
-            };
+            let (data, mime_str) =
+                match crate::avatar_image::make_square_avatar(&bytes, AVATAR_MAX_SIDE) {
+                    Ok(r) => r,
+                    Err(e) => return err(e),
+                };
             let mime: mime::Mime = match mime_str.parse() {
                 Ok(m) => m,
                 Err(_) => return err(format!("invalid mime type: {mime_str}")),
@@ -2950,11 +2967,7 @@ impl ClientFfi {
 
         let result = if mxc_uri.is_empty() {
             self.rt
-                .block_on(room.send_state_event_raw(
-                    "m.room.avatar",
-                    "",
-                    serde_json::json!({}),
-                ))
+                .block_on(room.send_state_event_raw("m.room.avatar", "", serde_json::json!({})))
                 .map(|_| ())
         } else {
             let mxc: OwnedMxcUri = match mxc_uri.try_into() {
@@ -3563,7 +3576,10 @@ mod create_room_tests {
         let initial_state = body["initial_state"].as_array().unwrap();
         assert_eq!(initial_state.len(), 1);
         assert_eq!(initial_state[0]["type"], "m.room.encryption");
-        assert_eq!(initial_state[0]["content"]["algorithm"], "m.megolm.v1.aes-sha2");
+        assert_eq!(
+            initial_state[0]["content"]["algorithm"],
+            "m.megolm.v1.aes-sha2"
+        );
     }
 
     #[test]

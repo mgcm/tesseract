@@ -113,8 +113,7 @@ impl ClientFfi {
                         }
 
                         adopt_incoming_verification_request(
-                            client, h, flow_users, sas_cache, tasks, ev.sender, flow_id,
-                            device_id,
+                            client, h, flow_users, sas_cache, tasks, ev.sender, flow_id, device_id,
                         )
                         .await;
                     }
@@ -140,8 +139,7 @@ impl ClientFfi {
                     let sas_cache = Arc::clone(&sas_cache);
                     let tasks = Arc::clone(&tasks);
                     async move {
-                        let MessageType::VerificationRequest(content) = &ev.content.msgtype
-                        else {
+                        let MessageType::VerificationRequest(content) = &ev.content.msgtype else {
                             return;
                         };
                         let Some(me) = client.user_id() else { return };
@@ -240,7 +238,11 @@ impl ClientFfi {
                 }
             })
         };
-        self.encryption_presync = Some(EncryptionPresync { sliding_sync, stopping, task });
+        self.encryption_presync = Some(EncryptionPresync {
+            sliding_sync,
+            stopping,
+            task,
+        });
     }
 
     /// Stop the encryption-only presync, if running, and wait (bounded) for
@@ -250,7 +252,9 @@ impl ClientFfi {
         let Some(presync) = self.encryption_presync.take() else {
             return;
         };
-        presync.stopping.store(true, std::sync::atomic::Ordering::Release);
+        presync
+            .stopping
+            .store(true, std::sync::atomic::Ordering::Release);
         if let Err(e) = presync.sliding_sync.stop_sync() {
             tracing::warn!("encryption presync: stop failed: {e}");
         }
@@ -303,7 +307,10 @@ impl ClientFfi {
         {
             let h = Arc::clone(&handler);
             let client_clone = client.clone();
-            self.spawn_tracked("session-watcher", watch_session_changes(h, client_clone, stop_tx_auth));
+            self.spawn_tracked(
+                "session-watcher",
+                watch_session_changes(h, client_clone, stop_tx_auth),
+            );
         }
 
         // Wall-clock start of this sync session, used by the notification
@@ -383,15 +390,18 @@ impl ClientFfi {
             let dm_counterparts = Arc::clone(&self.dm_counterparts);
             let forbidden_presence = Arc::clone(&self.forbidden_presence);
             let app_cache_db_p = Arc::clone(&self.app_cache_db);
-            self.spawn_tracked("presence-poller", watch_presence(
-                h,
-                client_p,
-                stop_rx_presence,
-                presence_enabled_p,
-                dm_counterparts,
-                forbidden_presence,
-                app_cache_db_p,
-            ));
+            self.spawn_tracked(
+                "presence-poller",
+                watch_presence(
+                    h,
+                    client_p,
+                    stop_rx_presence,
+                    presence_enabled_p,
+                    dm_counterparts,
+                    forbidden_presence,
+                    app_cache_db_p,
+                ),
+            );
         }
 
         // Build SyncService. `with_offline_mode` lets matrix-sdk-ui handle
@@ -435,7 +445,10 @@ impl ClientFfi {
             let h = Arc::clone(&handler);
             let client_clone = client.clone();
             let stop_rx = stop_rx.clone();
-            self.spawn_tracked("own-profile-watcher", watch_own_profile(h, client_clone, stop_rx));
+            self.spawn_tracked(
+                "own-profile-watcher",
+                watch_own_profile(h, client_clone, stop_rx),
+            );
         }
 
         // Room info watcher: maintains a per-room cache and re-emits the room
@@ -525,9 +538,7 @@ impl ClientFfi {
                     if let Some(conn) = open_thread_read_db(&self.data_dir) {
                         {
                             let mut markers = self.thread_read_markers.write();
-                            for (room_id, root_id, ts_ms) in
-                                load_thread_read_markers_conn(&conn)
-                            {
+                            for (room_id, root_id, ts_ms) in load_thread_read_markers_conn(&conn) {
                                 if ts_ms <= 0 {
                                     continue;
                                 }
@@ -974,13 +985,10 @@ impl ClientFfi {
             let imported = Arc::clone(&self.imported_keys);
             let stop_rx = stop_rx.clone();
 
-            self.spawn_tracked("recovery-state-watcher", watch_recovery_state(
-                h,
-                client_clone,
-                state_code,
-                imported,
-                stop_rx,
-            ));
+            self.spawn_tracked(
+                "recovery-state-watcher",
+                watch_recovery_state(h, client_clone, state_code, imported, stop_rx),
+            );
         }
 
         // Backup-state watcher (Step 6).
@@ -998,13 +1006,10 @@ impl ClientFfi {
             let imported = Arc::clone(&self.imported_keys);
             let stop_rx = stop_rx.clone();
 
-            self.spawn_tracked("backup-state-watcher", watch_backup_state(
-                h,
-                client_clone,
-                state_code,
-                imported,
-                stop_rx,
-            ));
+            self.spawn_tracked(
+                "backup-state-watcher",
+                watch_backup_state(h, client_clone, state_code, imported, stop_rx),
+            );
         }
 
         // Imported-room-keys watcher (Step 6).
@@ -1025,13 +1030,10 @@ impl ClientFfi {
             let imported = Arc::clone(&self.imported_keys);
             let stop_rx = stop_rx.clone();
 
-            self.spawn_tracked("imported-keys-watcher", watch_imported_keys(
-                h,
-                client_clone,
-                state_code,
-                imported,
-                stop_rx,
-            ));
+            self.spawn_tracked(
+                "imported-keys-watcher",
+                watch_imported_keys(h, client_clone, state_code, imported, stop_rx),
+            );
         }
 
         // RoomListService state watcher.
@@ -1051,7 +1053,10 @@ impl ClientFfi {
             let svc_clone = Arc::clone(&sync_service);
             let stop_rx = stop_rx.clone();
 
-            self.spawn_tracked("room-list-state-watcher", watch_room_list_state(h, svc_clone, stop_rx));
+            self.spawn_tracked(
+                "room-list-state-watcher",
+                watch_room_list_state(h, svc_clone, stop_rx),
+            );
         }
 
         // Verification state watcher.
@@ -1065,7 +1070,10 @@ impl ClientFfi {
             let client_clone = client.clone();
             let stop_rx = stop_rx.clone();
 
-            self.spawn_tracked("verification-state-watcher", watch_verification_state(h, client_clone, stop_rx));
+            self.spawn_tracked(
+                "verification-state-watcher",
+                watch_verification_state(h, client_clone, stop_rx),
+            );
         }
 
         // User identity watcher: reports whose cross-signing identity changed
@@ -1132,13 +1140,20 @@ impl ClientFfi {
             let sink = std::sync::Arc::new(RtcCxxBridgeSink {
                 handler: std::sync::Arc::clone(&handler),
             });
-            rtc::register_sink(&client.user_id().map(|u| u.to_string()).unwrap_or_default(), sink);
-            self.rtc_sink_registered.store(true, std::sync::atomic::Ordering::Relaxed);
+            rtc::register_sink(
+                &client.user_id().map(|u| u.to_string()).unwrap_or_default(),
+                sink,
+            );
+            self.rtc_sink_registered
+                .store(true, std::sync::atomic::Ordering::Relaxed);
             // Tracked so stop_sync removes them: a sync restart on the same
             // client would otherwise stack a second set and ring twice.
-            self.event_handler_handles.push(rtc::session::register_invitation_handler(&client));
-            self.event_handler_handles.push(rtc::session::register_msc3401_invitation_handler(&client));
-            self.event_handler_handles.extend(rtc::session::register_rtc_notification_handler(&client));
+            self.event_handler_handles
+                .push(rtc::session::register_invitation_handler(&client));
+            self.event_handler_handles
+                .push(rtc::session::register_msc3401_invitation_handler(&client));
+            self.event_handler_handles
+                .extend(rtc::session::register_rtc_notification_handler(&client));
         }
 
         self.spawn_tracked("sync-supervisor", async move {
@@ -1213,7 +1228,10 @@ impl ClientFfi {
     /// while the C++ `EventHandler` is still alive, ensures the most recent
     /// refresh token is always persisted on clean shutdown.
     pub fn request_stop(&self) {
-        if self.stop_requested.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        if self
+            .stop_requested
+            .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
             return; // already flushed/signalled by an earlier call
         }
         if let (Some(client), Some(handler)) = (&self.client, &self.handler) {
@@ -1865,7 +1883,8 @@ async fn watch_presence(
         if !presence_enabled.load(std::sync::atomic::Ordering::Relaxed) {
             continue;
         }
-        let _job = super::activity::begin("presence-poll", "Sync", super::activity::JobKind::Periodic);
+        let _job =
+            super::activity::begin("presence-poll", "Sync", super::activity::JobKind::Periodic);
         poll_presence_once(
             &client,
             &h,
@@ -1989,9 +2008,8 @@ async fn watch_own_profile(
 
     // UserProfile has no PartialEq; it wraps a BTreeMap, so its JSON form is
     // a stable comparison key.
-    let key = |p: &matrix_sdk::ruma::profile::UserProfile| {
-        serde_json::to_string(p).unwrap_or_default()
-    };
+    let key =
+        |p: &matrix_sdk::ruma::profile::UserProfile| serde_json::to_string(p).unwrap_or_default();
     let mut prev: Option<String> = None;
 
     loop {
@@ -2218,7 +2236,10 @@ async fn adopt_incoming_verification_request(
     let mut delay_ms = 50u64;
     for _ in 0..6 {
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-        req = client.encryption().get_verification_request(&sender, &flow_id).await;
+        req = client
+            .encryption()
+            .get_verification_request(&sender, &flow_id)
+            .await;
         if req.is_some() {
             break;
         }
@@ -2237,8 +2258,12 @@ async fn adopt_incoming_verification_request(
         // to lock others out either, so the limit is per sender (the sender of
         // a to-device event is authenticated) with a generous overall one.
         let from_sender = users.values().filter(|u| **u == user_id).count();
-        if from_sender >= MAX_PENDING_FLOWS_PER_USER || users.len() >= MAX_PENDING_VERIFICATION_FLOWS {
-            tracing::warn!("too many pending verification flows; ignoring {flow_id} from {user_id}");
+        if from_sender >= MAX_PENDING_FLOWS_PER_USER
+            || users.len() >= MAX_PENDING_VERIFICATION_FLOWS
+        {
+            tracing::warn!(
+                "too many pending verification flows; ignoring {flow_id} from {user_id}"
+            );
             return;
         }
         users.insert(flow_id.clone(), user_id.clone());

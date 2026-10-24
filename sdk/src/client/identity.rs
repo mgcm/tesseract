@@ -49,7 +49,10 @@ pub(crate) fn block_sends_on_unverified_devices() -> bool {
 /// Who receives room keys (and other Olm-encrypted to-device payloads).
 /// `IdentityBasedStrategy` shares only with devices their owner cross-signed
 /// and refuses to send while a verified user's identity has changed.
-pub(crate) fn room_key_recipient_strategy(exclude_insecure: bool, block_sends: bool) -> CollectStrategy {
+pub(crate) fn room_key_recipient_strategy(
+    exclude_insecure: bool,
+    block_sends: bool,
+) -> CollectStrategy {
     if exclude_insecure {
         CollectStrategy::IdentityBasedStrategy
     } else if block_sends {
