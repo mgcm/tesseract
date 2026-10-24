@@ -29,7 +29,11 @@ pub fn find_url_spans(text: &str) -> Vec<UrlSpan> {
     let finder = LinkFinder::new();
     for link in finder.links(text) {
         let s = link.as_str();
-        if link.kind() == &LinkKind::Url && (s.starts_with("https://") || s.starts_with("http://"))
+        let has_http_scheme = |scheme: &str| {
+            s.get(..scheme.len())
+                .is_some_and(|p| p.eq_ignore_ascii_case(scheme))
+        };
+        if link.kind() == &LinkKind::Url && (has_http_scheme("https://") || has_http_scheme("http://"))
         {
             spans.push(UrlSpan {
                 start: link.start(),
