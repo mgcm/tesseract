@@ -4,6 +4,7 @@
 #include "views/settings/AppearanceSection.h"
 #include "views/settings/LanguageSection.h"
 #include "views/settings/NetworkSection.h"
+#include "views/settings/PrivacySection.h"
 #include "views/settings/SettingBinder.h"
 #include "tk/combobox.h"
 #include "tk/slider.h"
@@ -577,4 +578,24 @@ TEST_CASE("AppearanceSection: the timeline column controls are disabled under th
     st.message_layout = tesseract::Settings::MessageLayout::Bubbles;
     binder.reload();
     CHECK(sliders[0]->enabled());
+}
+
+TEST_CASE("PrivacySection: the encryption checkboxes no longer ask for a restart",
+          "[settings-view]")
+{
+    tesseract::views::SettingBinder binder;
+    tesseract::views::PrivacySection section(binder);
+    std::vector<tk::CheckButton*> boxes;
+    collect_check_buttons(section, boxes);
+    int seen = 0;
+    for (auto* b : boxes)
+    {
+        const std::string l = b->access_name();
+        if (l.find("unconfirmed devices") != std::string::npos)
+        {
+            ++seen;
+            CHECK(l.find("restart") == std::string::npos);
+        }
+    }
+    CHECK(seen == 2);
 }

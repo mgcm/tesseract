@@ -5137,8 +5137,8 @@ msgid "Couldn't update the digital identity: {0}"
 msgstr "Die digitale Identität konnte nicht aktualisiert werden: {0}"
 
 #: ui/shared/views/settings/PrivacySection.cpp:216
-msgid "Exclude unconfirmed devices (takes effect after restart)"
-msgstr "Unbestätigte Geräte ausschließen (wirkt nach Neustart)"
+msgid "Exclude unconfirmed devices"
+msgstr "Unbestätigte Geräte ausschließen"
 
 #: ui/shared/views/settings/PrivacySection.cpp:226
 msgid "Only send encrypted messages to devices their owner has confirmed, and hide messages sent from devices that aren't. This device must be confirmed to send, and people whose clients don't confirm their devices won't see your messages."
@@ -6914,8 +6914,8 @@ msgid "Home (all rooms)"
 msgstr "Startseite (alle Chats)"
 
 #: ui/shared/views/settings/PrivacySection.cpp
-msgid "Don't send to people with unconfirmed devices (takes effect after restart)"
-msgstr "Nicht an Personen mit unbestätigten Geräten senden (wirkt nach Neustart)"
+msgid "Don't send to people with unconfirmed devices"
+msgstr "Nicht an Personen mit unbestätigten Geräten senden"
 
 #: ui/shared/views/settings/PrivacySection.cpp
 msgid "Refuse to send a message while someone you confirmed has a device they haven't confirmed, or their digital identity has changed. Turn this off to send to every device regardless; you will no longer be warned about identity changes when sending."
@@ -6972,3 +6972,21 @@ msgstr "Die digitale Identität von {0} wurde zurückgesetzt."
 
 msgid "View profile of {0}"
 msgstr "Profil von {0} anzeigen"
+
+msgid "Applying encryption settings…"
+msgstr "Verschlüsselungseinstellungen werden angewendet…"
+
+msgid "Your accounts are reconnecting. This takes a few seconds."
+msgstr "Deine Konten verbinden sich neu. Das dauert einige Sekunden."
+
+msgid "Encryption settings applied."
+msgstr "Verschlüsselungseinstellungen angewendet."
+
+msgid "Encryption settings applied, but reloading failed: {0}"
+msgstr "Verschlüsselungseinstellungen angewendet, aber das Neuladen ist fehlgeschlagen: {0}"
+
+msgid "Encryption settings will apply once the call ends."
+msgstr "Die Verschlüsselungseinstellungen werden angewendet, sobald der Anruf endet."
+
+msgid "Encryption settings will apply once you finish confirming your device."
+msgstr "Die Verschlüsselungseinstellungen werden angewendet, sobald du die Bestätigung deines Geräts abgeschlossen hast."

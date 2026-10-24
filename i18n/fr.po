@@ -5139,8 +5139,8 @@ msgid "Couldn't update the digital identity: {0}"
 msgstr "Impossible de mettre à jour l'identité numérique : {0}"
 
 #: ui/shared/views/settings/PrivacySection.cpp:216
-msgid "Exclude unconfirmed devices (takes effect after restart)"
-msgstr "Exclure les appareils non confirmés (prend effet après redémarrage)"
+msgid "Exclude unconfirmed devices"
+msgstr "Exclure les appareils non confirmés"
 
 #: ui/shared/views/settings/PrivacySection.cpp:226
 msgid "Only send encrypted messages to devices their owner has confirmed, and hide messages sent from devices that aren't. This device must be confirmed to send, and people whose clients don't confirm their devices won't see your messages."
@@ -6916,8 +6916,8 @@ msgid "Home (all rooms)"
 msgstr "Accueil (tous les salons)"
 
 #: ui/shared/views/settings/PrivacySection.cpp
-msgid "Don't send to people with unconfirmed devices (takes effect after restart)"
-msgstr "Ne pas envoyer aux personnes ayant des appareils non confirmés (prend effet après redémarrage)"
+msgid "Don't send to people with unconfirmed devices"
+msgstr "Ne pas envoyer aux personnes ayant des appareils non confirmés"
 
 #: ui/shared/views/settings/PrivacySection.cpp
 msgid "Refuse to send a message while someone you confirmed has a device they haven't confirmed, or their digital identity has changed. Turn this off to send to every device regardless; you will no longer be warned about identity changes when sending."
@@ -6974,3 +6974,21 @@ msgstr "L'identité numérique de {0} a été réinitialisée."
 
 msgid "View profile of {0}"
 msgstr "Voir le profil de {0}"
+
+msgid "Applying encryption settings…"
+msgstr "Application des paramètres de chiffrement…"
+
+msgid "Your accounts are reconnecting. This takes a few seconds."
+msgstr "Vos comptes se reconnectent. Cela prend quelques secondes."
+
+msgid "Encryption settings applied."
+msgstr "Paramètres de chiffrement appliqués."
+
+msgid "Encryption settings applied, but reloading failed: {0}"
+msgstr "Paramètres de chiffrement appliqués, mais le rechargement a échoué : {0}"
+
+msgid "Encryption settings will apply once the call ends."
+msgstr "Les paramètres de chiffrement s'appliqueront à la fin de l'appel."
+
+msgid "Encryption settings will apply once you finish confirming your device."
+msgstr "Les paramètres de chiffrement s'appliqueront une fois la confirmation de votre appareil terminée."

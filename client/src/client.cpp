@@ -288,8 +288,11 @@ void Client::cancel_qr_grant()
     impl_->ffi->qr_grant_cancel();
 }
 
+static std::atomic<bool> g_exclude_insecure_applied{false};
+
 void Client::set_exclude_insecure_devices(bool enabled)
 {
+    g_exclude_insecure_applied.store(enabled);
     tesseract_ffi::set_exclude_insecure_devices(enabled);
 }
 
@@ -299,6 +302,11 @@ void Client::set_block_sends_on_unverified_devices(bool enabled)
 {
     g_block_sends_applied.store(enabled);
     tesseract_ffi::set_block_sends_on_unverified_devices(enabled);
+}
+
+bool Client::exclude_insecure_devices_applied()
+{
+    return g_exclude_insecure_applied.load();
 }
 
 bool Client::block_sends_on_unverified_devices_applied()
@@ -529,6 +537,12 @@ tesseract::Result Client::clear_caches()
 {
     MUT_FFI;
     return from_ffi(impl_->ffi->clear_caches());
+}
+
+tesseract::Result Client::reload_client()
+{
+    MUT_FFI;
+    return from_ffi(impl_->ffi->reload_client());
 }
 
 std::uint32_t Client::in_flight_count() const

@@ -368,6 +368,8 @@ set(_tk_sources
     views/RoomSettingsView.cpp
     views/AlertDialog.h
     views/AlertDialog.cpp
+    views/BusyDialog.h
+    views/BusyDialog.cpp
     views/ConfirmDialog.h
     views/ConfirmDialog.cpp
     views/KeyboardShortcutsOverlay.h

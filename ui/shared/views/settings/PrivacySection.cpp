@@ -213,7 +213,7 @@ PrivacySection::PrivacySection(SettingBinder& binder)
     auto* enc_group = add_group(tk::tr("Encryption"));
 
     auto exclude_cb = tk::create_widget<tk::CheckButton>(
-        this, tk::tr("Exclude unconfirmed devices (takes effect after restart)"),
+        this, tk::tr("Exclude unconfirmed devices"),
         s.exclude_insecure_devices);
     exclude_insecure_cb_ = enc_group->add_widget(std::move(exclude_cb));
     binder.bind(exclude_insecure_cb_, &S::exclude_insecure_devices,
@@ -235,7 +235,7 @@ PrivacySection::PrivacySection(SettingBinder& binder)
     };
 
     auto block_cb = tk::create_widget<tk::CheckButton>(
-        this, tk::tr("Don't send to people with unconfirmed devices (takes effect after restart)"),
+        this, tk::tr("Don't send to people with unconfirmed devices"),
         s.block_sends_on_unverified_devices);
     block_unverified_cb_ = enc_group->add_widget(std::move(block_cb));
     binder.bind(block_unverified_cb_, &S::block_sends_on_unverified_devices,

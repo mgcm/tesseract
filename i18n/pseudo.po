@@ -5443,8 +5443,8 @@ msgid "Encryption"
 msgstr "[Éñçryptïöñxx]"
 
 #: ui/shared/views/settings/PrivacySection.cpp:216
-msgid "Exclude unconfirmed devices (takes effect after restart)"
-msgstr "[Éxçlùdé ùñçöñfïrméd dévïçés (tàkés éfféçt àftér réstàrt)xxxxxxxxxxx]"
+msgid "Exclude unconfirmed devices"
+msgstr "[Éxçlùdé ùñçöñfïrméd dévïçésxxxxx]"
 
 #: ui/shared/views/settings/PrivacySection.cpp:226
 msgid "Only send encrypted messages to devices their owner has confirmed, and hide messages sent from devices that aren't. This device must be confirmed to send, and people whose clients don't confirm their devices won't see your messages."
@@ -7322,8 +7322,8 @@ msgid "Home (all rooms)"
 msgstr "[Hömé (àll rööms)xxx]"
 
 #: ui/shared/views/settings/PrivacySection.cpp
-msgid "Don't send to people with unconfirmed devices (takes effect after restart)"
-msgstr "[Döñ't séñd tö péöplé wïth ùñçöñfïrméd dévïçés (tàkés éfféçt àftér réstàrt)xxxxxxxxxxxxxx]"
+msgid "Don't send to people with unconfirmed devices"
+msgstr "[Döñ't séñd tö péöplé wïth ùñçöñfïrméd dévïçésxxxxxxxxx]"
 
 #: ui/shared/views/settings/PrivacySection.cpp
 msgid "Refuse to send a message while someone you confirmed has a device they haven't confirmed, or their digital identity has changed. Turn this off to send to every device regardless; you will no longer be warned about identity changes when sending."
@@ -7383,3 +7383,21 @@ msgstr "[{0}'s dïgïtàl ïdéñtïty wàs rését.xxxxxx]"
 #, c++-format
 msgid "View profile of {0}"
 msgstr "[Vïéw pröfïlé öf {0}xxx]"
+
+msgid "Applying encryption settings…"
+msgstr "[Àpplyïñg éñçryptïöñ séttïñgs…xxxxx]"
+
+msgid "Your accounts are reconnecting. This takes a few seconds."
+msgstr "[Yöùr àççöùñts àré réçöññéçtïñg. Thïs tàkés à féw séçöñds.xxxxxxxxxxx]"
+
+msgid "Encryption settings applied."
+msgstr "[Éñçryptïöñ séttïñgs àpplïéd.xxxxx]"
+
+msgid "Encryption settings applied, but reloading failed: {0}"
+msgstr "[Éñçryptïöñ séttïñgs àpplïéd, bùt rélöàdïñg fàïléd: {0}xxxxxxxxxx]"
+
+msgid "Encryption settings will apply once the call ends."
+msgstr "[Éñçryptïöñ séttïñgs wïll àpply öñçé thé çàll éñds.xxxxxxxxxx]"
+
+msgid "Encryption settings will apply once you finish confirming your device."
+msgstr "[Éñçryptïöñ séttïñgs wïll àpply öñçé yöù fïñïsh çöñfïrmïñg yöùr dévïçé.xxxxxxxxxxxxxx]"

@@ -307,8 +307,8 @@ pub(crate) async fn build_configured_client(
         })
         // MSC4153 "exclude insecure devices" (opt-in, Settings → Privacy):
         // share room keys only with cross-signed devices and hide messages
-        // from devices that aren't. Read once here, so a toggle applies from
-        // the next account start.
+        // from devices that aren't. Read here, so a toggle applies on the next
+        // client rebuild (account start or in-place reload).
         .with_room_key_recipient_strategy(crate::client::identity::room_key_recipient_strategy(
             crate::client::identity::exclude_insecure_devices(),
             crate::client::identity::block_sends_on_unverified_devices(),

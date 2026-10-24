@@ -296,15 +296,18 @@ public:
     /// MSC4153 "exclude insecure devices" mode, process-wide: share room
     /// keys only with cross-signed devices and hide messages from devices
     /// that aren't. Read when a client restores or logs in, so set it from
-    /// the persisted setting before any account starts.
+    /// the persisted setting before any account starts, then reload clients.
     static void set_exclude_insecure_devices(bool enabled);
 
     /// Process-wide: refuse a send while a verified member's identity has
     /// changed or they have an unconfirmed device; off shares with every
     /// device. Same timing as `set_exclude_insecure_devices`.
     static void set_block_sends_on_unverified_devices(bool enabled);
-    /// The value last passed to the setter, i.e. what accounts started in this
-    /// run use; the setting itself only applies after a restart.
+    /// The value last passed to `set_exclude_insecure_devices`, i.e. what the
+    /// current clients were built with; a change applies on the next client reload.
+    static bool exclude_insecure_devices_applied();
+    /// The value last passed to the setter, i.e. what the current clients were
+    /// built with; a change applies on the next client reload.
     static bool block_sends_on_unverified_devices_applied();
 
     /// Process-wide HTTP proxy for every outgoing request (Matrix, media,
@@ -388,6 +391,9 @@ public:
     /// Clear non-crypto SDK caches (event cache + state store file).
     /// Call after stop_sync() and before restore_session().
     Result clear_caches();
+    /// Tear the SDK client down without wiping any store, so restore_session()
+    /// rebuilds it with the current encryption flags. Call after request_stop().
+    Result reload_client();
 
     /// Live count of extra in-flight HTTP operations (media downloads, back-
     /// pagination); excludes the sync long-poll. Cheap atomic read, any thread.

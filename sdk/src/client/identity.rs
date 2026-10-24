@@ -23,7 +23,8 @@ use std::sync::Arc;
 static EXCLUDE_INSECURE_DEVICES: AtomicBool = AtomicBool::new(false);
 
 /// Set the process-wide MSC4153 mode. Called by the C++ layer at launch (from
-/// the persisted setting) before any client is built.
+/// the persisted setting) and before each in-place client reload; only
+/// clients built afterwards see the new value.
 pub fn set_exclude_insecure_devices(enabled: bool) {
     EXCLUDE_INSECURE_DEVICES.store(enabled, Ordering::Relaxed);
 }

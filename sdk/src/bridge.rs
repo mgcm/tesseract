@@ -2493,6 +2493,9 @@ pub mod ffi {
         fn request_stop(self: &ClientFfi);
         fn stop_sync(self: &mut ClientFfi);
         fn clear_caches(self: &mut ClientFfi) -> OpResult;
+        /// Tear the client down in place, keeping every on-disk store, so the
+        /// next `restore_session` rebuilds it with the current build-time flags.
+        fn reload_client(self: &mut ClientFfi) -> OpResult;
 
         // ----- Media backoff persistence -----
 

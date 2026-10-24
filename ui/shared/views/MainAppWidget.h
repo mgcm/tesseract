@@ -26,6 +26,7 @@
 // any_modal_open_() or while their owning pane is hidden (narrow mode) — see
 // compose_text_area_rect().
 
+#include "BusyDialog.h"
 #include "ConfirmDialog.h"
 #include "KeyboardShortcutsOverlay.h"
 #include "CreatePollDialog.h"
@@ -306,6 +307,10 @@ public:
     {
         return confirm_dialog_;
     }
+    BusyDialog* busy_dialog() const
+    {
+        return busy_dialog_;
+    }
     CreatePollDialog* create_poll_dialog() const
     {
         return create_poll_dialog_;
@@ -476,6 +481,9 @@ private:
     // Modal confirmation overlay — sits above everything else, including the
     // lightboxes, so destructive prompts are always reachable.
     ConfirmDialog* confirm_dialog_ = nullptr;
+
+    // Undismissable "please wait" overlay; see BusyDialog.h.
+    BusyDialog* busy_dialog_ = nullptr;
 
     // Room-history export options/progress overlay. Unlike confirm_dialog_,
     // dismissing it never cancels an in-progress export — see

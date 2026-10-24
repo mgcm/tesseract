@@ -886,6 +886,32 @@ impl ClientFfi {
         ok(String::new())
     }
 
+    /// Tear the client down in place so the caller's `restore_session` +
+    /// `start_sync` rebuild it, re-reading the process-wide build-time
+    /// settings (MSC4153 / block-sends). Unlike [`clear_caches`](Self::clear_caches)
+    /// nothing on disk is touched and sliding sync is not expired, so the
+    /// persisted `pos` stays consistent with the kept stores.
+    pub fn reload_client(&mut self) -> crate::ffi::OpResult {
+        if self.client.is_none() {
+            return err("not logged in");
+        }
+
+        self.stop_sync();
+
+        #[cfg(not(test))]
+        self.drain_and_reset_session_state();
+        self.pause_and_drop_client();
+
+        // The search DB handle was dropped above; reset the gate so the
+        // shell's re-apply of the indexing preference reopens live indexing
+        // (the persisted backfill marker keeps a finished crawl from rerunning).
+        #[cfg(not(test))]
+        self.search_indexing_enabled
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+
+        ok(String::new())
+    }
+
     // -----------------------------------------------------------------------
     // Logout
     // -----------------------------------------------------------------------
@@ -1371,6 +1397,14 @@ mod ffi_state_tests {
     fn clear_caches_requires_a_logged_in_client() {
         let mut c = ClientFfi::new();
         let r = c.clear_caches();
+        assert!(!r.ok);
+        assert_eq!(r.message, "not logged in");
+    }
+
+    #[test]
+    fn reload_client_requires_a_logged_in_client() {
+        let mut c = ClientFfi::new();
+        let r = c.reload_client();
         assert!(!r.ok);
         assert_eq!(r.message, "not logged in");
     }

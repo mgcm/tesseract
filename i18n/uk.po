@@ -5122,8 +5122,8 @@ msgid "Encryption"
 msgstr "Шифрування"
 
 #: ui/shared/views/settings/PrivacySection.cpp:216
-msgid "Exclude unconfirmed devices (takes effect after restart)"
-msgstr "Виключити непідтверджені пристрої (набуде чинності після перезапуску)"
+msgid "Exclude unconfirmed devices"
+msgstr "Виключити непідтверджені пристрої"
 
 #: ui/shared/views/settings/PrivacySection.cpp:226
 msgid "Only send encrypted messages to devices their owner has confirmed, and hide messages sent from devices that aren't. This device must be confirmed to send, and people whose clients don't confirm their devices won't see your messages."
@@ -7491,8 +7491,8 @@ msgid "Home (all rooms)"
 msgstr "Головна (усі кімнати)"
 
 #: ui/shared/views/settings/PrivacySection.cpp
-msgid "Don't send to people with unconfirmed devices (takes effect after restart)"
-msgstr "Не надсилати людям із непідтвердженими пристроями (набуде чинності після перезапуску)"
+msgid "Don't send to people with unconfirmed devices"
+msgstr "Не надсилати людям із непідтвердженими пристроями"
 
 #: ui/shared/views/settings/PrivacySection.cpp
 msgid "Refuse to send a message while someone you confirmed has a device they haven't confirmed, or their digital identity has changed. Turn this off to send to every device regardless; you will no longer be warned about identity changes when sending."
@@ -7554,3 +7554,21 @@ msgstr "Цифрову ідентичність {0} скинуто."
 #, c++-format
 msgid "View profile of {0}"
 msgstr "Переглянути профіль {0}"
+
+msgid "Applying encryption settings…"
+msgstr "Застосування налаштувань шифрування…"
+
+msgid "Your accounts are reconnecting. This takes a few seconds."
+msgstr "Ваші облікові записи перепідключаються. Це займе кілька секунд."
+
+msgid "Encryption settings applied."
+msgstr "Налаштування шифрування застосовано."
+
+msgid "Encryption settings applied, but reloading failed: {0}"
+msgstr "Налаштування шифрування застосовано, але перезавантаження не вдалося: {0}"
+
+msgid "Encryption settings will apply once the call ends."
+msgstr "Налаштування шифрування застосуються після завершення дзвінка."
+
+msgid "Encryption settings will apply once you finish confirming your device."
+msgstr "Налаштування шифрування застосуються, коли ви завершите підтвердження пристрою."

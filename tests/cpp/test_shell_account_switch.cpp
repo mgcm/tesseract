@@ -65,6 +65,10 @@ struct AsShell : tesseract::test::TestShellBase
     int invites_updated = 0, knocks_updated = 0, ui_refreshes = 0, raised = 0;
 
     using ShellBase::account_manager_;
+    using ShellBase::apply_encryption_flags_after_settings_;
+    using ShellBase::busy_dialog_open_;
+    using ShellBase::encryption_flags_pending_;
+    using ShellBase::reload_clients_for_encryption_change_;
     using ShellBase::active_account_;
     using ShellBase::claim_dedicated_for_active_;
     using ShellBase::client_;
@@ -584,6 +588,38 @@ TEST_CASE("restart_sdk_begin_ needs a client and a stored session",
     s.restart_sdk_begin_({}); // nothing stored for this account
     REQUIRE(s.statuses.size() == 1);
     CHECK(s.statuses[0].find("session is missing") != std::string::npos);
+}
+
+TEST_CASE("reload_clients_for_encryption_change_ does nothing destructive without a stored session",
+          "[shell][account_switch]")
+{
+    tesseract::test::SettingsGuard guard;
+    auto& st = tesseract::Settings::instance();
+    const bool was_x = st.exclude_insecure_devices;
+    const bool was_b = st.block_sends_on_unverified_devices;
+    tesseract::Client::set_exclude_insecure_devices(was_x);
+    tesseract::Client::set_block_sends_on_unverified_devices(was_b);
+
+    AsShell s;
+    s.reload_clients_for_encryption_change_(); // nothing pending
+    CHECK(s.statuses.empty());
+
+    s.account_manager_.add_account(as_acct("@a:x"));
+    REQUIRE(s.switch_active_account_impl_("@a:x"));
+    st.exclude_insecure_devices = !was_x;
+    CHECK(s.encryption_flags_pending_());
+    s.reload_clients_for_encryption_change_(); // nothing stored: flags only
+    CHECK_FALSE(s.encryption_flags_pending_());
+    CHECK_FALSE(s.busy_dialog_open_);
+    CHECK(s.statuses.empty());
+
+    // From the login screen only the flags are updated.
+    st.block_sends_on_unverified_devices = !was_b;
+    s.apply_encryption_flags_after_settings_(/*from_login=*/true);
+    CHECK_FALSE(s.encryption_flags_pending_());
+
+    tesseract::Client::set_exclude_insecure_devices(was_x);
+    tesseract::Client::set_block_sends_on_unverified_devices(was_b);
 }
 
 TEST_CASE("finalize_login_async_ rejects a missing or user-less pending login",

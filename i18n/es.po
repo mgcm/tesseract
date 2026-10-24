@@ -5243,8 +5243,8 @@ msgid "Couldn't update the digital identity: {0}"
 msgstr "No se pudo actualizar la identidad digital: {0}"
 
 #: ui/shared/views/settings/PrivacySection.cpp:216
-msgid "Exclude unconfirmed devices (takes effect after restart)"
-msgstr "Excluir dispositivos sin confirmar (se aplica tras reiniciar)"
+msgid "Exclude unconfirmed devices"
+msgstr "Excluir dispositivos sin confirmar"
 
 #: ui/shared/views/settings/PrivacySection.cpp:226
 msgid "Only send encrypted messages to devices their owner has confirmed, and hide messages sent from devices that aren't. This device must be confirmed to send, and people whose clients don't confirm their devices won't see your messages."
@@ -7014,8 +7014,8 @@ msgid "Home (all rooms)"
 msgstr "Inicio (todas las salas)"
 
 #: ui/shared/views/settings/PrivacySection.cpp
-msgid "Don't send to people with unconfirmed devices (takes effect after restart)"
-msgstr "No enviar a personas con dispositivos sin confirmar (se aplica tras reiniciar)"
+msgid "Don't send to people with unconfirmed devices"
+msgstr "No enviar a personas con dispositivos sin confirmar"
 
 #: ui/shared/views/settings/PrivacySection.cpp
 msgid "Refuse to send a message while someone you confirmed has a device they haven't confirmed, or their digital identity has changed. Turn this off to send to every device regardless; you will no longer be warned about identity changes when sending."
@@ -7072,3 +7072,21 @@ msgstr "Se restableció la identidad digital de {0}."
 
 msgid "View profile of {0}"
 msgstr "Ver el perfil de {0}"
+
+msgid "Applying encryption settings…"
+msgstr "Aplicando la configuración de cifrado…"
+
+msgid "Your accounts are reconnecting. This takes a few seconds."
+msgstr "Tus cuentas se están reconectando. Esto tarda unos segundos."
+
+msgid "Encryption settings applied."
+msgstr "Configuración de cifrado aplicada."
+
+msgid "Encryption settings applied, but reloading failed: {0}"
+msgstr "Configuración de cifrado aplicada, pero la recarga falló: {0}"
+
+msgid "Encryption settings will apply once the call ends."
+msgstr "La configuración de cifrado se aplicará cuando termine la llamada."
+
+msgid "Encryption settings will apply once you finish confirming your device."
+msgstr "La configuración de cifrado se aplicará cuando termines de confirmar tu dispositivo."

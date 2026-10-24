@@ -272,15 +272,15 @@ public:
     // their owner cross-signed, and hide messages sent from devices that
     // aren't. Off by default while other clients catch up on cross-signing.
     // Applied via Client::set_exclude_insecure_devices at launch; a change
-    // takes effect after restart.
+    // is applied when Settings closes, by reloading every account's client.
     bool exclude_insecure_devices = false;
 
     // Refuse to send while a verified member's identity has changed or they
     // have a device their owner did not confirm. Off sends to every device
     // regardless (the behaviour before 0.9.4). Ignored while
     // exclude_insecure_devices is on. Applied via
-    // Client::set_block_sends_on_unverified_devices at launch; a change takes
-    // effect after restart.
+    // Client::set_block_sends_on_unverified_devices at launch; a change is
+    // applied when Settings closes, by reloading every account's client.
     bool block_sends_on_unverified_devices = true;
 
     // ── Network proxy ─────────────────────────────────────────────────

@@ -5,6 +5,7 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- feat(settings): the encryption privacy options now apply when Settings closes, without a restart. Linux debug build, ctest 3534/3534
 - fix(ui): a message blocked by an unconfirmed device or changed identity now says why on hover and in a dialog with the options that can help. Linux release build, ctest 3529/3529
 - fix(ui): a user's profile opened from a `matrix:` link or the send-blocked dialog now shows their name and avatar. Linux release build, ctest 3529/3529
 - feat(ui): new Privacy setting "Don't send to people with unconfirmed devices" (on by default); turn it off to send to every device as before 0.9.4. Linux release build, ctest 3529/3529

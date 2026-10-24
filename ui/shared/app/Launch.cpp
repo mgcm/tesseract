@@ -154,7 +154,8 @@ LaunchPlan prepare_launch(const std::vector<std::string>& args,
     // Before any surface is built: fonts are read when each is first created.
     apply_font_prefs(Settings::instance().fonts);
     install_crash_handler(Settings::instance().crash_reporting_enabled);
-    // Before any account restores: the mode is read when each client is built.
+    // Before any account restores: the mode is read when each client is built
+    // (and again on each in-place client reload after a Settings change).
     Client::set_exclude_insecure_devices(Settings::instance().exclude_insecure_devices);
     Client::set_block_sends_on_unverified_devices(
         Settings::instance().block_sends_on_unverified_devices);

@@ -144,11 +144,7 @@ ShellBase::RestoreIOResult ShellBase::restore_all_accounts_blocking_(bool networ
         // compat synchronously rebuilds the image-pack cache (a per-room
         // network fetch), it is not the cheap flag-flip its old call site
         // assumed.
-        apply_search_indexing_pref_(*acc.client);
-        apply_membership_events_pref_(*acc.client);
-        apply_bundled_url_previews_pref_(*acc.client);
-        apply_msc2545_legacy_compat_pref_(*acc.client);
-        apply_low_power_pref_(*acc.client);
+        apply_account_prefs_(*acc.client);
 
         io.accounts.push_back(std::move(acc));
     }
@@ -1659,6 +1655,248 @@ void ShellBase::restart_sdk_begin_(
                     refresh_account_ui_after_switch_();
                     if (recalc)
                         compute_cache_sizes_(std::move(recalc));
+                });
+        });
+}
+
+// The per-account preference pushes that a freshly started (or re-started)
+// client needs. Worker-thread safe; shared by startup restore and the
+// in-place client reload so the two cannot drift.
+void ShellBase::apply_account_prefs_(tesseract::Client& client)
+{
+    apply_search_indexing_pref_(client);
+    apply_membership_events_pref_(client);
+    apply_bundled_url_previews_pref_(client);
+    apply_msc2545_legacy_compat_pref_(client);
+    apply_low_power_pref_(client);
+}
+
+bool ShellBase::encryption_flags_pending_() const
+{
+    const auto& s = tesseract::Settings::instance();
+    return s.exclude_insecure_devices !=
+               tesseract::Client::exclude_insecure_devices_applied() ||
+           s.block_sends_on_unverified_devices !=
+               tesseract::Client::block_sends_on_unverified_devices_applied();
+}
+
+// Called when the settings page closes. `from_login` is true when settings
+// were opened from the login screen (no client to rebuild, and the main
+// surface hosting the busy dialog is not showing): then only the process-wide
+// flags are updated, for the next client to be built.
+void ShellBase::apply_encryption_flags_after_settings_(bool from_login)
+{
+    if (!encryption_flags_pending_())
+    {
+        return;
+    }
+    // Reset-identity and sign-out paths close settings first and then start
+    // their own flow; leave the flags pending (retried on the next close).
+    if (!from_login && (encryption_setup_shown_ || encryption_flow_.has_flow()))
+    {
+        return;
+    }
+    if (from_login || account_manager_.accounts().empty())
+    {
+        const auto& s = tesseract::Settings::instance();
+        tesseract::Client::set_exclude_insecure_devices(s.exclude_insecure_devices);
+        tesseract::Client::set_block_sends_on_unverified_devices(
+            s.block_sends_on_unverified_devices);
+        return;
+    }
+    reload_clients_for_encryption_change_();
+}
+
+// Rebuild every signed-in account's SDK client in place so the encryption
+// flags (read when a client is built) take effect without a restart. Unlike
+// restart_sdk_begin_ no store is wiped and the UI (tabs, drafts, open rooms)
+// is kept; only the room timelines are re-subscribed. An undismissable busy
+// dialog covers the window while the clients reconnect.
+void ShellBase::reload_clients_for_encryption_change_()
+{
+    if (busy_dialog_open_ || !encryption_flags_pending_())
+    {
+        return;
+    }
+
+    if (active_call())
+    {
+        show_status_message_(
+            tk::tr("Encryption settings will apply once the call ends."));
+        return;
+    }
+    if (encryption_flow_.has_flow())
+    {
+        show_status_message_(tk::tr(
+            "Encryption settings will apply once you finish confirming your device."));
+        return;
+    }
+
+    struct Job
+    {
+        std::shared_ptr<AccountSession> sess;
+        std::string                     session_json;
+        std::vector<std::uint8_t>       store_key;
+        bool                            ok = true;
+        std::string                     error;
+    };
+    std::vector<Job> jobs;
+    for (const auto& sess : account_manager_.accounts())
+    {
+        if (!sess || !sess->client)
+        {
+            continue;
+        }
+        auto loaded = tesseract::SessionStore::load_account_with_key(sess->user_id);
+        if (!loaded)
+        {
+            continue;
+        }
+        jobs.push_back({sess, std::move(loaded->session_json),
+                        std::move(loaded->store_key)});
+    }
+
+    // The flags must be set before any client is rebuilt (this also keeps the
+    // applied-value accessors RoomPane::retry_blocked_send_ reads current).
+    {
+        const auto& s = tesseract::Settings::instance();
+        tesseract::Client::set_exclude_insecure_devices(s.exclude_insecure_devices);
+        tesseract::Client::set_block_sends_on_unverified_devices(
+            s.block_sends_on_unverified_devices);
+    }
+    if (jobs.empty())
+    {
+        return;
+    }
+
+    // ── Phase A (UI thread) ─────────────────────────────────────────────────
+    busy_dialog_open_ = true;
+    if (main_app_ && main_app_->busy_dialog())
+    {
+        main_app_->busy_dialog()->open(
+            tk::tr("Applying encryption settings…"),
+            tk::tr("Your accounts are reconnecting. This takes a few seconds."));
+        request_relayout_();
+    }
+    show_status_message_(tk::tr("Applying encryption settings…"), /*auto_clear_ms=*/0);
+
+    for (const auto& j : jobs)
+    {
+        flush_pending_fully_read_now_(j.sess->user_id);
+        // Tell any in-flight run_async_mut_ task to give up before the
+        // reload below queues behind it for the exclusive FFI lock.
+        j.sess->client->request_stop();
+    }
+
+    // The active account's thread panel and live timeline subscriptions go
+    // away with the client; forget their bookkeeping so reopening the room
+    // below re-subscribes from scratch. Tabs, drafts and recents stay.
+    if (main_room_pane_)
+    {
+        auto _tt = compute_thread_transition_(
+            main_room_pane_->thread_panel(),
+            main_room_pane_->thread_panel_prev(),
+            main_room_pane_->thread_root(),
+            ThreadTrigger::RoomSwitch, {});
+        main_room_pane_->apply_thread_transition_(_tt);
+    }
+    visited_lru_.clear();
+    room_last_active_.clear();
+    thread_last_active_.clear();
+    pagination_.clear();
+    reply_details_requested_.clear();
+
+    // Pop-outs keep their own timeline subscriptions; collect them to restore.
+    std::vector<std::pair<std::shared_ptr<AccountSession>, std::string>> popout_subs;
+    for (const auto& [rid, w] : secondary_windows_)
+    {
+        if (!w)
+        {
+            continue;
+        }
+        if (auto sess = account_manager_.find(w->owner_user_id()))
+        {
+            popout_subs.emplace_back(std::move(sess), rid);
+        }
+    }
+
+    // ── Phase B (mut_pool_): blocking rebuild of every account ──────────────
+    run_async_mut_(
+        [this, jobs = std::move(jobs), popout_subs = std::move(popout_subs)]() mutable
+        {
+            for (auto& j : jobs)
+            {
+                auto& client = *j.sess->client;
+                // Self-contained teardown that keeps every on-disk store.
+                client.reload_client();
+                if (!j.store_key.empty())
+                {
+                    client.set_store_key(j.store_key);
+                }
+                auto res = client.restore_session(j.session_json);
+                if (!res.ok)
+                {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+                    res = client.restore_session(j.session_json); // retry once
+                }
+                j.ok    = res.ok;
+                j.error = res.message;
+                if (j.ok)
+                {
+                    client.start_sync(j.sess->bridge.get());
+                    apply_account_prefs_(client);
+                }
+            }
+            for (const auto& [sess, rid] : popout_subs)
+            {
+                for (const auto& j : jobs)
+                {
+                    if (j.sess == sess && j.ok && sess->client)
+                    {
+                        sess->client->subscribe_room(rid);
+                    }
+                }
+            }
+
+            // ── Phase C (UI thread) ─────────────────────────────────────────
+            post_to_ui_alive_(
+                [this, jobs = std::move(jobs)]() mutable
+                {
+                    std::string first_error;
+                    for (const auto& j : jobs)
+                    {
+                        j.sess->sync_started = j.ok;
+                        if (!j.ok && first_error.empty())
+                        {
+                            first_error = j.error;
+                        }
+                    }
+                    busy_dialog_open_ = false;
+                    if (main_app_ && main_app_->busy_dialog())
+                    {
+                        main_app_->busy_dialog()->close();
+                        request_relayout_();
+                    }
+                    if (first_error.empty())
+                    {
+                        show_status_message_(tk::tr("Encryption settings applied."));
+                    }
+                    else
+                    {
+                        show_status_message_(
+                            tk::trf(tk::tr("Encryption settings applied, but "
+                                           "reloading failed: {0}"),
+                                    {first_error}),
+                            /*auto_clear_ms=*/0);
+                    }
+                    if (active_account_ && client_)
+                    {
+                        refresh_account_ui_after_switch_();
+                        if (!current_room_id_.empty())
+                        {
+                            on_room_selected_(current_room_id_);
+                        }
+                    }
                 });
         });
 }

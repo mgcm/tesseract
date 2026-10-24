@@ -1140,6 +1140,15 @@ void ShellBase::set_app_settings_open_(bool open)
         return;
     app_settings_open_ = open;
     refresh_window_title_();
+    if (!open)
+    {
+        const bool from_login = settings_closed_to_login_;
+        settings_closed_to_login_ = false;
+        // Deferred a tick: sign-out and reset-identity paths close settings
+        // before starting their own flow, which the apply must see.
+        post_to_ui_alive_([this, from_login]
+                          { apply_encryption_flags_after_settings_(from_login); });
+    }
 }
 
 void ShellBase::touch_visited_room_(const std::string& room_id)

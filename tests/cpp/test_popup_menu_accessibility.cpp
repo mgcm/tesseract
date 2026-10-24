@@ -4,6 +4,7 @@
 #include "tk/combobox.h"
 #include "tk_test_host.h"
 #include "views/AlertDialog.h"
+#include "views/BusyDialog.h"
 #include "views/ConfirmDialog.h"
 #include "views/PopupMenu.h"
 
@@ -179,4 +180,35 @@ TEST_CASE("ConfirmDialog / AlertDialog report a Dialog role named for their "
     CHECK(alert->access_role() == tk::Role::Dialog);
     CHECK(alert->access_name() == "Upload failed");
     CHECK(alert->access_description() == "The file is too large.");
+}
+
+TEST_CASE("BusyDialog opens and closes, consumes pointer and keys, and is modal",
+         "[dialog][accessibility]")
+{
+    PopupCapableStubHost host;
+    auto busy = tk::create_root_widget<tesseract::views::BusyDialog>(&host);
+    int layout_changes = 0;
+    busy->on_layout_changed = [&] { ++layout_changes; };
+
+    CHECK_FALSE(busy->is_open());
+    CHECK_FALSE(busy->on_pointer_down({1, 1}));
+
+    busy->open("Applying", "Please wait");
+    CHECK(busy->is_open());
+    CHECK(layout_changes == 1);
+    CHECK(busy->access_role() == tk::Role::Dialog);
+    CHECK(busy->access_name() == "Applying");
+    CHECK(busy->access_description() == "Please wait");
+    CHECK(busy->access_modal());
+    CHECK(busy->on_pointer_down({1, 1}));
+
+    tk::KeyEvent esc;
+    esc.key = tk::Key::Escape;
+    CHECK(busy->on_key_down(esc));
+    CHECK(busy->dispatch_key_down(esc));
+    CHECK(busy->is_open());
+
+    busy->close();
+    CHECK_FALSE(busy->is_open());
+    CHECK(layout_changes == 2);
 }

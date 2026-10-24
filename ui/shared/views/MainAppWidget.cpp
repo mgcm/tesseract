@@ -1301,6 +1301,11 @@ MainAppWidget::MainAppWidget()
     // RoomListView's "+" button or an unjoined matrix: link.
     auto ar = tk::create_root_widget<AddRoomView>(host);
     add_room_view_ = overlay_stack_->add_child(std::move(ar));
+
+    // Undismissable "please wait" overlay — added last so it paints above every
+    // other overlay and swallows input until the owner closes it.
+    busy_dialog_ = overlay_stack_->add_child(std::make_unique<BusyDialog>());
+    busy_dialog_->on_layout_changed = [this]() { notify_layout_changed_(); };
     add_room_view_->set_visible(false);
 
     auto floating_calls = std::make_unique<FloatingCallLayerWidget>();
@@ -1591,6 +1596,11 @@ bool MainAppWidget::handle_history_shortcut_(const tk::KeyEvent& event)
 
 bool MainAppWidget::dismiss_top_transient_()
 {
+    // The busy dialog cannot be dismissed; Escape is swallowed.
+    if (busy_dialog_ && busy_dialog_->is_open())
+    {
+        return true;
+    }
     // Match visual priority for transient overlays. Native text controls may
     // still handle Escape before this when they own focus; this path is for the
     // shared canvas/widget tree and lets shells stop duplicating canvas policy.
@@ -1718,6 +1728,8 @@ bool MainAppWidget::show_room_list_pane_narrow_()
 
 tk::Widget* MainAppWidget::active_transient_overlay_() const
 {
+    if (busy_dialog_ && busy_dialog_->is_open())
+        return busy_dialog_;
     if (add_room_view_ && add_room_view_->is_open())
         return add_room_view_;
     if (forward_picker_ && forward_picker_->is_open())
@@ -2100,6 +2112,7 @@ void MainAppWidget::show_keyboard_shortcuts()
 bool MainAppWidget::any_modal_open_() const
 {
     const bool existing_modals =
+           (busy_dialog_       && busy_dialog_->is_open()) ||
            (confirm_dialog_    && confirm_dialog_->is_open()) ||
            (create_poll_dialog_ && create_poll_dialog_->is_open()) ||
            (shortcuts_overlay_ && shortcuts_overlay_->is_open()) ||
@@ -2257,6 +2270,10 @@ void MainAppWidget::paint_after_children(tk::PaintCtx&)
 
 bool MainAppWidget::on_key_down(const tk::KeyEvent& event)
 {
+    if (busy_dialog_ && busy_dialog_->is_open())
+    {
+        return true;
+    }
     if (handle_primary_shortcut_(event))
     {
         return true;

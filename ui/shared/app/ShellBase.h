@@ -723,6 +723,11 @@ protected:
     // "Tesseract" instead of "Tesseract - <room>".
     bool app_settings_open_ = false;
     bool settings_opened_from_login_ = false;
+    // Latched by take_settings_from_login_() so set_app_settings_open_(false),
+    // which every shell calls right after it, knows settings closed to login.
+    bool settings_closed_to_login_ = false;
+    // True while the encryption-flag client reload runs (the BusyDialog is up).
+    bool busy_dialog_open_ = false;
     bool login_recheck_pending_ = false;
     // Most-recently-visited room IDs in visit order (front = most recent),
     // recorded in after_active_room_changed_(). Feeds the Ctrl+K quick
@@ -3868,6 +3873,7 @@ protected:
     {
         const bool v = settings_opened_from_login_;
         settings_opened_from_login_ = false;
+        settings_closed_to_login_   = v;
         return v;
     }
 
@@ -5145,6 +5151,23 @@ protected:
                            uint64_t mem_hits, uint64_t mem_misses,
                            uint64_t disk_hits, uint64_t disk_misses)>
             recompute_callback);
+
+    // The per-account preference pushes a started client needs; shared by the
+    // startup restore and reload_clients_for_encryption_change_(). Worker-safe.
+    void apply_account_prefs_(tesseract::Client& client);
+
+    // True when the saved encryption flags differ from the ones the running
+    // clients were built with.
+    bool encryption_flags_pending_() const;
+
+    // Settings just closed: reload the clients if a flag changed (or, from the
+    // login screen, only update the flags for the next client).
+    void apply_encryption_flags_after_settings_(bool from_login);
+
+    // Rebuild every signed-in account's SDK client in place (no store wipe, UI
+    // kept) behind an undismissable BusyDialog so the encryption flags apply
+    // without a restart. UI thread only; no-op without a pending change.
+    void reload_clients_for_encryption_change_();
 
 public:
     // Pure function: returns {has_unread, has_highlight} computed across every
