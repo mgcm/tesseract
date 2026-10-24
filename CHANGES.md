@@ -5,6 +5,7 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- fix(ui): bare URLs in messages sent with HTML formatting are now clickable. Linux release build, 3 new ctest cases
 - fix(ui): the space picker no longer covers the user-info strip, and hides when the sidebar is collapsed or single-pane. Built and tested by the user
 - fix(ui): Clear Cache no longer erases the room browser's remembered servers from the `im.gnomos.tesseract` account data; the synced preferences that survive a prefs rewrite now come from one `carried_prefs_()`. Linux release build, ctest 3521/3521
 - fix(ui): the login view's Sign in button, "Create an account" link and password toggle are disabled while the server's sign-in methods are still being checked (the same wait Enter already honours), so a click can't start the wrong flow. Linux release build, 40 login ctest cases pass, 1 new, user-verified

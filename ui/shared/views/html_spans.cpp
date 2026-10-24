@@ -642,6 +642,48 @@ static std::string strip_leading_at(std::string s)
 
 } // namespace
 
+// Bare http(s):// and matrix: URLs in HTML text nodes (senders such as Element
+// leave them unwrapped in formatted_body). Only plain text runs are split;
+// existing links, code, pills and images are left alone.
+static std::vector<tk::TextSpan> linkify_bare_urls(std::vector<tk::TextSpan> spans)
+{
+    std::vector<tk::TextSpan> out;
+    out.reserve(spans.size());
+    for (auto& sp : spans)
+    {
+        if (!sp.url.empty() || sp.code || sp.is_image || sp.is_mention ||
+            sp.text.empty())
+        {
+            out.push_back(std::move(sp));
+            continue;
+        }
+        const auto found = tesseract::find_url_spans(sp.text);
+        if (found.empty())
+        {
+            out.push_back(std::move(sp));
+            continue;
+        }
+        auto piece = [&](std::size_t from, std::size_t to, const std::string& url)
+        {
+            tk::TextSpan n = sp;
+            n.text         = sp.text.substr(from, to - from);
+            n.url          = url;
+            out.push_back(std::move(n));
+        };
+        std::size_t pos = 0;
+        for (const auto& us : found)
+        {
+            if (us.start > pos)
+                piece(pos, us.start, {});
+            piece(us.start, us.end, us.url);
+            pos = us.end;
+        }
+        if (pos < sp.text.size())
+            piece(pos, sp.text.size(), {});
+    }
+    return out;
+}
+
 // Split plain (non-link, non-code) spans on a word-bounded literal "@room"
 // token, flagging that token as a mention pill. `@room` mentions arrive as
 // plain text (per spec — the SDK rewrites the sentinel anchor to text and sets
@@ -1120,7 +1162,7 @@ std::vector<tk::TextSpan> html_to_spans(std::string_view html, bool dark)
         }
     }
 
-    return split_room_mentions(std::move(spans), dark);
+    return split_room_mentions(linkify_bare_urls(std::move(spans)), dark);
 }
 
 // ── URL extraction helpers ────────────────────────────────────────────────
@@ -1381,7 +1423,7 @@ std::vector<BodyBlock> html_to_blocks(std::string_view html, bool dark)
         }
         if (!cur.spans.empty())
         {
-            cur.spans = split_room_mentions(std::move(cur.spans), dark);
+            cur.spans = split_room_mentions(linkify_bare_urls(std::move(cur.spans)), dark);
             blocks.push_back(std::move(cur));
         }
         cur        = BodyBlock{};
@@ -1422,7 +1464,7 @@ std::vector<BodyBlock> html_to_blocks(std::string_view html, bool dark)
         }
         TableCell cell;
         if (!cur.spans.empty())
-            cell.spans = split_room_mentions(std::move(cur.spans), dark);
+            cell.spans = split_room_mentions(linkify_bare_urls(std::move(cur.spans)), dark);
         cur_row.push_back(std::move(cell));
         cur.spans.clear();
         cur_text.clear();

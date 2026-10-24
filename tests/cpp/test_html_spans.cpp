@@ -1736,3 +1736,36 @@ TEST_CASE("neutralize_literal_carriers turns a literal U+FFFC in text into U+FFF
     CHECK(spans[1].is_image);
     CHECK(spans[1].text.empty());
 }
+
+TEST_CASE("autolink: a bare URL in formatted_body becomes a link",
+          "[html_spans][autolink]")
+{
+    auto s = html_to_spans("see https://example.org/p/1 now", false);
+    REQUIRE(s.size() == 3);
+    CHECK(s[0].text == "see ");
+    CHECK(s[1].text == "https://example.org/p/1");
+    CHECK(s[1].url == "https://example.org/p/1");
+    CHECK(s[2].url.empty());
+}
+
+TEST_CASE("autolink: a bare URL in a block body becomes a link",
+          "[html_spans][autolink]")
+{
+    auto b = html_to_blocks("<ul><li>go to https://example.org</li></ul>", false);
+    bool found = false;
+    for (const auto& blk : b)
+        found = found || any_link(blk.spans);
+    CHECK(found);
+}
+
+TEST_CASE("autolink: URLs in <a> and <code> keep their existing treatment",
+          "[html_spans][autolink]")
+{
+    auto a = html_to_spans(
+        "<a href=\"https://a.example\">https://b.example</a>", false);
+    REQUIRE(a.size() == 1);
+    CHECK(a[0].url == "https://a.example");
+
+    auto c = html_to_spans("<code>https://example.org</code>", false);
+    CHECK_FALSE(any_link(c));
+}
