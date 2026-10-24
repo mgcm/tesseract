@@ -92,6 +92,7 @@ add_executable(tesseract_tests
     cpp/test_tk_quick_switcher.cpp
     cpp/test_html_spans.cpp
     cpp/test_sdk_text.cpp
+    cpp/test_send_block.cpp
     cpp/test_utf8.cpp
     cpp/test_table_layout.cpp
     cpp/test_call_tile_layout.cpp

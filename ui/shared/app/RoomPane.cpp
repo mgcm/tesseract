@@ -7,6 +7,7 @@
 #include "views/MediaViewerOverlay.h"
 #include "views/media_viewer_items.h"
 #include "views/RoomMediaView.h"
+#include "views/send_block.h"
 #include "views/media_drop.h"
 #include "views/text_util.h"
 #include "tk/i18n.h"
@@ -408,6 +409,10 @@ void RoomPane::wire_room_view_()
     {
         ml->on_retry_send = [this](const std::string& txn_id) { retry_send_(txn_id); };
         ml->on_abort_send = [this](const std::string& txn_id) { abort_send_(txn_id); };
+        ml->on_retry_blocked_send = [this](const std::string& txn_id, const std::string& code,
+                                           const std::vector<std::string>& users)
+        { retry_blocked_send_(txn_id, code, users); };
+        ml->user_name_for = [this](const std::string& uid) { return member_label_(uid); };
     }
     rv->on_resolve_identity_warning = [this](const tesseract::IdentityWarning& w)
     {
@@ -3082,6 +3087,123 @@ void RoomPane::retry_send_(const std::string& txn_id)
         shell_show_status_message_(
             tk::trf(tk::tr("Failed to retry sending: {0}"), {res.message}));
     }
+}
+
+std::string RoomPane::member_label_(const std::string& user_id) const
+{
+    for (const auto& m : cached_room_members_)
+        if (m.user_id == user_id)
+            return m.display_name;
+    return {};
+}
+
+void RoomPane::retry_blocked_send_(const std::string& txn_id, const std::string& code,
+                                   const std::vector<std::string>& users)
+{
+    if (!room_view_ || !shell_)
+    {
+        retry_send_(txn_id);
+        return;
+    }
+    const auto action = views::send_block::retry_action(
+        code, Settings::instance().block_sends_on_unverified_devices,
+        Client::block_sends_on_unverified_devices_applied());
+    if (action == views::send_block::RetryAction::RetryDirectly)
+    {
+        // The check is off in this run, so this send goes to every device.
+        retry_send_(txn_id);
+        return;
+    }
+    const auto name_of = [this](const std::string& uid) { return member_label_(uid); };
+    views::ConfirmDialog::Options opts;
+    opts.title = tk::tr("Message not sent");
+    opts.body = views::send_block::explanation(code, users, name_of);
+    opts.cancel_label = tk::tr("Close");
+    if (action == views::send_block::RetryAction::NeedsRestart)
+    {
+        opts.body = tk::tr("The check that blocked this message is turned off, but the "
+                           "change takes effect after you restart Tesseract.");
+        opts.confirm_label = tk::tr("Cancel sending");
+        opts.destructive = true;
+        if (!room_view_->request_confirm(std::move(opts),
+                                         [this, txn_id] { abort_send_(txn_id); }))
+            retry_send_(txn_id);
+        return;
+    }
+
+    std::function<void()> on_confirm = [this, txn_id] { retry_send_(txn_id); };
+    if (views::send_block::can_remove_verification(code) && !users.empty())
+    {
+        opts.confirm_label = tk::tr("Withdraw verification and send");
+        opts.destructive = true;
+        opts.secondary_label = tk::tr("Show profile");
+        opts.on_secondary = [this, uid = users.front()]
+        {
+            if (room_view_)
+                room_view_->open_user_profile(uid);
+        };
+        on_confirm = [this, txn_id, users]
+        {
+            if (!pane_client_())
+                return;
+            // Stopping to trust the named users is what lets the send through;
+            // the SDK checks again when the echo is unwedged.
+            run_async_mut_(
+                [this, shell = shell_, sess = session_(), room_id = room_id_, txn_id, users,
+                 alive = weak_flag()]
+                {
+                    if (!sess || !sess->client) return;
+                    std::string error;
+                    for (const auto& uid : users)
+                    {
+                        auto r = sess->client->withdraw_user_verification(uid);
+                        if (!r.ok)
+                        {
+                            error = tk::trf(tk::tr("Couldn't update the digital identity: {0}"),
+                                            {r.message});
+                            break;
+                        }
+                    }
+                    if (error.empty())
+                    {
+                        auto r = sess->client->retry_send(room_id, txn_id);
+                        if (!r.ok)
+                            error = tk::trf(tk::tr("Failed to retry sending: {0}"), {r.message});
+                    }
+                    if (error.empty()) return;
+                    shell->post_to_ui_(
+                        [this, alive, error]
+                        {
+                            if (!alive.lock()) return;
+                            shell_show_status_message_(error);
+                        });
+                });
+        };
+    }
+    else if (code == "insecure_devices")
+    {
+        // Our signature keeps them verified, so removing verification can't
+        // clear this: only the device's owner can. Let the message go instead
+        // of leaving it stuck.
+        opts.confirm_label = tk::tr("Cancel sending");
+        opts.destructive = true;
+        if (!users.empty())
+        {
+            opts.secondary_label = tk::tr("Show profile");
+            opts.on_secondary = [this, uid = users.front()]
+            {
+                if (room_view_)
+                    room_view_->open_user_profile(uid);
+            };
+        }
+        on_confirm = [this, txn_id] { abort_send_(txn_id); };
+    }
+    else
+    {
+        opts.confirm_label = tk::tr("Retry");
+    }
+    if (!room_view_->request_confirm(std::move(opts), std::move(on_confirm)))
+        retry_send_(txn_id);
 }
 
 void RoomPane::on_identity_status_changed(

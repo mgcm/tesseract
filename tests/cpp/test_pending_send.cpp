@@ -45,6 +45,7 @@ TEST_CASE(
     ev.pending_state = "failed";
     ev.pending_txn_id = "txn-2";
     ev.pending_error = "network timeout";
+    ev.pending_error_users = {"@bob:example.org"};
     ev.pending_recoverable = true;
 
     const std::string my_user_id = "@alice:example.org";
@@ -53,6 +54,8 @@ TEST_CASE(
     CHECK(row.pending_state == PS::Failed);
     CHECK(row.pending_recoverable == true);
     CHECK(row.pending_error == "network timeout");
+    REQUIRE(row.pending_error_users.size() == 1);
+    CHECK(row.pending_error_users[0] == "@bob:example.org");
 }
 
 TEST_CASE("make_row_data maps failed unrecoverable to PendingState::Failed "

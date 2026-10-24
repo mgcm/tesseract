@@ -61,6 +61,7 @@ private:
     tk::Label* previews_unavailable_label_ = nullptr;
     tk::CheckButton* search_index_cb_ = nullptr;
     tk::CheckButton* exclude_insecure_cb_ = nullptr;
+    tk::CheckButton* block_unverified_cb_ = nullptr;
     tk::Label* search_stats_label_ = nullptr; // counts + status
     tk::Label* search_date_label_ = nullptr;  // "covers messages since …"
 

@@ -1805,10 +1805,6 @@ msgstr "{0} ({1})"
 msgid "{0}'s verified digital identity was reset."
 msgstr "Den verifiserte digitale identiteten til {0} ble tilbakestilt."
 
-#: ui/shared/views/IdentityChangeBanner.cpp:61
-msgid "{0}'s digital identity was reset."
-msgstr "Den digitale identiteten til {0} ble tilbakestilt."
-
 msgid "Withdraw verification"
 msgstr "Trekk tilbake verifiseringen"
 
@@ -2256,9 +2252,6 @@ msgid "{0} reaction"
 msgid_plural "{0} reactions"
 msgstr[0] "{0} reaksjon"
 msgstr[1] "{0} reaksjoner"
-
-msgid "View profile of {0}"
-msgstr "Vis profilen til {0}"
 
 msgid "Reveal spoiler"
 msgstr "Vis spoiler"
@@ -5280,3 +5273,63 @@ msgstr "Forlat området"
 #: ui/shared/views/SpacePickerView.cpp
 msgid "Home (all rooms)"
 msgstr "Hjem (alle rom)"
+
+#: ui/shared/views/settings/PrivacySection.cpp
+msgid "Don't send to people with unconfirmed devices (takes effect after restart)"
+msgstr "Ikke send til personer med ubekreftede enheter (trer i kraft etter omstart)"
+
+#: ui/shared/views/settings/PrivacySection.cpp
+msgid "Refuse to send a message while someone you confirmed has a device they haven't confirmed, or their digital identity has changed. Turn this off to send to every device regardless; you will no longer be warned about identity changes when sending."
+msgstr "Nekt å sende en melding mens noen du har bekreftet har en ubekreftet enhet, eller den digitale identiteten deres har endret seg. Slå av for å sende til alle enheter uansett; du blir da ikke lenger varslet om identitetsendringer ved sending."
+
+#: ui/shared/views/send_block.cpp
+msgid "This device must be confirmed before it can send messages"
+msgstr "Denne enheten må bekreftes før den kan sende meldinger"
+
+#: ui/shared/views/send_block.cpp
+msgid "someone in this room"
+msgstr "noen i dette rommet"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0} has a device that isn't confirmed by its owner"
+msgid_plural "{0} have devices that aren't confirmed by their owners"
+msgstr[0] "{0} har en enhet som eieren ikke har bekreftet"
+msgstr[1] "{0} har enheter som eierne ikke har bekreftet"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent."
+msgstr "{0}, så meldingen ble ikke sendt."
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent. It can be sent once they confirm or sign out that device. You can also discard the message, or turn off this check in Settings."
+msgstr "{0}, så meldingen ble ikke sendt. Den kan sendes når de bekrefter eller logger ut denne enheten. Du kan også forkaste meldingen eller slå av denne kontrollen i innstillingene."
+
+#: ui/shared/app/RoomPane.cpp
+msgid "The check that blocked this message is turned off, but the change takes effect after you restart Tesseract."
+msgstr "Kontrollen som blokkerte denne meldingen er slått av, men endringen trer i kraft etter at du har startet Tesseract på nytt."
+
+#: ui/shared/app/RoomPane.cpp
+msgid "Withdraw verification and send"
+msgstr "Trekk tilbake verifiseringen og send"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}'s digital identity was reset"
+msgid_plural "The digital identities of {0} were reset"
+msgstr[0] "Den digitale identiteten til {0} ble tilbakestilt"
+msgstr[1] "De digitale identitetene til {0} ble tilbakestilt"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent. You can withdraw your verification, which lets it go through; you can verify them again later from their profile."
+msgstr "{0}, så meldingen ble ikke sendt. Du kan trekke tilbake verifiseringen din slik at den går gjennom; du kan verifisere dem igjen senere fra profilen deres."
+
+#: ui/shared/views/IdentityChangeBanner.cpp:61
+msgid "{0}'s digital identity was reset."
+msgstr "Den digitale identiteten til {0} ble tilbakestilt."
+
+msgid "View profile of {0}"
+msgstr "Vis profilen til {0}"

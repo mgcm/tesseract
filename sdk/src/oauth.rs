@@ -311,6 +311,7 @@ pub(crate) async fn build_configured_client(
         // the next account start.
         .with_room_key_recipient_strategy(crate::client::identity::room_key_recipient_strategy(
             crate::client::identity::exclude_insecure_devices(),
+            crate::client::identity::block_sends_on_unverified_devices(),
         ))
         .with_decryption_settings(crate::client::identity::decryption_settings(
             crate::client::identity::exclude_insecure_devices(),

@@ -130,6 +130,7 @@ void Settings::load_from_disk(const std::filesystem::path& config_dir)
     send_bundled_url_previews    = j.value("send_bundled_url_previews",    true);
     fetch_url_previews_directly  = j.value("fetch_url_previews_directly",  false);
     exclude_insecure_devices     = j.value("exclude_insecure_devices",     false);
+    block_sends_on_unverified_devices = j.value("block_sends_on_unverified_devices", true);
     {
         auto pm = j.value("proxy_mode", std::string("system"));
         proxy_mode = pm == "none"   ? ProxyMode::None
@@ -426,6 +427,7 @@ void Settings::save_to_disk(const std::filesystem::path& config_dir) const
         {"send_bundled_url_previews",        send_bundled_url_previews},
         {"fetch_url_previews_directly",      fetch_url_previews_directly},
         {"exclude_insecure_devices",         exclude_insecure_devices},
+        {"block_sends_on_unverified_devices", block_sends_on_unverified_devices},
         {"proxy_mode",                       proxy_mode == ProxyMode::None   ? "none"
                                            : proxy_mode == ProxyMode::Manual ? "manual"
                                                                              : "system"},

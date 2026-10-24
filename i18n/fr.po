@@ -5129,10 +5129,6 @@ msgstr "{0} ({1})"
 msgid "{0}'s verified digital identity was reset."
 msgstr "L'identité numérique vérifiée de {0} a été réinitialisée."
 
-#: ui/shared/views/IdentityChangeBanner.cpp:61
-msgid "{0}'s digital identity was reset."
-msgstr "L'identité numérique de {0} a été réinitialisée."
-
 #: ui/shared/views/IdentityChangeBanner.cpp:71
 #: ui/shared/views/UserProfilePanel.cpp:203
 msgid "Withdraw verification"
@@ -5447,9 +5443,6 @@ msgstr "Utilisez les flèches pour la déplacer"
 
 msgid "View avatar"
 msgstr "Voir l’avatar"
-
-msgid "View profile of {0}"
-msgstr "Voir le profil de {0}"
 
 msgid "View room avatar"
 msgstr "Voir l’avatar du salon"
@@ -6921,3 +6914,63 @@ msgstr "Quitter l'espace"
 #: ui/shared/views/SpacePickerView.cpp
 msgid "Home (all rooms)"
 msgstr "Accueil (tous les salons)"
+
+#: ui/shared/views/settings/PrivacySection.cpp
+msgid "Don't send to people with unconfirmed devices (takes effect after restart)"
+msgstr "Ne pas envoyer aux personnes ayant des appareils non confirmés (prend effet après redémarrage)"
+
+#: ui/shared/views/settings/PrivacySection.cpp
+msgid "Refuse to send a message while someone you confirmed has a device they haven't confirmed, or their digital identity has changed. Turn this off to send to every device regardless; you will no longer be warned about identity changes when sending."
+msgstr "Refuser d'envoyer un message tant qu'une personne que vous avez confirmée a un appareil non confirmé ou que son identité numérique a changé. Désactivez cette option pour envoyer à tous les appareils sans restriction ; vous ne serez plus averti des changements d'identité à l'envoi."
+
+#: ui/shared/views/send_block.cpp
+msgid "This device must be confirmed before it can send messages"
+msgstr "Cet appareil doit être confirmé avant de pouvoir envoyer des messages"
+
+#: ui/shared/views/send_block.cpp
+msgid "someone in this room"
+msgstr "quelqu'un dans ce salon"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0} has a device that isn't confirmed by its owner"
+msgid_plural "{0} have devices that aren't confirmed by their owners"
+msgstr[0] "{0} a un appareil que son propriétaire n'a pas confirmé"
+msgstr[1] "{0} ont des appareils que leurs propriétaires n'ont pas confirmés"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent."
+msgstr "{0}, le message n'a donc pas été envoyé."
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent. It can be sent once they confirm or sign out that device. You can also discard the message, or turn off this check in Settings."
+msgstr "{0}, le message n'a donc pas été envoyé. Il pourra l'être dès que la personne aura confirmé ou déconnecté cet appareil. Vous pouvez aussi abandonner le message ou désactiver cette vérification dans les réglages."
+
+#: ui/shared/app/RoomPane.cpp
+msgid "The check that blocked this message is turned off, but the change takes effect after you restart Tesseract."
+msgstr "La vérification qui a bloqué ce message est désactivée, mais le changement ne prend effet qu'après un redémarrage de Tesseract."
+
+#: ui/shared/app/RoomPane.cpp
+msgid "Withdraw verification and send"
+msgstr "Retirer la vérification et envoyer"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}'s digital identity was reset"
+msgid_plural "The digital identities of {0} were reset"
+msgstr[0] "L'identité numérique de {0} a été réinitialisée"
+msgstr[1] "Les identités numériques de {0} ont été réinitialisées"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent. You can withdraw your verification, which lets it go through; you can verify them again later from their profile."
+msgstr "{0}, le message n'a donc pas été envoyé. Vous pouvez retirer votre vérification pour qu'il parte ; vous pourrez les vérifier à nouveau plus tard depuis leur profil."
+
+#: ui/shared/views/IdentityChangeBanner.cpp:61
+msgid "{0}'s digital identity was reset."
+msgstr "L'identité numérique de {0} a été réinitialisée."
+
+msgid "View profile of {0}"
+msgstr "Voir le profil de {0}"

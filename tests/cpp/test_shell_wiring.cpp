@@ -447,6 +447,7 @@ TEST_CASE("wiring: settings view changes are persisted by the shell",
     st.prefetch_full_media = true;
     st.autoscroll_unread_rooms = false;
     st.exclude_insecure_devices = true;
+    st.block_sends_on_unverified_devices = false;
     st.group_inactive_rooms = true;
     st.group_unread_rooms = true;
     st.inactive_room_threshold_days = 45;
@@ -457,7 +458,7 @@ TEST_CASE("wiring: settings view changes are persisted by the shell",
     st.proxy_mode = tesseract::Settings::ProxyMode::Manual;
     st.proxy_url = "http://proxy.invalid:3128";
     for (K k : {K::HideContent, K::ImagePreviews, K::Prefetch, K::AutoscrollUnread,
-                K::ExcludeInsecure, K::GroupInactive, K::GroupUnread,
+                K::ExcludeInsecure, K::BlockOnUnverified, K::GroupInactive, K::GroupUnread,
                 K::InactivePeriod, K::AudioInput, K::AudioOutput, K::Camera,
                 K::Language, K::Proxy})
         f.view->on_setting_changed(k);
@@ -468,6 +469,7 @@ TEST_CASE("wiring: settings view changes are persisted by the shell",
     st.prefetch_full_media = false;
     st.autoscroll_unread_rooms = true;
     st.exclude_insecure_devices = false;
+    st.block_sends_on_unverified_devices = true;
     st.group_inactive_rooms = false;
     st.group_unread_rooms = false;
     st.inactive_room_threshold_days = 7;
@@ -483,6 +485,7 @@ TEST_CASE("wiring: settings view changes are persisted by the shell",
     CHECK(st.prefetch_full_media);
     CHECK_FALSE(st.autoscroll_unread_rooms);
     CHECK(st.exclude_insecure_devices);
+    CHECK_FALSE(st.block_sends_on_unverified_devices);
     CHECK(st.group_inactive_rooms);
     CHECK(st.group_unread_rooms);
     CHECK(st.inactive_room_threshold_days == 45);

@@ -256,6 +256,7 @@ struct MessageRowData
     PendingState pending_state = PendingState::None;
     std::string pending_txn_id;
     std::string pending_error;
+    std::vector<std::string> pending_error_users;
     bool pending_recoverable = false;
     // Set for ~2 s after a Sending → None transition to show ✓.
     bool just_sent = false;
@@ -841,6 +842,17 @@ public:
     // Fired when the user clicks the Retry button on a failed own message.
     std::function<void(const std::string& txn_id)> on_retry_send;
 
+    // Fired instead of `on_retry_send` when the failed message was parked by an
+    // encryption check (see send_block.h): the shell explains it and offers a
+    // fix before retrying. `users` are the members the check names.
+    std::function<void(const std::string& txn_id, const std::string& code,
+                       const std::vector<std::string>& users)>
+        on_retry_blocked_send;
+
+    // Display name for a user id in a failed-send explanation; unset or empty
+    // falls back to the id.
+    std::function<std::string(const std::string& user_id)> user_name_for;
+
     // Fired when the user clicks the ✕ (abort) button on a failed own message.
     std::function<void(const std::string& txn_id)> on_abort_send;
 
@@ -1126,6 +1138,7 @@ public:
         tk::Rect more_button{};   // 0-area when not painted
         tk::Rect retry_button{};  // 0-area when not painted
         tk::Rect abort_button{};  // 0-area when not painted
+        tk::Rect failed_marker{}; // 0-area when not painted — the red ⚠ of a failed send
         tk::Rect receipt_overflow{}; // 0-area when not painted — the "+N" pill
         tk::Rect status_emoji{};     // 0-area when not painted — sender status emoji
         // Full bounds of the hover action pill (react/reply/…), world coords,
@@ -1670,6 +1683,10 @@ private:
     // See set_relayout_suppressed().
     bool relayout_suppressed_ = false;
 
+    // Why a failed own message wasn't sent, as text: the explained encryption
+    // check, else the raw error, else empty.
+    std::string failed_send_reason_(const MessageRowData& m) const;
+
     // Per-frame chip geometry for the hovered row. Mutable so paint_row
     // can write into it from a const-ish paint pass.
     mutable RowChipGeom hovered_row_geom_;
@@ -1692,7 +1709,7 @@ private:
     HoverTarget hover_target_ = HoverTarget::None;
     int hover_chip_idx_ = -1;
 
-    enum class ActionTooltip { None, React, Reply, Thread, Edit, More };
+    enum class ActionTooltip { None, React, Reply, Thread, Edit, More, SendFailed };
     ActionTooltip action_tooltip_ = ActionTooltip::None;
 
     // True while an inline custom-emoji shortcode tooltip (hovering an

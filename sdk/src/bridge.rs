@@ -42,6 +42,13 @@ pub fn set_exclude_insecure_devices(enabled: bool) {
     super::client::identity::set_exclude_insecure_devices(enabled);
 }
 
+/// Refuse a send when a verified member's identity changed or they have an
+/// unsigned device (default on). Process-wide, read when each matrix-sdk
+/// client is built.
+pub fn set_block_sends_on_unverified_devices(enabled: bool) {
+    super::client::identity::set_block_sends_on_unverified_devices(enabled);
+}
+
 /// Process-wide HTTP proxy (0 = system, 1 = none, 2 = manual). Call before
 /// any client is built and before runtime threads start.
 pub fn set_proxy(mode: u8, url: &str) -> bool {
@@ -718,6 +725,9 @@ pub mod ffi {
         pending_recoverable: bool,
         /// Transaction ID of the pending local echo (for abort_send).
         pending_txn_id: String,
+        /// Users an encryption check named when `pending_error` is a
+        /// `identity_violation` / `insecure_devices` code.
+        pending_error_users: Vec<String>,
         // m.location / MSC3488 (valid when msg_type == "m.location")
         location_lat: f64,
         location_lon: f64,
@@ -2225,6 +2235,10 @@ pub mod ffi {
         /// from devices that aren't. Process-wide, read when a client is
         /// built: call before `restore_session` / `oauth_begin`.
         fn set_exclude_insecure_devices(enabled: bool);
+
+        /// Refuse a send when a verified member's identity changed or they
+        /// have an unsigned device. Process-wide, read when a client is built.
+        fn set_block_sends_on_unverified_devices(enabled: bool);
 
         // ----- Network proxy -----
 

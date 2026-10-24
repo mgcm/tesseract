@@ -59,10 +59,9 @@ and in-progress work, as a single backlog ordered by priority/urgency.
   self-mention emphasis, device rename, new-device warnings, edit history
   viewer.
 - Room upgrades, alias management beyond viewing.
-- **MSC4153 follow-ups.** The MSC4350 bridge-bot annotation, a reason
-  tooltip on sends blocked by an encryption check (`pending_error` is
-  already on the row), and translating the Rust-side UTD reason strings
-  (`utd_message_for_cause`).
+- **MSC4153 follow-ups.** The MSC4350 bridge-bot annotation, a "verify this
+  device" action for sends blocked with `own_verification_required`, and
+  translating the Rust-side UTD reason strings (`utd_message_for_cause`).
 - **MSC2545 pack management — manual order/sort.** List/subscribe UI, pack
   creation/removal, and sticker delete/rename inside the user pack all
   shipped 2026-07-11 (global "Emojis & Stickers" settings tab +

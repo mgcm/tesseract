@@ -501,6 +501,13 @@ public:
     void jump_to_unread_(const std::string& fully_read_event_id);
     void send_typing_notice_(bool typing);
     void retry_send_(const std::string& txn_id);
+    // A send an encryption check parked (views/send_block.h): explain why and
+    // offer to stop trusting the named users, then retry. Falls back to a plain
+    // retry when no dialog can be shown.
+    void retry_blocked_send_(const std::string& txn_id, const std::string& code,
+                             const std::vector<std::string>& users);
+    // Display name of a room member from the cached member list, else empty.
+    std::string member_label_(const std::string& user_id) const;
     void abort_send_(const std::string& txn_id);
     // Pin the changed identity or withdraw verification, per `w.kind`.
     void resolve_identity_warning_(const tesseract::IdentityWarning& w);

@@ -190,6 +190,7 @@ pub async fn send_frame_key_to_user(
             raw_content,
             crate::client::identity::room_key_recipient_strategy(
                 crate::client::identity::exclude_insecure_devices(),
+                crate::client::identity::block_sends_on_unverified_devices(),
             ),
         )
         .await

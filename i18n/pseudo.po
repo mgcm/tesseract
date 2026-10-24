@@ -2887,11 +2887,6 @@ msgstr "[{0} ({1})x]"
 msgid "{0}'s verified digital identity was reset."
 msgstr "[{0}'s vérïfïéd dïgïtàl ïdéñtïty wàs rését.xxxxxxxx]"
 
-#: ui/shared/views/IdentityChangeBanner.cpp:61
-#, c++-format
-msgid "{0}'s digital identity was reset."
-msgstr "[{0}'s dïgïtàl ïdéñtïty wàs rését.xxxxxx]"
-
 #: ui/shared/views/IdentityChangeBanner.cpp:71
 #: ui/shared/views/UserProfilePanel.cpp:203
 msgid "Withdraw verification"
@@ -3628,11 +3623,6 @@ msgid "{0} reaction"
 msgid_plural "{0} reactions"
 msgstr[0] "[{0} réàçtïöñxx]"
 msgstr[1] "[{0} réàçtïöñsxx]"
-
-#: ui/shared/views/MessageListView.cpp:3724
-#, c++-format
-msgid "View profile of {0}"
-msgstr "[Vïéw pröfïlé öf {0}xxx]"
 
 #: ui/shared/views/MessageListView.cpp:3739
 msgid "Reveal spoiler"
@@ -7330,3 +7320,66 @@ msgstr "[Léàvé spàçéxx]"
 #: ui/shared/views/SpacePickerView.cpp
 msgid "Home (all rooms)"
 msgstr "[Hömé (àll rööms)xxx]"
+
+#: ui/shared/views/settings/PrivacySection.cpp
+msgid "Don't send to people with unconfirmed devices (takes effect after restart)"
+msgstr "[Döñ't séñd tö péöplé wïth ùñçöñfïrméd dévïçés (tàkés éfféçt àftér réstàrt)xxxxxxxxxxxxxx]"
+
+#: ui/shared/views/settings/PrivacySection.cpp
+msgid "Refuse to send a message while someone you confirmed has a device they haven't confirmed, or their digital identity has changed. Turn this off to send to every device regardless; you will no longer be warned about identity changes when sending."
+msgstr "[Réfùsé tö séñd à méssàgé whïlé söméöñé yöù çöñfïrméd hàs à dévïçé théy hàvéñ't çöñfïrméd, ör théïr dïgïtàl ïdéñtïty hàs çhàñgéd. Tùrñ thïs öff tö séñd tö évéry dévïçé régàrdléss; yöù wïll ñö löñgér bé wàrñéd àböùt ïdéñtïty çhàñgés whéñ séñdïñg.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]"
+
+#: ui/shared/views/send_block.cpp
+msgid "This device must be confirmed before it can send messages"
+msgstr "[Thïs dévïçé mùst bé çöñfïrméd béföré ït çàñ séñd méssàgésxxxxxxxxxxx]"
+
+#: ui/shared/views/send_block.cpp
+msgid "someone in this room"
+msgstr "[söméöñé ïñ thïs röömxxxx]"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0} has a device that isn't confirmed by its owner"
+msgid_plural "{0} have devices that aren't confirmed by their owners"
+msgstr[0] "[{0} hàs à dévïçé thàt ïsñ't çöñfïrméd by ïts öwñérxxxxxxxxxx]"
+msgstr[1] "[{0} hàvé dévïçés thàt àréñ't çöñfïrméd by théïr öwñérsxxxxxxxxxx]"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent."
+msgstr "[{0}, sö thé méssàgé wàsñ't séñt.xxxxxx]"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent. It can be sent once they confirm or sign out that device. You can also discard the message, or turn off this check in Settings."
+msgstr "[{0}, sö thé méssàgé wàsñ't séñt. Ït çàñ bé séñt öñçé théy çöñfïrm ör sïgñ öùt thàt dévïçé. Yöù çàñ àlsö dïsçàrd thé méssàgé, ör tùrñ öff thïs çhéçk ïñ Séttïñgs.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]"
+
+#: ui/shared/app/RoomPane.cpp
+msgid "The check that blocked this message is turned off, but the change takes effect after you restart Tesseract."
+msgstr "[Thé çhéçk thàt blöçkéd thïs méssàgé ïs tùrñéd öff, bùt thé çhàñgé tàkés éfféçt àftér yöù réstàrt Tésséràçt.xxxxxxxxxxxxxxxxxxxxx]"
+
+#: ui/shared/app/RoomPane.cpp
+msgid "Withdraw verification and send"
+msgstr "[Wïthdràw vérïfïçàtïöñ àñd séñdxxxxxx]"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}'s digital identity was reset"
+msgid_plural "The digital identities of {0} were reset"
+msgstr[0] "[{0}'s dïgïtàl ïdéñtïty wàs résétxxxxxx]"
+msgstr[1] "[Thé dïgïtàl ïdéñtïtïés öf {0} wéré résétxxxxxxxx]"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent. You can withdraw your verification, which lets it go through; you can verify them again later from their profile."
+msgstr "[{0}, sö thé méssàgé wàsñ't séñt. Yöù çàñ wïthdràw yöùr vérïfïçàtïöñ, whïçh léts ït gö thröùgh; yöù çàñ vérïfy thém àgàïñ làtér fröm théïr pröfïlé.xxxxxxxxxxxxxxxxxxxxxxxxxxxxx]"
+
+#: ui/shared/views/IdentityChangeBanner.cpp:61
+#, c++-format
+msgid "{0}'s digital identity was reset."
+msgstr "[{0}'s dïgïtàl ïdéñtïty wàs rését.xxxxxx]"
+
+#: ui/shared/views/MessageListView.cpp:3724
+#, c++-format
+msgid "View profile of {0}"
+msgstr "[Vïéw pröfïlé öf {0}xxx]"

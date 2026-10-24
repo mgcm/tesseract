@@ -5233,10 +5233,6 @@ msgstr "{0} ({1})"
 msgid "{0}'s verified digital identity was reset."
 msgstr "Se restableció la identidad digital verificada de {0}."
 
-#: ui/shared/views/IdentityChangeBanner.cpp:61
-msgid "{0}'s digital identity was reset."
-msgstr "Se restableció la identidad digital de {0}."
-
 #: ui/shared/views/IdentityChangeBanner.cpp:71
 #: ui/shared/views/UserProfilePanel.cpp:203
 msgid "Withdraw verification"
@@ -5551,9 +5547,6 @@ msgstr "Usa las flechas para moverla"
 
 msgid "View avatar"
 msgstr "Ver avatar"
-
-msgid "View profile of {0}"
-msgstr "Ver el perfil de {0}"
 
 msgid "View room avatar"
 msgstr "Ver el avatar de la sala"
@@ -7019,3 +7012,63 @@ msgstr "Salir del espacio"
 #: ui/shared/views/SpacePickerView.cpp
 msgid "Home (all rooms)"
 msgstr "Inicio (todas las salas)"
+
+#: ui/shared/views/settings/PrivacySection.cpp
+msgid "Don't send to people with unconfirmed devices (takes effect after restart)"
+msgstr "No enviar a personas con dispositivos sin confirmar (se aplica tras reiniciar)"
+
+#: ui/shared/views/settings/PrivacySection.cpp
+msgid "Refuse to send a message while someone you confirmed has a device they haven't confirmed, or their digital identity has changed. Turn this off to send to every device regardless; you will no longer be warned about identity changes when sending."
+msgstr "Negarse a enviar un mensaje mientras alguien que confirmaste tenga un dispositivo sin confirmar o su identidad digital haya cambiado. Desactívalo para enviar a todos los dispositivos sin restricción; al enviar ya no se te avisará de cambios de identidad."
+
+#: ui/shared/views/send_block.cpp
+msgid "This device must be confirmed before it can send messages"
+msgstr "Este dispositivo debe confirmarse antes de poder enviar mensajes"
+
+#: ui/shared/views/send_block.cpp
+msgid "someone in this room"
+msgstr "alguien de esta sala"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0} has a device that isn't confirmed by its owner"
+msgid_plural "{0} have devices that aren't confirmed by their owners"
+msgstr[0] "{0} tiene un dispositivo que su propietario no ha confirmado"
+msgstr[1] "{0} tienen dispositivos que sus propietarios no han confirmado"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent."
+msgstr "{0}, por lo que el mensaje no se envió."
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent. It can be sent once they confirm or sign out that device. You can also discard the message, or turn off this check in Settings."
+msgstr "{0}, por lo que el mensaje no se envió. Se podrá enviar cuando confirmen o cierren la sesión de ese dispositivo. También puedes descartar el mensaje o desactivar esta comprobación en Ajustes."
+
+#: ui/shared/app/RoomPane.cpp
+msgid "The check that blocked this message is turned off, but the change takes effect after you restart Tesseract."
+msgstr "La comprobación que bloqueó este mensaje está desactivada, pero el cambio se aplica al reiniciar Tesseract."
+
+#: ui/shared/app/RoomPane.cpp
+msgid "Withdraw verification and send"
+msgstr "Retirar la verificación y enviar"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}'s digital identity was reset"
+msgid_plural "The digital identities of {0} were reset"
+msgstr[0] "La identidad digital de {0} se ha restablecido"
+msgstr[1] "Las identidades digitales de {0} se han restablecido"
+
+#: ui/shared/views/send_block.cpp
+#, c++-format
+msgid "{0}, so the message wasn't sent. You can withdraw your verification, which lets it go through; you can verify them again later from their profile."
+msgstr "{0}, por lo que el mensaje no se envió. Puedes retirar tu verificación para que se envíe; podrás volver a verificarlos más tarde desde su perfil."
+
+#: ui/shared/views/IdentityChangeBanner.cpp:61
+msgid "{0}'s digital identity was reset."
+msgstr "Se restableció la identidad digital de {0}."
+
+msgid "View profile of {0}"
+msgstr "Ver el perfil de {0}"

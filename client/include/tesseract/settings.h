@@ -275,6 +275,14 @@ public:
     // takes effect after restart.
     bool exclude_insecure_devices = false;
 
+    // Refuse to send while a verified member's identity has changed or they
+    // have a device their owner did not confirm. Off sends to every device
+    // regardless (the behaviour before 0.9.4). Ignored while
+    // exclude_insecure_devices is on. Applied via
+    // Client::set_block_sends_on_unverified_devices at launch; a change takes
+    // effect after restart.
+    bool block_sends_on_unverified_devices = true;
+
     // ── Network proxy ─────────────────────────────────────────────────
     // System → OS/environment proxy (default); None → never use a proxy;
     // Manual → proxy_url (`http(s)://[user:pass@]host:port`). Applied via

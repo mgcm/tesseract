@@ -9,6 +9,7 @@
 // cxx-generated header (produced by corrosion_add_cxxbridge)
 #include "ffi_convert.h"
 
+#include <atomic>
 #include <nlohmann/json.hpp>
 
 #include <cctype>
@@ -290,6 +291,19 @@ void Client::cancel_qr_grant()
 void Client::set_exclude_insecure_devices(bool enabled)
 {
     tesseract_ffi::set_exclude_insecure_devices(enabled);
+}
+
+static std::atomic<bool> g_block_sends_applied{true};
+
+void Client::set_block_sends_on_unverified_devices(bool enabled)
+{
+    g_block_sends_applied.store(enabled);
+    tesseract_ffi::set_block_sends_on_unverified_devices(enabled);
+}
+
+bool Client::block_sends_on_unverified_devices_applied()
+{
+    return g_block_sends_applied.load();
 }
 
 bool Client::set_proxy(Settings::ProxyMode mode, const std::string& url)

@@ -234,6 +234,29 @@ PrivacySection::PrivacySection(SettingBinder& binder)
         if (host_) host_->hide_tooltip(exclude_insecure_cb_);
     };
 
+    auto block_cb = tk::create_widget<tk::CheckButton>(
+        this, tk::tr("Don't send to people with unconfirmed devices (takes effect after restart)"),
+        s.block_sends_on_unverified_devices);
+    block_unverified_cb_ = enc_group->add_widget(std::move(block_cb));
+    binder.bind(block_unverified_cb_, &S::block_sends_on_unverified_devices,
+                SettingKey::BlockOnUnverified);
+    block_unverified_cb_->on_hover_enter = [this]
+    {
+        if (host_)
+            host_->show_tooltip(
+                block_unverified_cb_,
+                tk::tr("Refuse to send a message while someone you confirmed has a "
+                       "device they haven't confirmed, or their digital identity has "
+                       "changed. Turn this off to send to every device regardless; "
+                       "you will no longer be warned about identity changes when "
+                       "sending."),
+                block_unverified_cb_->bounds());
+    };
+    block_unverified_cb_->on_hover_leave = [this]
+    {
+        if (host_) host_->hide_tooltip(block_unverified_cb_);
+    };
+
     enc_group->add_widget(tk::create_widget<tk::Button>(
         this, tk::tr("Export message keys…"),
         [this] { if (on_export_keys) on_export_keys(); }));

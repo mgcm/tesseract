@@ -64,6 +64,7 @@ enum class SettingKey
     SendPresence,
     SendMapsAsLocation,
     ExcludeInsecure,
+    BlockOnUnverified,
     BundledUrlPreviews,
     IndexMessages,
     CheckForUpdates,

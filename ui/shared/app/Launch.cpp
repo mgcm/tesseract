@@ -156,6 +156,8 @@ LaunchPlan prepare_launch(const std::vector<std::string>& args,
     install_crash_handler(Settings::instance().crash_reporting_enabled);
     // Before any account restores: the mode is read when each client is built.
     Client::set_exclude_insecure_devices(Settings::instance().exclude_insecure_devices);
+    Client::set_block_sends_on_unverified_devices(
+        Settings::instance().block_sends_on_unverified_devices);
     // Also before any runtime threads: it edits the process environment.
     {
         const auto& s = Settings::instance();

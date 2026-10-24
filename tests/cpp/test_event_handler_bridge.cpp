@@ -52,6 +52,7 @@ tesseract_ffi::TimelineEvent make_ffi_event(const std::string& msg_type)
     ev.pending_error        = "oops";
     ev.pending_recoverable  = true;
     ev.pending_txn_id       = "txn-abc";
+    ev.pending_error_users.push_back(rust::String("@carol:server"));
     return ev;
 }
 
@@ -416,6 +417,8 @@ TEST_CASE("assign_base copies every shared base field", "[ffi][assign_base]")
     CHECK(ev->pending_error == "oops");
     CHECK(ev->pending_recoverable);
     CHECK(ev->pending_txn_id == "txn-abc");
+    REQUIRE(ev->pending_error_users.size() == 1);
+    CHECK(ev->pending_error_users[0] == "@carol:server");
 }
 
 TEST_CASE("assign_base populates reactions", "[ffi][assign_base]")

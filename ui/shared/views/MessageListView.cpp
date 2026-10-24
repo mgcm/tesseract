@@ -1,6 +1,7 @@
 #include "MessageListView.h"
 #include "views/poll_logic.h"
 #include "views/sdk_text.h"
+#include "views/send_block.h"
 #include "format.h"
 #include "html_spans.h"
 #include "IrcFormat.h"
@@ -517,6 +518,7 @@ MessageRowData make_row_data(const tesseract::Event& ev,
     }
     row.pending_txn_id = ev.pending_txn_id;
     row.pending_error = ev.pending_error;
+    row.pending_error_users = ev.pending_error_users;
     row.pending_recoverable = ev.pending_recoverable;
 
     switch (ev.type)
@@ -3106,6 +3108,11 @@ public:
                             std::max(min_edge_x, cur_right - kPendingGap - wsz.w);
                         float wy = cursor - wsz.h;
                         ctx.canvas.draw_text(*warn_lo, {wx, wy}, kRed);
+                        if (hovered)
+                        {
+                            owner_.hovered_row_geom_.failed_marker =
+                                tk::Rect{wx, wy, wsz.w, wsz.h};
+                        }
                     }
                 }
             }
@@ -8383,9 +8390,9 @@ void MessageListView::update_message(std::size_t index, MessageRowData msg)
     if (msg.pending_state == MessageRowData::PendingState::Failed &&
         messages_[index].pending_state != MessageRowData::PendingState::Failed && host())
     {
-        host()->announce(msg.pending_error.empty()
-                             ? tk::tr("Message not sent")
-                             : tk::trf(tk::tr("Message not sent: {0}"), {msg.pending_error}),
+        const std::string why = failed_send_reason_(msg);
+        host()->announce(why.empty() ? tk::tr("Message not sent")
+                                     : tk::trf(tk::tr("Message not sent: {0}"), {why}),
                          tk::Host::Politeness::Assertive);
     }
     if (msg.kind == MessageRowData::Kind::ReadMarker)
@@ -8472,6 +8479,13 @@ void MessageListView::update_message(std::size_t index, MessageRowData msg)
     {
         invalidate_row(index); // targeted: this row + its dependency span
     }
+}
+
+std::string MessageListView::failed_send_reason_(const MessageRowData& m) const
+{
+    std::string why =
+        send_block::reason(m.pending_error, m.pending_error_users, user_name_for);
+    return why.empty() ? m.pending_error : why;
 }
 
 void MessageListView::clear_just_sent(const std::string& event_id)
@@ -9854,6 +9868,7 @@ bool MessageListView::on_pointer_move(tk::Point local)
                 {hovered_row_geom_.thread_button, ActionTooltip::Thread},
                 {hovered_row_geom_.edit_button,   ActionTooltip::Edit},
                 {hovered_row_geom_.more_button,   ActionTooltip::More},
+                {hovered_row_geom_.failed_marker, ActionTooltip::SendFailed},
             };
             for (const auto& c : checks)
             {
@@ -9873,6 +9888,17 @@ bool MessageListView::on_pointer_move(tk::Point local)
             action_tooltip_ = next;
             if (next != ActionTooltip::None && host_)
             {
+                if (next == ActionTooltip::SendFailed)
+                {
+                    const std::size_t ri = hovered_row_geom_.row_index;
+                    const std::string tip =
+                        ri < messages_.size() ? failed_send_reason_(messages_[ri])
+                                              : std::string();
+                    if (!tip.empty())
+                        host_->show_tooltip(this, tip, tip_anchor);
+                }
+                else
+                {
                 const char* src =
                     next == ActionTooltip::React  ? tk::N_("Add reaction")
                     : next == ActionTooltip::Reply  ? tk::N_("Reply")
@@ -9880,6 +9906,7 @@ bool MessageListView::on_pointer_move(tk::Point local)
                     : next == ActionTooltip::Edit   ? tk::N_("Edit")
                     :                                 tk::N_("More");
                 host_->show_tooltip(this, tk::tr(src), tip_anchor);
+                }
             }
         }
 
@@ -11638,7 +11665,20 @@ void MessageListView::on_pointer_up(tk::Point local, bool inside_self)
             const tk::Rect& rb = hovered_row_geom_.retry_button;
             if (rb.w > 0 && rect_contains(rb, world))
             {
-                if (on_retry_send)
+                const MessageRowData* blocked = nullptr;
+                for (const auto& row : messages_)
+                    if (row.pending_txn_id == txn &&
+                        send_block::is_block_code(row.pending_error))
+                    {
+                        blocked = &row;
+                        break;
+                    }
+                if (blocked && on_retry_blocked_send)
+                {
+                    on_retry_blocked_send(txn, blocked->pending_error,
+                                          blocked->pending_error_users);
+                }
+                else if (on_retry_send)
                 {
                     on_retry_send(txn);
                 }

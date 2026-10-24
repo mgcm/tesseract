@@ -652,6 +652,8 @@ inline void assign_base(Event& ev, const tesseract_ffi::TimelineEvent& e)
     ev.pending_error = std::string(e.pending_error);
     ev.pending_recoverable = e.pending_recoverable;
     ev.pending_txn_id = std::string(e.pending_txn_id);
+    for (const auto& u : e.pending_error_users)
+        ev.pending_error_users.emplace_back(std::string(u));
 }
 
 /// Map the stable discriminant produced by Rust's `membership_action_str`

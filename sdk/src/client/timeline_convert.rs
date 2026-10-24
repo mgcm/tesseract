@@ -138,6 +138,7 @@ pub(super) fn ffi_event_defaults() -> TimelineEvent {
         pending_error: String::new(),
         pending_recoverable: false,
         pending_txn_id: String::new(),
+        pending_error_users: Vec::new(),
         location_lat: 0.0,
         location_lon: 0.0,
         location_description: String::new(),
@@ -197,15 +198,22 @@ pub(crate) fn utd_message_for_cause(
 
 /// Machine-readable `pending_error` for a local echo that matrix-sdk parked
 /// because of an MSC4153 encryption check, or `None` for any other failure.
-/// It reaches the UI as `pending_error`, which no view shows yet (the
-/// reason-tooltip follow-up in ROADMAP.md).
+/// It reaches the UI as `pending_error`, with the users the check names (none
+/// for `own_verification_required`) as `pending_error_users`.
 #[cfg(not(test))]
-fn crypto_send_block_code(error: &matrix_sdk::Error) -> Option<&'static str> {
+fn crypto_send_block_code(error: &matrix_sdk::Error) -> Option<(&'static str, Vec<String>)> {
     use matrix_sdk_base::store::QueueWedgeError;
     match QueueWedgeError::from(error) {
-        QueueWedgeError::IdentityViolations { .. } => Some("identity_violation"),
-        QueueWedgeError::InsecureDevices { .. } => Some("insecure_devices"),
-        QueueWedgeError::CrossVerificationRequired => Some("own_verification_required"),
+        QueueWedgeError::IdentityViolations { users } => {
+            Some(("identity_violation", users.iter().map(|u| u.to_string()).collect()))
+        }
+        QueueWedgeError::InsecureDevices { user_device_map } => Some((
+            "insecure_devices",
+            user_device_map.keys().map(|u| u.to_string()).collect(),
+        )),
+        QueueWedgeError::CrossVerificationRequired => {
+            Some(("own_verification_required", Vec::new()))
+        }
         _ => None,
     }
 }
@@ -1210,7 +1218,7 @@ pub(super) async fn timeline_item_to_ffi(
     }
 
     // Compute pending fields once for all non-virtual event paths.
-    let (pending_state, pending_error, pending_recoverable, pending_txn_id) =
+    let (pending_state, pending_error, pending_recoverable, pending_txn_id, pending_error_users) =
         if event_item.is_local_echo() {
             let txn = event_item
                 .transaction_id()
@@ -1218,7 +1226,7 @@ pub(super) async fn timeline_item_to_ffi(
                 .unwrap_or_default();
             match event_item.send_state() {
                 Some(EventSendState::NotSentYet { .. }) => {
-                    ("sending".to_owned(), String::new(), false, txn)
+                    ("sending".to_owned(), String::new(), false, txn, Vec::new())
                 }
                 Some(EventSendState::SendingFailed {
                     error,
@@ -1227,13 +1235,13 @@ pub(super) async fn timeline_item_to_ffi(
                     // Parked by an encryption check the user can resolve
                     // (identity-change warning, verifying this device):
                     // offer Retry, which unwedges it (`retry_send`).
-                    Some(code) => ("failed".to_owned(), code.to_owned(), true, txn),
-                    None => ("failed".to_owned(), error.to_string(), *is_recoverable, txn),
+                    Some((code, users)) => ("failed".to_owned(), code.to_owned(), true, txn, users),
+                    None => ("failed".to_owned(), error.to_string(), *is_recoverable, txn, Vec::new()),
                 },
-                _ => (String::new(), String::new(), false, txn),
+                _ => (String::new(), String::new(), false, txn, Vec::new()),
             }
         } else {
-            (String::new(), String::new(), false, String::new())
+            (String::new(), String::new(), false, String::new(), Vec::new())
         };
 
     // Undecryptable messages: matrix-sdk-ui surfaces them as a MsgLikeKind
@@ -1413,6 +1421,7 @@ pub(super) async fn timeline_item_to_ffi(
             pending_error: pending_error.clone(),
             pending_recoverable,
             pending_txn_id: pending_txn_id.clone(),
+            pending_error_users: pending_error_users.clone(),
             thread_root_id,
             is_thread_root,
             thread_reply_count,
@@ -1512,6 +1521,7 @@ pub(super) async fn timeline_item_to_ffi(
             pending_error: pending_error.clone(),
             pending_recoverable,
             pending_txn_id: pending_txn_id.clone(),
+            pending_error_users: pending_error_users.clone(),
             thread_root_id,
             is_thread_root,
             thread_reply_count,
@@ -2026,6 +2036,7 @@ pub(super) async fn timeline_item_to_ffi(
         pending_error,
         pending_recoverable,
         pending_txn_id,
+        pending_error_users,
         thread_root_id,
         is_thread_root,
         thread_reply_count,

@@ -262,6 +262,9 @@ struct Event
     std::string pending_error;
     bool pending_recoverable = false;
     std::string pending_txn_id;
+    /// Users named by an encryption check when `pending_error` is
+    /// "identity_violation" or "insecure_devices".
+    std::vector<std::string> pending_error_users;
     virtual ~Event() = default;
 };
 

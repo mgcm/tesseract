@@ -299,6 +299,14 @@ public:
     /// the persisted setting before any account starts.
     static void set_exclude_insecure_devices(bool enabled);
 
+    /// Process-wide: refuse a send while a verified member's identity has
+    /// changed or they have an unconfirmed device; off shares with every
+    /// device. Same timing as `set_exclude_insecure_devices`.
+    static void set_block_sends_on_unverified_devices(bool enabled);
+    /// The value last passed to the setter, i.e. what accounts started in this
+    /// run use; the setting itself only applies after a restart.
+    static bool block_sends_on_unverified_devices_applied();
+
     /// Process-wide HTTP proxy for every outgoing request (Matrix, media,
     /// previews, LiveKit signalling; call media over UDP is unaffected).
     /// Call once at launch, before any account starts and before worker

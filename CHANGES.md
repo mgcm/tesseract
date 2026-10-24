@@ -5,6 +5,9 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- fix(ui): a message blocked by an unconfirmed device or changed identity now says why on hover and in a dialog with the options that can help. Linux release build, ctest 3529/3529
+- fix(ui): a user's profile opened from a `matrix:` link or the send-blocked dialog now shows their name and avatar. Linux release build, ctest 3529/3529
+- feat(ui): new Privacy setting "Don't send to people with unconfirmed devices" (on by default); turn it off to send to every device as before 0.9.4. Linux release build, ctest 3529/3529
 - fix(ui): bare URLs in messages sent with HTML formatting are now clickable. Linux release build, 3 new ctest cases
 - fix(ui): the space picker no longer covers the user-info strip, and hides when the sidebar is collapsed or single-pane. Built and tested by the user
 - fix(ui): Clear Cache no longer erases the room browser's remembered servers from the `im.gnomos.tesseract` account data; the synced preferences that survive a prefs rewrite now come from one `carried_prefs_()`. Linux release build, ctest 3521/3521

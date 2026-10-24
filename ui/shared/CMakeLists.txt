@@ -211,6 +211,10 @@ set(_tk_sources
     views/html_spans.cpp
     views/sdk_text.h
     views/sdk_text.cpp
+    views/send_block.h
+    views/send_block.cpp
+    views/send_block.h
+    views/send_block.cpp
     views/table_layout.h
     views/table_layout.cpp
     views/call_tile_layout.h

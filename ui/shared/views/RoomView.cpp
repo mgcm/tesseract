@@ -598,17 +598,7 @@ void RoomView::wire_message_list_callbacks_(MessageListView* ml)
     // room's members and open the profile panel.
     ml->on_mention_clicked = [this](const std::string& uid)
     {
-        std::string name, avatar;
-        for (const auto& m : room_members_)
-        {
-            if (m.user_id == uid)
-            {
-                name   = m.display_name;
-                avatar = m.avatar_url;
-                break;
-            }
-        }
-        show_user_profile(uid, name, avatar);
+        open_user_profile(uid);
     };
 }
 
@@ -1282,7 +1272,19 @@ void RoomView::show_invite_dialog()
 
 void RoomView::open_user_profile(const std::string& user_id)
 {
-    show_user_profile(user_id, "", "");
+    // The panel can't look the name and avatar up itself: take them from the
+    // room's members, as a mention click does.
+    std::string name, avatar;
+    for (const auto& m : room_members_)
+    {
+        if (m.user_id == user_id)
+        {
+            name   = m.display_name;
+            avatar = m.avatar_url;
+            break;
+        }
+    }
+    show_user_profile(user_id, std::move(name), std::move(avatar));
 }
 
 void RoomView::show_user_profile(std::string user_id, std::string display_name,
