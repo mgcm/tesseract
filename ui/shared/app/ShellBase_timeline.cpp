@@ -1357,13 +1357,20 @@ void ShellBase::handle_threads_updated_ui_(std::string room_id)
         auto owner = sw ? sw->owner_session() : nullptr;
         if (sw && sw->room_view() && owner && owner->client)
         {
-            auto threads = owner->client->list_room_threads(room_id);
-            const auto agg = views::aggregate_threads(threads);
-            sw->room_view()->set_show_threads_button(!threads.empty());
-            sw->room_view()->set_threads_unread(agg.any_unread,
-                                                        agg.any_mention);
-            sw->room_view()->set_thread_subscriptions(
-                owner->client->thread_subscriptions_enabled(), threads);
+            fetch_threads_async_(owner, room_id,
+                                 [this, owner, room_id](ThreadsSnapshot snap)
+            {
+                // The continuation runs outside the event's account scope.
+                EventAccountScope scope(*this, owner->user_id);
+                auto* w = find_event_secondary_(room_id);
+                if (!w || !w->room_view())
+                    return;
+                const auto agg = views::aggregate_threads(snap.threads);
+                w->room_view()->set_show_threads_button(!snap.threads.empty());
+                w->room_view()->set_threads_unread(agg.any_unread, agg.any_mention);
+                w->room_view()->set_thread_subscriptions(snap.subs_supported,
+                                                         snap.threads);
+            });
         }
     }
 
@@ -1372,14 +1379,22 @@ void ShellBase::handle_threads_updated_ui_(std::string room_id)
     // cheaply when the thread-list panel widget isn't around.
     if (!main_window_shows_(room_id))
         return;
-    apply_threads_list_(client_->list_room_threads(room_id));
-    // on_near_bottom only fires on user scroll, so it can't bootstrap the
-    // initial fill when the first SDK page fits within the viewport. Drive
-    // pagination here instead: each completed page triggers this callback,
-    // which requests the next one — stopping when the controller reports
-    // reached_start.
-    if (main_room_pane_ && main_room_pane_->thread_panel() == ThreadPanel::List)
-        main_room_pane_->paginate_threads_();
+    auto sess = active_account_;
+    fetch_threads_async_(sess, room_id,
+                         [this, sess, room_id](ThreadsSnapshot snap)
+    {
+        EventAccountScope scope(*this, sess->user_id);
+        if (!client_ || client_ != sess->client.get() || !main_window_shows_(room_id))
+            return;
+        apply_threads_list_(std::move(snap.threads), snap.subs_supported);
+        // on_near_bottom only fires on user scroll, so it can't bootstrap the
+        // initial fill when the first SDK page fits within the viewport. Drive
+        // pagination here instead: each completed page triggers this callback,
+        // which requests the next one — stopping when the controller reports
+        // reached_start.
+        if (main_room_pane_ && main_room_pane_->thread_panel() == ThreadPanel::List)
+            main_room_pane_->paginate_threads_();
+    });
 }
 
 void ShellBase::handle_typing_changed_ui_(std::string room_id,
@@ -1477,7 +1492,63 @@ void ShellBase::apply_thread_message_remove_(const std::string& /*thread_root*/,
     }
 }
 
-void ShellBase::apply_threads_list_(std::vector<ThreadInfo> threads)
+void ShellBase::fetch_threads_async_(const std::shared_ptr<AccountSession>& sess,
+                                     const std::string& room_id, ThreadsDone done)
+{
+    if (!sess || !sess->client || room_id.empty())
+        return;
+    const std::string key = sess->user_id + '\x1f' + room_id;
+    auto& f = threads_fetch_[key];
+    f.queued.push_back(std::move(done));
+    if (!f.running)
+        run_threads_fetch_(sess, key, room_id);
+}
+
+void ShellBase::run_threads_fetch_(const std::shared_ptr<AccountSession>& sess,
+                                   const std::string& key, const std::string& room_id)
+{
+    auto& f   = threads_fetch_[key];
+    f.running = true;
+    auto waiters = std::move(f.queued);
+    f.queued.clear();
+    run_async_("threads/list",
+               [this, sess, key, room_id, waiters = std::move(waiters)]() mutable
+    {
+        ThreadsSnapshot snap;
+        snap.threads        = sess->client->list_room_threads(room_id);
+        snap.subs_supported = sess->client->thread_subscriptions_enabled();
+        post_to_ui_alive_([this, sess, key, room_id, snap = std::move(snap),
+                           waiters = std::move(waiters)]() mutable
+        {
+            for (auto& w : waiters)
+                if (w)
+                    w(snap);
+            auto it = threads_fetch_.find(key);
+            if (it == threads_fetch_.end())
+                return;
+            if (it->second.queued.empty())
+                threads_fetch_.erase(it);
+            else
+                run_threads_fetch_(sess, key, room_id);
+        });
+    });
+}
+
+void ShellBase::refresh_threads_list_async_(const std::string& room_id)
+{
+    auto sess = active_account_;
+    if (!sess || !client_)
+        return;
+    fetch_threads_async_(sess, room_id,
+                         [this, sess, room_id](ThreadsSnapshot snap)
+    {
+        if (room_id != current_room_id_ || client_ != sess->client.get())
+            return;
+        apply_threads_list_(std::move(snap.threads), snap.subs_supported);
+    });
+}
+
+void ShellBase::apply_threads_list_(std::vector<ThreadInfo> threads, bool subs_supported)
 {
     if (!room_view_)
         return;
@@ -1501,7 +1572,6 @@ void ShellBase::apply_threads_list_(std::vector<ThreadInfo> threads)
     const auto agg = views::aggregate_threads(threads);
     room_view_->set_threads_unread(agg.any_unread, agg.any_mention);
     // MSC4306: follow toggle / followed-only filter / row bells.
-    const bool subs_supported = client_ && client_->thread_subscriptions_enabled();
     room_view_->set_thread_subscriptions(subs_supported, threads);
 
     // Fan out to any popout window currently showing the same room.

@@ -3023,7 +3023,39 @@ protected:
         views::MessageRowData row);
     virtual void apply_thread_message_remove_(
         const std::string& thread_root, std::size_t index);
-    virtual void apply_threads_list_(std::vector<ThreadInfo> threads);
+    // `subs_supported` is Client::thread_subscriptions_enabled(), which can
+    // block on the network; callers fetch it off the UI thread (see
+    // fetch_threads_async_) and pass it in.
+    virtual void apply_threads_list_(std::vector<ThreadInfo> threads,
+                                     bool subs_supported = false);
+
+    // A room's thread list plus the MSC4306 support flag.
+    struct ThreadsSnapshot
+    {
+        std::vector<ThreadInfo> threads;
+        bool                    subs_supported = false;
+    };
+    using ThreadsDone = std::function<void(ThreadsSnapshot)>;
+
+    // Computes `room_id`'s thread list on the worker pool (list_room_threads
+    // and thread_subscriptions_enabled both block_on the SDK runtime) and calls
+    // `done` with it on the UI thread. Requests for the same room coalesce: one
+    // fetch runs at a time, and requests arriving meanwhile share a single
+    // follow-up fetch, so a burst of on_threads_updated costs two probes, not N.
+    void fetch_threads_async_(const std::shared_ptr<AccountSession>& sess,
+                              const std::string& room_id, ThreadsDone done);
+    // fetch_threads_async_ for the active account, applied to the main window's
+    // room view if `room_id` is still the current room when the result lands.
+    void refresh_threads_list_async_(const std::string& room_id);
+    void run_threads_fetch_(const std::shared_ptr<AccountSession>& sess,
+                            const std::string& key, const std::string& room_id);
+
+    struct ThreadsFetch
+    {
+        bool                     running = false;
+        std::vector<ThreadsDone> queued;
+    };
+    std::unordered_map<std::string, ThreadsFetch> threads_fetch_; // UI thread only
 
     // ── EventHandlerBase UI-thread hooks ─────────────────────────────────────
     // Called on the UI thread by EventHandlerBase after marshaling. Default

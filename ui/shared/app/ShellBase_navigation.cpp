@@ -702,7 +702,7 @@ void ShellBase::after_active_room_changed_()
     // Seed the button from the local snapshot. On a first visit the service
     // hasn't paginated yet so this is empty, which correctly hides the
     // button; on_threads_updated will reveal it once roots are discovered.
-    apply_threads_list_(client_->list_room_threads(current_room_id_));
+    refresh_threads_list_async_(current_room_id_);
     // Refresh the pinned-events banner immediately on room switch so the new
     // room's pin state appears without waiting for the next sync tick.
     refresh_pinned_for_current_room_();

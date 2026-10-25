@@ -183,7 +183,7 @@ void ShellBase::refresh_bridge_dependent_ui_(const std::string& room_id)
         if (auto* header = room_view_->header())
             update_call_btn_visibility_(header, room_id);
         if (client_)
-            apply_threads_list_(client_->list_room_threads(room_id));
+            refresh_threads_list_async_(room_id);
         room_view_->set_room(*r); // refreshes the info panel's badge if open
     }
     for (auto& [rid, w] : active_account_popouts_())

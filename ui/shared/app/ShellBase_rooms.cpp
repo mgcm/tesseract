@@ -176,7 +176,7 @@ void ShellBase::push_rooms_(std::string user_id, std::vector<RoomInfo> rooms)
                     update_call_btn_visibility_(h, rid);
         }
         if (client_ && room_view_)
-            apply_threads_list_(client_->list_room_threads(current_room_id_));
+            refresh_threads_list_async_(current_room_id_);
         // A just-created room can turn out to be a space only once sync
         // actually delivers its creation_content — e.g. CreateRoomView's
         // "Create Space" navigates here before this room exists in rooms_
