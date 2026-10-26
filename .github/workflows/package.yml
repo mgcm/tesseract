@@ -952,8 +952,14 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y flatpak flatpak-builder appstream desktop-file-utils
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-          flatpak install --user -y flathub \
-            org.kde.Platform//6.11 org.kde.Sdk//6.11
+          for attempt in 1 2 3 4 5; do
+            flatpak install --user -y flathub \
+              org.kde.Platform//6.11 org.kde.Sdk//6.11 && exit 0
+            echo "::warning::runtime install failed (attempt ${attempt}/5)"
+            sleep $((attempt * 20))
+          done
+          echo "::error::runtime install failed after 5 attempts"
+          exit 1
 
       # Regenerated from this tag's Cargo.lock rather than trusting the
       # tracked copy, which is only a "last known good, for local builds"
@@ -962,7 +968,8 @@ jobs:
       # floating master).
       - name: Regenerate cargo-sources.json from the tagged Cargo.lock
         run: |
-          curl -sL -o /tmp/flatpak-cargo-generator.py \
+          curl -sSfL --retry 5 --retry-all-errors --retry-delay 10 \
+            -o /tmp/flatpak-cargo-generator.py \
             https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/1fc32195e3e60fe5c97f0af646dec7a99df5962b/cargo/flatpak-cargo-generator.py
           pip install aiohttp tomlkit
           python3 /tmp/flatpak-cargo-generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
@@ -1014,6 +1021,24 @@ jobs:
           key: flatpak-builder-${{ hashFiles('packaging/flatpak/io.github.surakin.Tesseract.yml.in', 'Cargo.lock') }}
           restore-keys: |
             flatpak-builder-
+
+      # Fetched on its own, with retries, so a transient crates.io/GitHub 5xx
+      # while downloading the ~700 sources doesn't fail the job (and, through
+      # the cancel step below, the whole release run). Downloads land in the
+      # cached .flatpak-builder/downloads, so a retry only refetches what is
+      # missing and the build below finds every source already there.
+      - name: Download sources (retried)
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if flatpak-builder --user --download-only \
+                 packaging/flatpak/io.github.surakin.Tesseract.yml build-dir; then
+              exit 0
+            fi
+            echo "::warning::source download failed (attempt ${attempt}/5)"
+            sleep $((attempt * 20))
+          done
+          echo "::error::source download failed after 5 attempts"
+          exit 1
 
       - name: Build (offline, signed)
         run: |

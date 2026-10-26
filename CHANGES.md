@@ -5,6 +5,8 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- chore(ci): the Flatpak job retries its source and runtime downloads, so a transient crates.io or Flathub error no longer cancels the release run. YAML parse only
+
 ## v0.9.5 — 2026-10-26
 
 ### Summary
