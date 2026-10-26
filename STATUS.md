@@ -2757,7 +2757,7 @@ For build instructions, architectural overview, and the open-roadmap items, see 
 
 ## matrix-sdk & ruma feature flags
 
-Cargo features enabled on the Rust SDK crates (`sdk/Cargo.toml`), stable and unstable. The MSCs these unstable flags unlock are described in context elsewhere in this file and in README.md's "Supported MSCs" section; this list tracks the crate-level flags themselves.
+Cargo features enabled on the Rust SDK crates (`sdk/Cargo.toml`), stable and unstable. The MSCs these unstable flags unlock are described in context elsewhere in this file and in docs/MSCS.md; this list tracks the crate-level flags themselves.
 
 - **matrix-sdk** `e2e-encryption` (stable) — end-to-end encryption, cross-signing, key backup.
 - **matrix-sdk** `bundled-sqlite` (stable) — vendors SQLite so the app has no system SQLite dependency; see Build & packaging below.
