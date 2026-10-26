@@ -227,6 +227,7 @@ Beyond that baseline, individual features rely on the following Matrix Spec
 Change proposals where the homeserver advertises support for them:
 
 - [MSC2010](https://github.com/matrix-org/matrix-spec-proposals/pull/2010) — spoiler messages
+- [MSC4313](https://github.com/matrix-org/matrix-spec-proposals/pull/4313) — numbered lists honour the `<ol start>` attribute
 - [MSC2312](https://github.com/matrix-org/matrix-spec-proposals/pull/2312) — `matrix:` / `matrix.to` link navigation
 - [MSC2545](https://github.com/matrix-org/matrix-spec-proposals/pull/2545) — custom emoji & sticker image packs
 - [MSC4027](https://github.com/matrix-org/matrix-spec-proposals/pull/4027) — custom-image (emoticon) reactions
