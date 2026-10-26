@@ -249,8 +249,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)
           run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow package.yml \
-                     --branch "$TAG" --event push --status success --limit 1 \
+                     --branch "$TAG" --commit "$sha" --status success --limit 1 \
                      --json databaseId --jq '.[0].databaseId')
           if [ -z "$run_id" ]; then
             echo "::error::No successful package.yml run found for $TAG"
@@ -316,8 +317,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$TAG" --jq .sha)
           run_id=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow package.yml \
-                     --branch "$TAG" --event push --status success --limit 1 \
+                     --branch "$TAG" --commit "$sha" --status success --limit 1 \
                      --json databaseId --jq '.[0].databaseId')
           if [ -z "$run_id" ]; then
             echo "::error::No successful package.yml run found for $TAG"
