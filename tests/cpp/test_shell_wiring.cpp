@@ -2353,7 +2353,7 @@ TEST_CASE("rooms updated: the open room's info reaches the room view",
     f.s.pending_restore_rooms_ = {"!a:x"};
     f.s.rooms_updated();
     CHECK(f.app->room_view()->header()->show_search_btn()); // set_room ran
-    CHECK(f.s.pending_restore_rooms_.size() == 1); // only restored with no room open
+    CHECK(f.s.pending_restore_rooms_.empty()); // a restore is dropped once a room is open
 }
 
 // ── wire_settings_view_ ─────────────────────────────────────────────────────

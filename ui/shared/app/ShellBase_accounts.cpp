@@ -1042,6 +1042,19 @@ bool ShellBase::switch_active_account_impl_(const std::string& user_id)
         return false;
     }
 
+    // Park the outgoing account's live tab layout on its session so switching
+    // back reopens the tabs as they are now, not as they were at startup. A
+    // layout still waiting to be restored (nothing open yet) is already what
+    // the session holds.
+    if (active_account_ && (!tabs_.empty() || !current_room_id_.empty()))
+    {
+        active_account_->open_rooms.clear();
+        for (const auto& t : tabs_)
+            active_account_->open_rooms.push_back(t.room_id);
+        active_account_->last_room = current_room_id_;
+        persist_room_layout_pref_();
+    }
+
     // Unsubscribe every room timeline the previous account keeps live for
     // this window — the open room, its tabs, the warm LRU and any thread
     // timelines — so none of them keeps streaming events through this shell

@@ -573,9 +573,19 @@ pub(super) struct KnockRequestsHandle {
 /// newest is skipped. Every save carries the whole document, and the writes
 /// run as spawned tasks, so they can start in any order.
 #[derive(Default)]
-pub(super) struct PrefsSaveOrder(std::sync::atomic::AtomicU64);
+pub(super) struct PrefsSaveOrder(
+    std::sync::atomic::AtomicU64,
+    /// Set while saves are failing, so the user hears about a streak once.
+    std::sync::atomic::AtomicBool,
+);
 
 impl PrefsSaveOrder {
+    /// Records a save's outcome; true when this failure starts a streak and
+    /// should be reported.
+    pub(super) fn note_result(&self, failed: bool) -> bool {
+        self.1.swap(failed, std::sync::atomic::Ordering::SeqCst) != failed && failed
+    }
+
     pub(super) fn next(&self) -> u64 {
         self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
     }
@@ -5026,6 +5036,15 @@ mod tests {
     fn load_prefs_returns_empty_object_when_not_logged_in() {
         let c = ClientFfi::new();
         assert_eq!(c.load_prefs(), "{}");
+    }
+
+    #[test]
+    fn prefs_save_failure_is_reported_once_per_streak() {
+        let o = PrefsSaveOrder::default();
+        assert!(o.note_result(true));
+        assert!(!o.note_result(true));
+        assert!(!o.note_result(false));
+        assert!(o.note_result(true));
     }
 
     #[test]

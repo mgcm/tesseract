@@ -469,6 +469,21 @@ TEST_CASE("an unrestored saved layout is not overwritten by the empty tab strip"
     CHECK(s.active_account_->prefs_json.find("!saved2") != std::string::npos);
 }
 
+TEST_CASE("a restore that never completes does not shadow the live tabs",
+          "[shell][tabs][persist]")
+{
+    tesseract::Client client;
+    TabShell s;
+    s.client_ = &client;
+    s.active_account_ = std::make_shared<tesseract::AccountSession>();
+    s.pending_restore_rooms_ = {"!saved1", "!saved2"};
+    s.tab_select_room("!live");
+    s.persist_room_layout_pref_(false);
+    const std::string& json = s.active_account_->prefs_json;
+    CHECK(json.find("!live") != std::string::npos);
+    CHECK(json.find("!saved1") == std::string::npos);
+}
+
 TEST_CASE("a synced open-room list is capped before the restore", "[shell][tabs][persist]")
 {
     tesseract::Client client;

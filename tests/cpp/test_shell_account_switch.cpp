@@ -344,6 +344,47 @@ TEST_CASE("switching clears per-account, room-keyed state", "[shell][account_swi
     CHECK(s.account_manager_.dedicated_window("@b:x") == &s);
 }
 
+TEST_CASE("switching away and back restores the outgoing account's live tabs",
+          "[shell][account_switch]")
+{
+    AsShell s;
+    auto a = as_acct("@a:x");
+    a->open_rooms = {"!stale"};
+    a->last_room = "!stale";
+    auto b = as_acct("@b:x");
+    s.account_manager_.add_account(a);
+    s.account_manager_.add_account(b);
+    REQUIRE(s.switch_active_account_impl_("@a:x"));
+    s.pending_restore_rooms_.clear();
+
+    s.tabs_ = {{"!one", 0.f}, {"!two", 0.f}, {"!three", 0.f}};
+    s.current_room_id_ = "!two";
+
+    REQUIRE(s.switch_active_account_impl_("@b:x"));
+    s.pending_restore_rooms_.clear();
+    REQUIRE(s.switch_active_account_impl_("@a:x"));
+    CHECK(s.pending_restore_rooms_ ==
+          std::vector<std::string>{"!two", "!one", "!three"});
+}
+
+TEST_CASE("switching away from an account with no loaded tabs keeps its saved layout",
+          "[shell][account_switch]")
+{
+    AsShell s;
+    auto a = as_acct("@a:x");
+    a->open_rooms = {"!x", "!y"};
+    a->last_room = "!x";
+    auto b = as_acct("@b:x");
+    s.account_manager_.add_account(a);
+    s.account_manager_.add_account(b);
+    REQUIRE(s.switch_active_account_impl_("@a:x"));
+    s.pending_restore_rooms_.clear();
+
+    REQUIRE(s.switch_active_account_impl_("@b:x"));
+    CHECK(a->open_rooms == std::vector<std::string>{"!x", "!y"});
+    CHECK(a->last_room == "!x");
+}
+
 TEST_CASE("an outgoing account's pop-out scroll state is parked and restored",
           "[shell][account_switch]")
 {

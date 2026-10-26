@@ -872,11 +872,13 @@ void ShellBase::persist_room_layout_pref_(bool blocking)
 
     std::vector<std::string> open;
     std::string last_room = current_room_id_;
-    if (!pending_restore_rooms_.empty())
+    if (!pending_restore_rooms_.empty() && tabs_.empty() && current_room_id_.empty())
     {
         // The saved layout hasn't been reopened yet (startup): keep it rather
         // than writing the still-empty tab strip over it — a non-layout save
-        // (e.g. a skin-tone change) can land here this early.
+        // (e.g. a skin-tone change) can land here this early. Once a room is
+        // open the live tabs win, or a restore that never completes would
+        // pin the saved layout forever.
         open = pending_restore_rooms_;
         last_room = pending_restore_rooms_.front();
     }

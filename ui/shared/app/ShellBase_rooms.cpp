@@ -1867,6 +1867,10 @@ void ShellBase::on_rooms_updated_()
     refresh_room_list_();
     if (!current_room_id_.empty())
     {
+        // A room is already open, so the saved layout can no longer be
+        // reopened over it; drop it instead of leaving it to shadow the live
+        // tabs in every later save.
+        pending_restore_rooms_.clear();
         if (const auto* r = room_by_id_(current_room_id_); r && room_view_)
         {
             room_view_->set_room(*r);

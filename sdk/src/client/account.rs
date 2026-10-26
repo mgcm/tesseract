@@ -503,11 +503,24 @@ impl ClientFfi {
                 #[cfg(debug_assertions)]
                 "account/save_prefs".to_string(),
             );
-            let Ok(raw_value) = serde_json::from_str::<serde_json::Value>(&json) else {
-                return;
+            let report = |msg: String| {
+                tracing::warn!("save_prefs: {msg}");
+                if order.note_result(true) {
+                    if let Some(h) = handler_for_guard.as_ref() {
+                        h.lock().on_error(
+                            "save_prefs",
+                            &format!("Couldn't save your room layout: {msg}"),
+                            false,
+                        );
+                    }
+                }
             };
-            let Ok(raw) = Raw::new(&raw_value) else {
-                return;
+            let raw = match serde_json::from_str::<serde_json::Value>(&json)
+                .map_err(|e| e.to_string())
+                .and_then(|v| Raw::new(&v).map_err(|e| e.to_string()))
+            {
+                Ok(raw) => raw,
+                Err(e) => return report(format!("invalid prefs json: {e}")),
             };
             // Writes do not interleave, and an older save that a newer one has
             // overtaken is not sent: the server would keep the older document.
@@ -516,10 +529,16 @@ impl ClientFfi {
                 return;
             }
             let et = GlobalAccountDataEventType::from("im.gnomos.tesseract");
-            let _ = client
+            match client
                 .account()
                 .set_account_data_raw(et, raw.cast_unchecked())
-                .await;
+                .await
+            {
+                Ok(_) => {
+                    order.note_result(false);
+                }
+                Err(e) => report(e.to_string()),
+            }
         });
     }
 
