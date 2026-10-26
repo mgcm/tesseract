@@ -73,7 +73,7 @@ void neutralize_literal_carriers(std::vector<tk::TextSpan>& spans);
 //   Heading      — <h1>–<h6>; level = 1–6; spans are bold
 //   Blockquote   — <blockquote>; level = nesting depth (1-based)
 //   UnorderedItem — <ul><li>; level = list nesting depth (1-based)
-//   OrderedItem  — <ol><li>; level = list nesting depth; index = item number (1-based)
+//   OrderedItem  — <ol><li>; level = list nesting depth; index = item number (honours <ol start>; may be 0 or negative)
 //   Table        — <table>; one block per table. `table` holds the cell grid,
 //                  per-column alignment and the header-row count; `spans` is
 //                  empty. Nested tables are flattened into the containing cell.
@@ -125,7 +125,7 @@ struct BodyBlock
     };
     Kind kind  = Kind::Paragraph;
     int  level = 0;  // heading: 1–6; blockquote/list: nesting depth (1-based)
-    int  index = 0;  // ordered list: item number (1-based)
+    int  index = 0;  // ordered list: item number (honours <ol start>, so not necessarily 1-based)
     std::vector<tk::TextSpan> spans;  // empty when kind == Table
     BodyTable                 table;  // populated only when kind == Table
 };

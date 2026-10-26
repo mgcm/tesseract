@@ -896,6 +896,80 @@ TEST_CASE("blocks: ordered list produces OrderedItem blocks with 1-based indices
     CHECK(idx == 4); // consumed all 3 items
 }
 
+namespace
+{
+std::vector<int> ordered_indices(const std::string& html)
+{
+    std::vector<int> out;
+    for (const auto& b : html_to_blocks(html, false))
+        if (b.kind == BodyBlock::Kind::OrderedItem)
+            out.push_back(b.index);
+    return out;
+}
+} // namespace
+
+TEST_CASE("blocks: <ol start> sets the first item number (MSC4313)",
+          "[html_spans][blocks]")
+{
+    const std::string items = "<li>a</li><li>b</li><li>c</li></ol>";
+    CHECK(ordered_indices("<ol start=\"5\">" + items) == std::vector<int>{5, 6, 7});
+    CHECK(ordered_indices("<ol start=\"0\">" + items) == std::vector<int>{0, 1, 2});
+    CHECK(ordered_indices("<ol start=\"-2\">" + items) == std::vector<int>{-2, -1, 0});
+    CHECK(ordered_indices("<ol start=\"abc\">" + items) == std::vector<int>{1, 2, 3});
+    CHECK(ordered_indices("<ol start=\" 3 \">" + items) == std::vector<int>{3, 4, 5});
+    CHECK(ordered_indices("<ol start=\"4x\">" + items) == std::vector<int>{4, 5, 6});
+    CHECK(ordered_indices("<ol start=\"99999999999999999999\">" + items).front() ==
+          1'000'000'000);
+}
+
+TEST_CASE("blocks: nested <ol start> numbers independently", "[html_spans][blocks]")
+{
+    auto blocks = html_to_blocks(
+        "<ol start=\"2\"><li>a<ol start=\"10\"><li>b</li><li>c</li></ol></li>"
+        "<li>d</li></ol>",
+        false);
+    std::vector<int> idx;
+    for (const auto& b : blocks)
+        if (b.kind == BodyBlock::Kind::OrderedItem)
+            idx.push_back(b.index);
+    CHECK(idx == std::vector<int>{2, 10, 11, 3});
+}
+
+TEST_CASE("blocks: an empty list item yields one empty item (MSC4313)",
+          "[html_spans][blocks]")
+{
+    auto blocks = html_to_blocks("<ol start=\"2\"><li></li></ol>", false);
+    REQUIRE(blocks.size() == 1);
+    CHECK(blocks[0].kind == BodyBlock::Kind::OrderedItem);
+    CHECK(blocks[0].index == 2);
+    CHECK(blocks[0].spans.empty());
+
+    auto ul = html_to_blocks("<ul><li></li></ul>", false);
+    REQUIRE(ul.size() == 1);
+    CHECK(ul[0].kind == BodyBlock::Kind::UnorderedItem);
+    CHECK(ul[0].spans.empty());
+}
+
+TEST_CASE("blocks: list items produce no spurious empty blocks",
+          "[html_spans][blocks]")
+{
+    auto count_items = [](const std::string& html)
+    {
+        int n = 0;
+        for (const auto& b : html_to_blocks(html, false))
+            if (b.kind == BodyBlock::Kind::OrderedItem ||
+                b.kind == BodyBlock::Kind::UnorderedItem)
+                ++n;
+        return n;
+    };
+    CHECK(count_items("<ol><li>a</li><li>b</li></ol>") == 2);
+    CHECK(count_items("<ol>\n<li>a</li>\n<li>b</li>\n</ol>") == 2);
+    CHECK(count_items("<ol><li>a<ol><li>b</li></ol></li></ol>") == 2);
+    CHECK(count_items("<ul><li>a<ul><li>b</li></ul>tail</li></ul>") == 2);
+    for (const auto& b : html_to_blocks("<ol>\n<li>a</li>\n</ol>", false))
+        CHECK_FALSE(b.spans.empty());
+}
+
 TEST_CASE("blocks: list items carry the nesting level", "[html_spans][blocks]")
 {
     // Top-level items are level 1; nested items are level 2.

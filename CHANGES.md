@@ -5,6 +5,7 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- fix(ui): numbered lists now start at the number the sender chose, and an empty list item still shows its number (MSC4313). Not built or tested
 - fix(ui): the app no longer freezes for seconds when the connection drops while the thread list updates. Built and tested by the user
 - feat(settings): the encryption privacy options now apply when Settings closes, without a restart. Linux debug build, ctest 3534/3534
 - fix(ui): a message blocked by an unconfirmed device or changed identity now says why on hover and in a dialog with the options that can help. Linux release build, ctest 3529/3529

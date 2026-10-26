@@ -6196,8 +6196,21 @@ private:
                             sec.x_offset = xo;
                             sec.y_offset = y_off;
                             sec.spans    = b.spans;
-                            sec.layout =
-                                f.build_rich_text(b.spans, body_style(avw));
+                            // An empty list item (`<li></li>`, MSC4313) has no
+                            // spans; shape a lone space so it still gets one
+                            // line of height and its number/bullet is drawn.
+                            // sec.spans stays empty so plain offsets are
+                            // unaffected.
+                            if (b.spans.empty())
+                            {
+                                tk::TextSpan blank;
+                                blank.text = " ";
+                                sec.layout = f.build_rich_text({&blank, 1},
+                                                               body_style(avw));
+                            }
+                            else
+                                sec.layout =
+                                    f.build_rich_text(b.spans, body_style(avw));
                             if (!sec.layout)
                                 continue;
                             float sh = sec.layout->measure().h;

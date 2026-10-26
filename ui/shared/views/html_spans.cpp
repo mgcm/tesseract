@@ -4,7 +4,9 @@
 #include "tesseract/client.h"
 #include "tesseract/highlight.h"
 
+#include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cstdint>
 #include <cstring>
 #include <optional>
@@ -215,6 +217,7 @@ struct Tag
     bool is_mx_emoticon = false; // <img data-mx-emoticon> attribute present
     bool closing = false;
     bool self_closing = false;
+    int list_start = 1; // <ol start="N">, clamped; 1 when absent or unparsable
     TableAlign cell_align = TableAlign::Default; // <td>/<th> text-align
 };
 
@@ -504,6 +507,33 @@ Tag parse_tag(const char*& p, const char* end)
             (href->rfind("http://", 0) == 0 || href->rfind("https://", 0) == 0))
         {
             t.href = std::move(*href);
+        }
+    }
+
+    // For opening <ol> tags read the start attribute (MSC4313). Follows HTML's
+    // "rules for parsing integers": leading whitespace, optional sign, digits,
+    // trailing junk ignored. HTML allows 0 and negative values.
+    if (t.name == "ol" && !t.closing)
+    {
+        if (auto start = extract_attr(attr_start, attr_end, "start"))
+        {
+            std::string_view v = *start;
+            while (!v.empty() && std::isspace(static_cast<unsigned char>(v.front())))
+                v.remove_prefix(1);
+            if (!v.empty() && v.front() == '+')
+                v.remove_prefix(1);
+            long long n = 0;
+            const char* b = v.data();
+            const char* e = v.data() + v.size();
+            auto r = std::from_chars(b, e, n);
+            if (r.ec == std::errc{} && r.ptr != b)
+                t.list_start = static_cast<int>(
+                    std::clamp<long long>(n, -1'000'000'000LL, 1'000'000'000LL));
+            else if (r.ec == std::errc::result_out_of_range)
+            {
+                // Digits too large for long long: saturate by sign.
+                t.list_start = *b == '-' ? -1'000'000'000 : 1'000'000'000;
+            }
         }
     }
 
@@ -1379,9 +1409,17 @@ std::vector<BodyBlock> html_to_blocks(std::string_view html, bool dark)
         cur_text.clear();
     };
 
+    // True from a list item's <li> until the item block is committed; lets an
+    // empty <li></li> survive commit_block() so its number still shows (MSC4313).
+    bool li_pending = false;
+
     // commit_block() — trim, @room-split, and push cur to blocks; reset cur.
     auto commit_block = [&]()
     {
+        const bool keep_empty_item =
+            li_pending && (cur.kind == BodyBlock::Kind::OrderedItem ||
+                           cur.kind == BodyBlock::Kind::UnorderedItem);
+        li_pending = false;
         flush();
         if (!cur.spans.empty() && !cur.spans.back().is_image)
         {
@@ -1424,6 +1462,10 @@ std::vector<BodyBlock> html_to_blocks(std::string_view html, bool dark)
         if (!cur.spans.empty())
         {
             cur.spans = split_room_mentions(linkify_bare_urls(std::move(cur.spans)), dark);
+            blocks.push_back(std::move(cur));
+        }
+        else if (keep_empty_item)
+        {
             blocks.push_back(std::move(cur));
         }
         cur        = BodyBlock{};
@@ -1787,7 +1829,7 @@ std::vector<BodyBlock> html_to_blocks(std::string_view html, bool dark)
                     continue;
                 }
                 int depth = list_depth() + 1;
-                bctx.push_back({BlockCtx::OL, depth, 0});
+                bctx.push_back({BlockCtx::OL, depth, tag.list_start - 1});
             }
             else
             {
@@ -1822,6 +1864,7 @@ std::vector<BodyBlock> html_to_blocks(std::string_view html, bool dark)
                     cur.index = 0;
                     cur.level = lc ? lc->level : 1;
                 }
+                li_pending = true;
                 first_in_block = true;
             }
             else
