@@ -402,16 +402,6 @@ void RoomView::wire_message_list_callbacks_(MessageListView* ml)
         if (on_selection_started) on_selection_started();
     };
 
-    // Right-click on a selection — the shell's native Copy menu, if it set
-    // one; otherwise MessageListView copies directly.
-    ml->on_show_copy_menu = [this]
-    {
-        if (!on_show_copy_menu)
-            return false;
-        on_show_copy_menu();
-        return true;
-    };
-
     // Selection just cleared (e.g. a new click elsewhere deselects it) —
     // return keyboard focus to the composer.
     ml->on_selection_cleared = [this]
@@ -425,71 +415,64 @@ void RoomView::wire_message_list_callbacks_(MessageListView* ml)
         if (compose_bar_) compose_bar_->focus();
     };
 
-    ml->on_more_requested =
-        [this, ml](const std::string& event_id, tk::Rect anchor,
-                   bool can_delete, bool can_pin, bool is_pinned,
-                   bool can_forward)
+    // Pill "⋯" and right-click / Menu key: one popup over the shared action
+    // list (MessageActions.h).
+    ml->on_overflow_action_requested =
+        [this](MessageActionId id, const std::string& event_id)
     {
-        // anchor is in world coordinates — PopupMenu::open() takes world coords.
+        switch (id)
+        {
+        case MessageActionId::Forward:
+            if (on_forward_requested)
+                on_forward_requested(event_id);
+            break;
+        case MessageActionId::Delete:
+            if (on_delete_requested)
+                on_delete_requested(event_id);
+            break;
+        case MessageActionId::Pin:
+            if (on_pin_requested)
+                on_pin_requested(event_id);
+            break;
+        case MessageActionId::Unpin:
+            if (on_unpin_requested)
+                on_unpin_requested(event_id);
+            break;
+        case MessageActionId::CopyEventSource:
+            if (on_copy_event_source_requested)
+                on_copy_event_source_requested(event_id);
+            break;
+        default:
+            break;
+        }
+    };
+    ml->on_actions_menu_requested =
+        [this, ml](const MessageListView::MessageMenuRequest& req)
+    {
         std::vector<PopupMenu::Item> items;
-        if (can_forward)
+        if (req.copy_selection)
+            items.push_back({"", kCopySvg, tk::tr("Copy"), false,
+                             [ml] { ml->copy_selection(); }});
+        if (req.copy_link)
+            items.push_back({"", kCopySvg, tk::tr("Copy link"), false,
+                             [ml] { ml->copy_context_link(); }});
+        if (!items.empty() && !req.actions.empty())
         {
-            items.push_back({"",
-                             kForwardSvg,
-                             tk::tr("Forward message"), /*destructive=*/false,
-                             [this, event_id]
-                             {
-                                 if (on_forward_requested)
-                                     on_forward_requested(event_id);
-                             }});
+            PopupMenu::Item sep;
+            sep.is_separator = true;
+            items.push_back(std::move(sep));
         }
-        if (can_delete)
+        for (const auto& act : req.actions)
         {
-            items.push_back({"", // SVG icon below
-                             kRedactSvg,
-                             tk::tr("Delete message"), /*destructive=*/true,
-                             [this, event_id]
-                             {
-                                 if (on_delete_requested)
-                                     on_delete_requested(event_id);
-                             }});
-        }
-        if (can_pin)
-        {
-            items.push_back({"", // SVG icon below
-                             kPinSvg,
-                             is_pinned ? tk::tr("Unpin message")
-                                       : tk::tr("Pin message"),
-                             /*destructive=*/false,
-                             [this, event_id, is_pinned]
-                             {
-                                 if (is_pinned)
-                                 {
-                                     if (on_unpin_requested)
-                                         on_unpin_requested(event_id);
-                                 }
-                                 else
-                                 {
-                                     if (on_pin_requested)
-                                         on_pin_requested(event_id);
-                                 }
-                             }});
-        }
-        if (tesseract::Settings::instance().developer_mode)
-        {
-            items.push_back({"", // SVG icon below
-                             kCopySvg,
-                             tk::tr("Copy event source"), /*destructive=*/false,
-                             [this, event_id]
-                             {
-                                 if (on_copy_event_source_requested)
-                                     on_copy_event_source_requested(event_id);
-                             }});
+            items.push_back({"", act.svg, act.label, act.destructive,
+                             [ml, id = act.id, ev = req.event_id,
+                              anchor = req.anchor]
+                             { ml->invoke_message_action(id, ev, anchor); }});
         }
         if (!items.empty())
         {
             ml->set_hover_locked(true);
-            overflow_menu_->open(std::move(items), anchor);
+            overflow_menu_->open(std::move(items), req.anchor);
         }
     };
     ml->on_reaction_toggled =

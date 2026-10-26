@@ -61,6 +61,7 @@ add_executable(tesseract_tests
     cpp/test_room_list_tombstone.cpp
     cpp/test_open_media.cpp
     cpp/test_room_list_context_menu.cpp
+    cpp/test_message_actions.cpp
     cpp/test_space_picker_view.cpp
     cpp/test_resizable_sidebar.cpp
     cpp/test_unread_prefetch.cpp

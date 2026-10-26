@@ -187,6 +187,8 @@ set(_tk_sources
     views/RoomListView.h
     views/RoomListView.cpp
     views/sidebar_metrics.h
+    views/MessageActions.h
+    views/MessageActions.cpp
     views/MessageListView.h
     views/MessageListView.cpp
     views/MessageRowGeometry.h

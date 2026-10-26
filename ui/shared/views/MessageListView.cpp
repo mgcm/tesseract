@@ -6,6 +6,7 @@
 #include "html_spans.h"
 #include "IrcFormat.h"
 #include "MessageRowGeometry.h"
+#include "PopupMenu.h"
 #include "map_tiles.h"
 #include "media_utils.h"
 #include "shortcut_registry.h"
@@ -2451,36 +2452,40 @@ public:
             };
             std::vector<ActionCell> cells;
             cells.reserve(6);
-            if (m.kind != MessageRowData::Kind::Redacted &&
-                m.kind != MessageRowData::Kind::Utd)
+            // One list feeds the pill, the "⋯" overflow, the right-click
+            // menu and the accessibility group (see MessageActions.h).
+            bool has_overflow = false;
+            for (const auto& act : owner_.actions_for_row_(m))
             {
-                cells.push_back({&ic_react_, kEmojiSvg,
-                                 &owner_.hovered_row_geom_.react_button});
+                using Id = tesseract::views::MessageActionId;
+                if (!act.in_pill)
+                {
+                    has_overflow = true;
+                    continue;
+                }
+                switch (act.id)
+                {
+                case Id::React:
+                    cells.push_back({&ic_react_, act.svg,
+                                     &owner_.hovered_row_geom_.react_button});
+                    break;
+                case Id::Reply:
+                    cells.push_back({&ic_reply_, act.svg,
+                                     &owner_.hovered_row_geom_.reply_button});
+                    break;
+                case Id::ReplyInThread:
+                    cells.push_back({&ic_thread_, act.svg,
+                                     &owner_.hovered_row_geom_.thread_button});
+                    break;
+                case Id::Edit:
+                    cells.push_back({&ic_edit_, act.svg,
+                                     &owner_.hovered_row_geom_.edit_button});
+                    break;
+                default:
+                    break;
+                }
             }
-            cells.push_back(
-                {&ic_reply_, kReplySvg, &owner_.hovered_row_geom_.reply_button});
-            // A plain reply's own m.in_reply_to relation doesn't stop other
-            // events from later pointing at it via m.thread — only a message
-            // already living inside a thread (thread_root_id set, and not
-            // itself that thread's root) can't become the root of a second,
-            // nested one.
-            const bool can_thread =
-                m.is_thread_root || m.thread_root_id.empty();
-            if (m.kind != MessageRowData::Kind::Redacted &&
-                owner_.thread_button_visible_ && can_thread)
-            {
-                cells.push_back({&ic_thread_, kThreadSvg,
-                                 &owner_.hovered_row_geom_.thread_button});
-            }
-            if (m.is_own && is_editable_kind(m.kind))
-            {
-                cells.push_back({&ic_edit_, kEditSvg,
-                                 &owner_.hovered_row_geom_.edit_button});
-            }
-            if (m.kind != MessageRowData::Kind::Redacted &&
-                m.kind != MessageRowData::Kind::Utd &&
-                (m.is_own || owner_.can_pin_ ||
-                 m.pending_state == MessageRowData::PendingState::None))
+            if (has_overflow)
             {
                 cells.push_back({&ic_more_, kMoreSvg,
                                  &owner_.hovered_row_geom_.more_button});
@@ -4083,76 +4088,38 @@ public:
             out.push_back(std::move(group));
         }
 
-        // ── Hover-action pill — same gating as paint_hover_action_pill_ ──
+        // ── Message actions — the same list the pill and right-click menu use ──
         tk::AccessNode actions;
         actions.role = tk::Role::Group;
         actions.name = tk::tr("Message actions");
-        if (m.kind != Kind::Redacted && m.kind != Kind::Utd)
-            actions.children.push_back(action_node_(
-                tk::tr("Add reaction"),
-                [v, ev]
-                {
-                    if (!v->on_add_reaction_requested)
-                        return false;
-                    v->on_add_reaction_requested(ev, v->anchor_for_event_(ev));
-                    return true;
-                }));
-        actions.children.push_back(action_node_(
-            tk::tr("Reply"),
-            [v, ev, sn = m.sender_name, body = m.body]
-            {
-                if (!v->on_reply_requested)
-                    return false;
-                v->on_reply_requested(ev, sn, body);
-                return true;
-            }));
-        // See can_thread comment in paint_hover_action_pill_ — a plain
-        // reply can still become a thread root; only an already-in-thread
-        // message can't.
-        const bool can_thread =
-            m.is_thread_root || m.thread_root_id.empty();
-        if (m.kind != Kind::Redacted && owner_.thread_button_visible_ &&
-            can_thread)
-            actions.children.push_back(action_node_(
-                tk::tr("Reply in thread"),
-                [v, ev]
-                {
-                    if (!v->on_thread_preview_clicked)
-                        return false;
-                    v->on_thread_preview_clicked(ev);
-                    return true;
-                }));
-        if (m.is_own && is_editable_kind(m.kind))
-            actions.children.push_back(action_node_(
-                tk::tr("Edit"),
-                [v, ev, body = m.body, cap = m.has_filename_caption]
-                {
-                    if (!v->on_edit_requested)
-                        return false;
-                    v->on_edit_requested(ev, body, cap);
-                    return true;
-                }));
-        if (m.kind != Kind::Redacted && m.kind != Kind::Utd)
         {
-            const bool can_delete = m.is_own || owner_.can_redact_others_;
-            const bool can_pin    = owner_.can_pin_;
-            const bool is_pinned =
-                owner_.pinned_event_ids_.count(m.event_id) != 0;
-            // A poll can't be forwarded (it would re-send as an unrelated poll).
-            const bool can_forward = m.kind != Kind::Poll &&
-                                     m.pending_state ==
-                                         MessageRowData::PendingState::None;
-            actions.children.push_back(action_node_(
-                tk::tr("More options"),
-                [v, ev, can_delete, can_pin, is_pinned, can_forward]
+            using Id = tesseract::views::MessageActionId;
+            bool has_overflow = false;
+            for (const auto& act : owner_.actions_for_row_(m))
+            {
+                if (!act.in_pill)
                 {
-                    if (!v->on_more_requested)
-                        return false;
-                    v->on_more_requested(ev, v->anchor_for_event_(ev), can_delete,
-                                         can_pin, is_pinned, can_forward);
-                    return true;
-                }));
-            actions.children.back().subtree_id = "action:more";
+                    has_overflow = true;
+                    continue;
+                }
+                const Id id = act.id;
+                actions.children.push_back(action_node_(
+                    act.label,
+                    [v, ev, id]
+                    { return v->invoke_message_action(id, ev, v->anchor_for_event_(ev)); }));
+            }
+            if (has_overflow)
+            {
+                actions.children.push_back(action_node_(
+                    tk::tr("More options"),
+                    [v, ev]
+                    {
+                        return v->open_actions_menu_(v->message_index_of(ev),
+                                                     v->anchor_for_event_(ev),
+                                                     /*full=*/false, false, false);
+                    }));
+                actions.children.back().subtree_id = "action:more";
+            }
         }
         if (m.pending_state == MessageRowData::PendingState::Failed &&
             !m.pending_txn_id.empty())
@@ -10721,26 +10688,129 @@ void MessageListView::clear_selection()
 bool MessageListView::on_right_click(tk::Point local)
 {
     context_link_url_.clear();
-    if (!has_selection())
+    if (gate_blocks_input_() || nav_loading_)
+        return false;
+    const tk::Point world{local.x + bounds().x, local.y + bounds().y};
+    // The row under the pointer, not the hover state: hover can be stale or
+    // locked (a popup is open) when the click lands.
+    int idx = -1;
+    for (std::size_t i = 0; i < messages_.size(); ++i)
     {
-        // No selection: a link under the pointer can be copied directly.
-        const std::size_t row = hovered_row_geom_.row_index;
-        if (gate_blocks_input_() || nav_loading_ || row >= messages_.size())
+        const tk::Rect r = content_row_rect_(static_cast<int>(i));
+        if (r.w > 0 && rect_contains(r, world))
+        {
+            idx = static_cast<int>(i);
+            break;
+        }
+    }
+    const bool selection = has_selection();
+    if (!selection && idx >= 0)
+    {
+        if (const LinkLayout* le = link_cache_.peek(messages_[static_cast<std::size_t>(idx)].event_id))
+            context_link_url_ = link_at_world(*le, world);
+    }
+    if (idx < 0)
+    {
+        // Between rows: a selection can still be copied.
+        if (!selection)
             return false;
-        const LinkLayout* le = link_cache_.peek(messages_[row].event_id);
-        if (!le)
-            return false;
-        const tk::Point world{local.x + bounds().x, local.y + bounds().y};
-        context_link_url_ = link_at_world(*le, world);
-        if (context_link_url_.empty())
-            return false;
-        if (!on_show_copy_menu || !on_show_copy_menu())
-            copy_context_link();
+        copy_selection();
         return true;
     }
-    if (!on_show_copy_menu || !on_show_copy_menu())
-        copy_selection();
+    if (is_virtual_event(messages_[static_cast<std::size_t>(idx)].kind) && !selection &&
+        context_link_url_.empty())
+        return false;
+    // Opens like the member-list menu: right of the pointer.
+    return open_actions_menu_(idx, {world.x, world.y, PopupMenu::kWidth, 0.0f},
+                              /*full=*/true, selection,
+                              !context_link_url_.empty());
+}
+
+std::vector<tesseract::views::MessageAction>
+MessageListView::actions_for_row_(const MessageRowData& m) const
+{
+    using Kind = MessageRowData::Kind;
+    tesseract::views::MessageActionInputs in;
+    in.redacted = m.kind == Kind::Redacted;
+    in.utd = m.kind == Kind::Utd;
+    in.poll = m.kind == Kind::Poll;
+    in.editable_kind = is_editable_kind(m.kind);
+    in.is_own = m.is_own;
+    in.pending = m.pending_state != MessageRowData::PendingState::None;
+    in.can_thread = m.is_thread_root || m.thread_root_id.empty();
+    in.thread_button_visible = thread_button_visible_;
+    in.can_redact_others = can_redact_others_;
+    in.can_pin = can_pin_;
+    in.is_pinned = pinned_event_ids_.count(m.event_id) != 0;
+    in.developer_mode = tesseract::Settings::instance().developer_mode;
+    return tesseract::views::build_message_actions(in);
+}
+
+bool MessageListView::open_actions_menu_(int idx, tk::Rect anchor, bool full,
+                                         bool copy_sel, bool copy_link)
+{
+    if (idx < 0 || idx >= static_cast<int>(messages_.size()) ||
+        !on_actions_menu_requested)
+        return false;
+    const MessageRowData& m = messages_[static_cast<std::size_t>(idx)];
+    // Rows still sending/failed have no actions of their own to offer.
+    MessageMenuRequest req;
+    req.event_id = m.event_id;
+    req.anchor = anchor;
+    if (m.pending_state == MessageRowData::PendingState::None)
+    {
+        for (auto& act : actions_for_row_(m))
+            if (full || !act.in_pill)
+                req.actions.push_back(std::move(act));
+    }
+    req.copy_selection = copy_sel;
+    req.copy_link = copy_link;
+    if (req.actions.empty() && !copy_sel && !copy_link)
+        return false;
+    on_actions_menu_requested(req);
     return true;
+}
+
+bool MessageListView::invoke_message_action(
+    tesseract::views::MessageActionId id, const std::string& event_id,
+    tk::Rect anchor)
+{
+    using Id = tesseract::views::MessageActionId;
+    const int idx = message_index_of(event_id);
+    // Reply and edit read the row's text; the rest only need the event id.
+    const MessageRowData* rowp =
+        idx >= 0 ? &messages_[static_cast<std::size_t>(idx)] : nullptr;
+    if ((id == Id::Reply || id == Id::Edit) && !rowp)
+        return false;
+    switch (id)
+    {
+    case Id::React:
+        if (!on_add_reaction_requested)
+            return false;
+        on_add_reaction_requested(event_id, anchor);
+        return true;
+    case Id::Reply:
+        if (!on_reply_requested)
+            return false;
+        on_reply_requested(event_id, rowp->sender_name, rowp->body);
+        return true;
+    case Id::ReplyInThread:
+        if (!on_thread_preview_clicked)
+            return false;
+        on_thread_preview_clicked(event_id);
+        return true;
+    case Id::Edit:
+        if (!on_edit_requested)
+            return false;
+        on_edit_requested(event_id, rowp->body,
+                          rowp->kind != MessageRowData::Kind::Text);
+        return true;
+    default:
+        if (!on_overflow_action_requested)
+            return false;
+        on_overflow_action_requested(id, event_id);
+        return true;
+    }
 }
 
 bool MessageListView::copy_context_link()
@@ -10980,17 +11050,8 @@ bool MessageListView::on_pointer_down(tk::Point local)
             std::size_t row = hovered_row_geom_.row_index;
             if (row < messages_.size())
             {
-                const auto& m = messages_[row];
-                press_more_btn_         = true;
-                press_more_event_id_    = m.event_id;
-                press_more_can_delete_  = m.is_own || can_redact_others_;
-                press_more_can_pin_     = can_pin_;
-                press_more_is_pinned_   = pinned_event_ids_.find(m.event_id) !=
-                                          pinned_event_ids_.end();
-                press_more_can_forward_ =
-                    m.kind != MessageRowData::Kind::Redacted &&
-                    m.kind != MessageRowData::Kind::Poll &&
-                    m.pending_state == MessageRowData::PendingState::None;
+                press_more_btn_      = true;
+                press_more_event_id_ = messages_[row].event_id;
                 return true;
             }
         }
@@ -11682,20 +11743,10 @@ void MessageListView::on_pointer_up(tk::Point local, bool inside_self)
             const tk::Rect& mb = hovered_row_geom_.more_button;
             if (mb.w > 0 && rect_contains(mb, world))
             {
-                if (on_more_requested)
-                {
-                    on_more_requested(ev, mb,
-                                      press_more_can_delete_,
-                                      press_more_can_pin_,
-                                      press_more_is_pinned_,
-                                      press_more_can_forward_);
-                }
+                open_actions_menu_(message_index_of(ev), mb, /*full=*/false,
+                                   false, false);
             }
         }
-        press_more_can_delete_  = false;
-        press_more_can_pin_     = false;
-        press_more_is_pinned_   = false;
-        press_more_can_forward_ = false;
         return;
     }
     if (press_retry_btn_)
@@ -13013,10 +13064,9 @@ bool MessageListView::kbd_open_more_()
     const int sel = selected_index();
     if (sel < 0 || sel >= static_cast<int>(messages_.size()))
         return false;
-    for (const auto& n : kbd_parts_())
-        if (n.subtree_id == "action:more")
-            return n.activate();
-    return false;
+    return open_actions_menu_(sel,
+                              anchor_for_event_(messages_[static_cast<std::size_t>(sel)].event_id),
+                              /*full=*/true, has_selection(), false);
 }
 
 void MessageListView::kbd_toggle_membership_group_(int idx)

@@ -428,11 +428,15 @@ TEST_CASE("a poll cannot be forwarded", "[poll][accessibility]")
     MessageListView v;
     bool can_forward = true;
     bool called = false;
-    v.on_more_requested = [&](const std::string&, tk::Rect, bool, bool, bool, bool fwd)
+    v.on_actions_menu_requested = [&](const MessageListView::MessageMenuRequest& req)
     {
         called = true;
-        can_forward = fwd;
+        can_forward = false;
+        for (const auto& a : req.actions)
+            if (a.id == tesseract::views::MessageActionId::Forward)
+                can_forward = true;
     };
+    v.set_can_pin(true); // something in the overflow, so "More options" exists
     v.set_messages({ended_poll_row()}, false);
     tk::AccessNode tree = tk::build_access_tree(&v);
     const tk::AccessNode* more = access_test::find_named(tree, "More options");

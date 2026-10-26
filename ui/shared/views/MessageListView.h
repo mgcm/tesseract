@@ -21,6 +21,7 @@
 #include "views/LinkLayoutCache.h"
 #include "views/LocationMapPanner.h"
 #include "views/MembershipGroupExpander.h"
+#include "views/MessageActions.h"
 #include "views/ReadReceiptTracker.h"
 #include "views/RoomSwitchGateKeeper.h"
 #include "views/SpoilerRevealer.h"
@@ -817,19 +818,35 @@ public:
                        const std::string& current_body, bool is_caption)>
         on_edit_requested;
 
-    // Overflow-menu affordance — fires when the user clicks the "⋯" more
-    // button. `anchor` is the button rect in world coordinates. `can_delete`
-    // is true for the sender's own non-redacted messages, or for any
-    // non-redacted message when the current user has room-level
-    // redact-others power (see `can_redact_others_`); `can_pin` when the
-    // room allows pinning; `is_pinned` when this event is already pinned;
-    // `can_forward` is true for any non-redacted, non-pending message. The
-    // host should open a PopupMenu and call the appropriate SDK methods on
-    // selection.
-    std::function<void(const std::string& event_id, tk::Rect anchor,
-                       bool can_delete, bool can_pin, bool is_pinned,
-                       bool can_forward)>
-        on_more_requested;
+    // A popup of message actions is wanted: from the pill's "⋯" cell (only
+    // the overflow actions), or from a right-click / Menu key (every action,
+    // plus Copy / Copy link when there is a selection or a link under the
+    // pointer). `anchor` is in world coordinates. The host opens a PopupMenu
+    // over `actions`, runs each choice through invoke_message_action(), and
+    // runs the copy items through copy_selection() / copy_context_link().
+    struct MessageMenuRequest
+    {
+        std::string event_id;
+        tk::Rect anchor{};
+        std::vector<tesseract::views::MessageAction> actions;
+        bool copy_selection = false;
+        bool copy_link = false;
+    };
+    std::function<void(const MessageMenuRequest&)> on_actions_menu_requested;
+
+    // Overflow actions (forward, delete, pin/unpin, copy event source) are
+    // carried out by the host; the pill actions are handled by the callbacks
+    // above.
+    std::function<void(tesseract::views::MessageActionId,
+                       const std::string& event_id)>
+        on_overflow_action_requested;
+
+    // Run one action from the shared list for `event_id`; the single entry
+    // point behind the pill, the popup menu and the accessibility tree.
+    // `anchor` positions the reaction picker. False when the row is gone or
+    // the matching callback is unset.
+    bool invoke_message_action(tesseract::views::MessageActionId id,
+                               const std::string& event_id, tk::Rect anchor);
 
     // Pin / Unpin affordance — kept for backward-compat wiring; now fired
     // indirectly via the overflow popup rather than a direct pill button.
@@ -1019,12 +1036,6 @@ public:
 
     // Clipboard write. Wire to Host::set_clipboard_text via RoomView.
     std::function<void(std::string_view)> on_set_clipboard;
-
-    // Called by on_right_click when there is an active selection. The owner
-    // should show a native context menu with a "Copy" item and call
-    // copy_selection() if chosen, returning true; returning false (or
-    // leaving this unset) copies the selection directly instead.
-    std::function<bool()> on_show_copy_menu;
 
     // Called the moment a text selection becomes non-empty (not on every
     // plain click). The shell should move real OS keyboard focus off the
@@ -1680,6 +1691,13 @@ private:
     tk::Rect content_row_rect_(int idx) const;
     bool content_column_enabled_ = false;
     bool kbd_open_more_();
+    // Availability facts for one row, then the shared action list over them.
+    std::vector<tesseract::views::MessageAction>
+    actions_for_row_(const MessageRowData& m) const;
+    // Fire on_actions_menu_requested for row `idx`. `full` lists every
+    // action (right-click) rather than just the overflow ones (⋯ cell).
+    bool open_actions_menu_(int idx, tk::Rect anchor, bool full,
+                            bool copy_selection, bool copy_link);
     void kbd_toggle_membership_group_(int idx);
     std::string pending_scroll_event_id_;
     // See set_relayout_suppressed().
@@ -1754,14 +1772,9 @@ private:
     bool press_edit_btn_ = false;
     std::string press_edit_event_id_;
 
-    // More (⋯) button press state. Context captured at press time so the
-    // popup can be opened with the correct items on release.
+    // More (⋯) button press state.
     bool press_more_btn_         = false;
     std::string press_more_event_id_;
-    bool press_more_can_delete_  = false;
-    bool press_more_can_pin_     = false;
-    bool press_more_is_pinned_   = false;
-    bool press_more_can_forward_ = false;
 
     bool hover_locked_ = false;
 

@@ -213,16 +213,18 @@ TEST_CASE("Right-click on a selection uses the shell's copy menu if set",
     st.run(view);
     REQUIRE(select_word_in_first_row(*view.message_list()));
 
-    // No shell menu: the right-click copies directly.
-    REQUIRE(view.message_list()->on_right_click({}));
+    // Right-click inside the row opens the message menu with Copy first.
+    const Rect r0 = view.message_list()->row_world_rect(0);
+    const Rect mb = view.message_list()->bounds();
+    const Point in_row{r0.x + 10.0f - mb.x, r0.y + 10.0f - mb.y};
+    REQUIRE(view.message_list()->on_right_click(in_row));
+    REQUIRE(view.overflow_menu()->is_open());
+    const auto& items = view.overflow_menu()->items_for_test();
+    REQUIRE_FALSE(items.empty());
+    CHECK(items[0].label == tk::tr("Copy"));
+    CHECK(clip.empty()); // copying is the menu item's job
+    items[0].on_selected();
     CHECK_FALSE(clip.empty());
-
-    clip.clear();
-    bool menu_shown = false;
-    view.on_show_copy_menu = [&] { menu_shown = true; };
-    REQUIRE(view.message_list()->on_right_click({}));
-    CHECK(menu_shown);
-    CHECK(clip.empty()); // copying is now the menu item's job
 }
 
 TEST_CASE("Right-click with no selection and no link under the pointer does nothing",
@@ -232,15 +234,14 @@ TEST_CASE("Right-click with no selection and no link under the pointer does noth
     auto view_owner = tk::create_root_widget<RoomView>(nullptr);
     RoomView& view = *view_owner;
     std::string clip;
-    bool menu_shown = false;
     view.on_set_clipboard = [&](std::string_view s) { clip = std::string(s); };
-    view.on_show_copy_menu = [&] { menu_shown = true; };
     open_room(view);
     view.set_messages({make_text("$a:example.org", "hello world")});
     st.run(view);
 
-    CHECK_FALSE(view.message_list()->on_right_click({}));
-    CHECK_FALSE(menu_shown);
+    // Outside every row (the pointer is above the list).
+    CHECK_FALSE(view.message_list()->on_right_click({-1000.0f, -1000.0f}));
+    CHECK_FALSE(view.overflow_menu()->is_open());
     CHECK(clip.empty());
     CHECK_FALSE(view.has_context_link());
     CHECK(view.copy_menu_label() == tk::tr("Copy"));

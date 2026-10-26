@@ -545,11 +545,10 @@ TEST_CASE("Timeline: Left/Right reach a message's actions and Enter fires them",
                                const std::string&) { replied_to = ev; };
     std::string more_for;
     Rect more_anchor{};
-    v.on_more_requested = [&](const std::string& ev, Rect anchor, bool, bool,
-                              bool, bool)
+    v.on_actions_menu_requested = [&](const MessageListView::MessageMenuRequest& req)
     {
-        more_for = ev;
-        more_anchor = anchor;
+        more_for = req.event_id;
+        more_anchor = req.anchor;
     };
     int exits = 0;
     v.on_keyboard_exit = [&] { ++exits; };
@@ -615,8 +614,8 @@ TEST_CASE("Timeline: the cursor follows its message across a history prepend",
     st.run(v, {0, 0, 320, 200});
 
     std::string more_for;
-    v.on_more_requested = [&](const std::string& ev, Rect, bool, bool, bool, bool)
-    { more_for = ev; };
+    v.on_actions_menu_requested = [&](const MessageListView::MessageMenuRequest& req)
+    { more_for = req.event_id; };
 
     TestHost host(&v);
     host.request_focus(&v);

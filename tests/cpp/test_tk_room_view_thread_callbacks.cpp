@@ -61,7 +61,7 @@ TEST_CASE("Opening the thread panel wires reply/edit/delete on its message list"
     // render but silently no-op.
     CHECK(static_cast<bool>(ml->on_reply_requested));
     CHECK(static_cast<bool>(ml->on_edit_requested));
-    CHECK(static_cast<bool>(ml->on_more_requested));
+    CHECK(static_cast<bool>(ml->on_actions_menu_requested));
     CHECK(static_cast<bool>(ml->on_reaction_toggled));
     CHECK(static_cast<bool>(ml->on_add_reaction_requested));
     CHECK(static_cast<bool>(ml->on_image_clicked));
@@ -100,13 +100,15 @@ TEST_CASE("Thread message-list more-button fires RoomView::on_delete_requested",
     open_room_and_thread(view);
 
     auto* ml = view.thread_view()->message_list();
-    REQUIRE(static_cast<bool>(ml->on_more_requested));
+    REQUIRE(static_cast<bool>(ml->on_actions_menu_requested));
 
-    // Fire the more-button callback; the anchor is in world coords.
-    // can_forward=false keeps Delete as the sole item (tests delete path only).
-    ml->on_more_requested("$evt:example.org", {10.f, 10.f, 24.f, 24.f},
-                          /*can_delete=*/true, /*can_pin=*/false,
-                          /*is_pinned=*/false, /*can_forward=*/false);
+    // Fire the menu request; the anchor is in world coords.
+    tesseract::views::MessageListView::MessageMenuRequest req;
+    req.event_id = "$evt:example.org";
+    req.anchor = {10.f, 10.f, 24.f, 24.f};
+    req.actions.push_back({tesseract::views::MessageActionId::Delete,
+                           "Delete message", {}, true, false});
+    ml->on_actions_menu_requested(req);
 
     auto* pm = view.overflow_menu();
     REQUIRE(pm != nullptr);
