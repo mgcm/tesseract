@@ -59,6 +59,7 @@ public:
     void set_editable(bool editable);
     void set_busy(bool busy);
     void set_error(std::string error);
+    const std::string& error() const { return error_; }
 
     // Shadows Widget::set_visible (not virtual) so hiding this widget always
     // also hides every row's native TextField/LanguagePicker overlays —

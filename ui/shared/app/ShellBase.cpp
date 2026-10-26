@@ -5,6 +5,7 @@
 #include <tesseract/open_media.h>
 #include <tesseract/session_store.h>
 #include <algorithm>
+#include <chrono>
 #include <iterator>
 #ifndef _WIN32
 #include <unistd.h>
@@ -15,24 +16,167 @@ namespace tesseract
 
 void ShellBase::debounce_(DebounceSlot slot, int ms, std::function<void()> fn)
 {
-    const int key = static_cast<int>(slot);
-    const std::uint64_t gen = ++debounce_gen_[key];
-    post_to_ui_after_(ms,
-                      [this, key, gen, fn = std::move(fn)]()
+    auto& st = debounce_state_[static_cast<int>(slot)];
+    ++st.gen;
+    st.ms        = ms;
+    st.last_call = std::chrono::steady_clock::now();
+    st.fn        = std::move(fn);
+    if (!st.armed)
+    {
+        st.armed = true;
+        arm_debounce_(static_cast<int>(slot), ms, st.gen);
+    }
+}
+
+void ShellBase::arm_debounce_(int key, int delay_ms, std::uint64_t gen)
+{
+    post_to_ui_after_(delay_ms,
+                      [this, key, gen]()
                       {
-                          // Honour only the most recent schedule on this slot;
-                          // earlier pending fires were superseded.
-                          auto it = debounce_gen_.find(key);
-                          if (it != debounce_gen_.end() && it->second == gen)
+                          auto it = debounce_state_.find(key);
+                          if (it == debounce_state_.end())
                           {
-                              fn();
+                              return;
+                          }
+                          DebounceState& st = it->second;
+                          if (!st.fn)
+                          {
+                              st.armed = false; // cancelled
+                              return;
+                          }
+                          if (st.gen != gen)
+                          {
+                              // Called again since this post was armed: wait out
+                              // what is left of the newest call's delay.
+                              const auto elapsed =
+                                  std::chrono::duration_cast<std::chrono::milliseconds>(
+                                      std::chrono::steady_clock::now() - st.last_call)
+                                      .count();
+                              const int left = std::clamp(
+                                  st.ms - static_cast<int>(elapsed), 1, std::max(st.ms, 1));
+                              arm_debounce_(key, left, st.gen);
+                              return;
+                          }
+                          st.armed = false;
+                          auto fn  = std::move(st.fn);
+                          st.fn    = nullptr;
+                          fn();
+                      });
+}
+
+std::string ShellBase::inflight_tooltip_text_() const
+{
+    const auto n = inflight_total_();
+    std::string tip =
+        tk::trf(tk::trn("{0} request in flight", "{0} requests in flight",
+                        static_cast<long>(n)),
+                {std::to_string(n)}) +
+        "\n" +
+        tk::trf(tk::tr("media: {0} loading · fetch: {1} queued · send: {2} queued"),
+                {std::to_string(pending_media_count_()),
+                 std::to_string(pool_pending_count_()),
+                 std::to_string(mut_pool_pending_count_())});
+#ifndef NDEBUG
+    if (!last_inflight_urls_.empty())
+    {
+        tip += "\n── requests ──\n";
+        tip += last_inflight_urls_;
+    }
+#endif
+    return tip;
+}
+
+void ShellBase::refresh_sync_status_()
+{
+    using RLS = RoomListState;
+    using BS  = BackupState;
+
+    // Nobody is signed in (startup before a session restores, after the last
+    // sign-out): nothing is syncing, so none of the states below applies.
+    if (!active_account_ && my_user_id_.empty())
+    {
+        cancel_debounce_(DebounceSlot::SyncStatus);
+        sync_status_debounce_pending_ = false;
+        sync_progress_shown_ = false;
+        if (has_status_override_())
+        {
+            on_sync_status_override_kept_();
+            return;
+        }
+        show_sync_status_text_(tk::tr("Not logged in"));
+        return;
+    }
+
+    const bool room_busy = (last_room_list_state_ == RLS::Init ||
+                            last_room_list_state_ == RLS::SettingUp);
+    const bool reconnecting = (last_room_list_state_ == RLS::Recovering);
+    const bool keys_busy    = (last_backup_state_ == BS::Downloading);
+
+    if (room_busy)
+    {
+        if (sync_progress_shown_)
+        {
+            show_sync_status_text_(tk::tr("Syncing rooms…"));
+        }
+        else if (!sync_status_debounce_pending_)
+        {
+            // Scheduled once and not restarted by later refreshes, or a steady
+            // stream of progress events would keep postponing it.
+            sync_status_debounce_pending_ = true;
+            debounce_(DebounceSlot::SyncStatus, 300,
+                      [this]
+                      {
+                          sync_status_debounce_pending_ = false;
+                          if (last_room_list_state_ == RLS::Init ||
+                              last_room_list_state_ == RLS::SettingUp)
+                          {
+                              sync_progress_shown_ = true;
+                              show_sync_status_text_(tk::tr("Syncing rooms…"));
                           }
                       });
+        }
+        return;
+    }
+
+    cancel_debounce_(DebounceSlot::SyncStatus);
+    sync_status_debounce_pending_ = false;
+
+    if (reconnecting)
+    {
+        sync_progress_shown_ = true;
+        show_sync_status_text_(tk::tr("Reconnecting…"));
+        return;
+    }
+    if (keys_busy)
+    {
+        sync_progress_shown_ = true;
+        show_sync_status_text_(
+            tk::trf(tk::tr("Downloading message keys ({0})…"),
+                    {std::to_string(last_imported_keys_)}));
+        return;
+    }
+    if (has_status_override_())
+    {
+        on_sync_status_override_kept_();
+        return;
+    }
+    sync_progress_shown_ = false;
+    show_sync_status_text_(tk::tr("Connected"));
+}
+
+void ShellBase::show_connected_status_()
+{
+    cancel_debounce_(DebounceSlot::SyncStatus);
+    sync_status_debounce_pending_ = false;
+    sync_progress_shown_ = false;
+    show_sync_status_text_(tk::tr("Connected"));
 }
 
 void ShellBase::cancel_debounce_(DebounceSlot slot)
 {
-    ++debounce_gen_[static_cast<int>(slot)];
+    auto& st = debounce_state_[static_cast<int>(slot)];
+    ++st.gen;
+    st.fn = nullptr;
 }
 
 void ShellBase::populate_pending_restore_popouts_()
@@ -254,6 +398,10 @@ ShellBase::~ShellBase()
     // shell is gone; they will no-op rather than dereference freed members.
     invalidate_weak_self();
 
+    // A window destroyed without a close event still hands its bridges over.
+    if (!window_closing_handled_)
+        hand_over_accounts_();
+
     // Decrypted attachments handed to external apps don't outlive the session.
     tesseract::purge_open_media_dir();
 
@@ -338,6 +486,7 @@ bool ShellBase::seed_screenshot_fixture_(tk::CanvasFactory& factory)
     }
     room_view_->set_messages(f.messages);
     room_view_->set_typing_text(shell_helpers::format_typing_text(f.typing_names));
+    show_connected_status_(); // the fixture user counts as signed in
     return true;
 }
 

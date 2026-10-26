@@ -49,6 +49,7 @@ struct PoWindow : RoomWindowBase
     }
     void bring_to_front() override { ++fronted; }
     void close_window() override {}
+    void self_close() { schedule_self_close_(); }
     void request_relayout() override { ++relayouts; }
     void apply_theme(const tk::Theme&) override { ++themes; }
     void apply_scale_change(float) override {}
@@ -73,6 +74,8 @@ protected:
 
 struct PoShell : tesseract::test::TestShellBase
 {
+    PoShell() = default;
+    explicit PoShell(tesseract::AccountManager& am) : TestShellBase(am) {}
     ~PoShell() override
     {
         pool_.wait_idle(std::chrono::seconds(5));
@@ -104,6 +107,16 @@ struct PoShell : tesseract::test::TestShellBase
     }
     void repaint_pickers_() override { ++picker_repaints; }
     bool is_main_window_visible_() const override { return main_visible; }
+    // Tray: record what the shared click logic asks the platform to do.
+    bool main_window_foreground_for_tray_() const override { return tray_foreground; }
+    void hide_main_window_for_tray_() override { ++tray_hides; }
+    void show_main_window_for_tray_(const std::string& t) override
+    {
+        tray_shows.push_back(t);
+    }
+    bool tray_foreground = false;
+    int tray_hides = 0;
+    std::vector<std::string> tray_shows;
 
     std::vector<std::function<void()>> delayed;
     bool create_windows = true;
@@ -119,6 +132,9 @@ struct PoShell : tesseract::test::TestShellBase
         return nullptr;
     }
 
+    using ShellBase::account_manager_;
+    using ShellBase::account_owned_elsewhere_;
+    using ShellBase::switch_active_account_impl_;
     using ShellBase::active_account_;
     using ShellBase::acquire_room_subscription_;
     using ShellBase::active_account_popouts_;
@@ -131,6 +147,10 @@ struct PoShell : tesseract::test::TestShellBase
     using ShellBase::current_theme_;
     using ShellBase::EventAccountScope;
     using ShellBase::focus_secondary_window_;
+    using ShellBase::last_tray_unread_;
+    using ShellBase::mark_room_index_dirty_;
+    using ShellBase::tray_activate_;
+    using ShellBase::tray_toggle_;
     using ShellBase::for_each_room_view_;
     using ShellBase::handle_message_inserted_ui_;
     using ShellBase::handle_message_removed_ui_;
@@ -155,6 +175,7 @@ struct PoShell : tesseract::test::TestShellBase
     using ShellBase::secondary_windows_;
     using ShellBase::tab_select_room;
     using ShellBase::tabs_;
+    using ShellBase::tearing_down_;
     using ShellBase::update_secondary_room_infos_;
     using ShellBase::update_video_playback_suspension_;
     using ShellBase::video_playback_suspended_;
@@ -247,6 +268,50 @@ TEST_CASE("opening an already-open room raises its window instead of duplicating
     CHECK(tesseract::Settings::instance().popout_windows.size() == 1);
 }
 
+TEST_CASE("tray click: an unread room that is popped out is raised, the main window stays put",
+          "[shell][popout][tray]")
+{
+    PoFx f;
+    f.s.open_room_in_new_window("!a:x");
+    auto* w = f.s.window("!a:x");
+    REQUIRE(w != nullptr);
+    tesseract::RoomInfo unread;
+    unread.id = "!a:x";
+    unread.notification_count = 2;
+    f.s.rooms_ = {unread};
+    f.s.mark_room_index_dirty_();
+    f.s.last_tray_unread_ = true;
+
+    f.s.tray_activate_("token");
+    CHECK(w->fronted == 1);
+    CHECK(f.s.tray_hides == 0);
+    CHECK(f.s.tray_shows.empty());
+
+    f.s.tray_foreground = true; // would otherwise hide the main window
+    f.s.tray_toggle_("token");
+    CHECK(w->fronted == 2);
+    CHECK(f.s.tray_hides == 0);
+    CHECK(f.s.tray_shows.empty());
+}
+
+TEST_CASE("tray click: an unread room that is not popped out opens in the shown main window",
+          "[shell][popout][tray]")
+{
+    PoFx f;
+    tesseract::RoomInfo unread;
+    unread.id = "!a:x";
+    unread.notification_count = 1;
+    f.s.rooms_ = {unread};
+    f.s.mark_room_index_dirty_();
+    f.s.last_tray_unread_ = true;
+
+    f.s.tray_toggle_("t1"); // not in the foreground: shown, not hidden
+    REQUIRE(f.s.tray_shows.size() == 1);
+    CHECK(f.s.tray_shows[0] == "t1");
+    CHECK(f.s.tray_hides == 0);
+    CHECK(f.s.current_room_id_ == "!a:x");
+}
+
 TEST_CASE("popping out a room that is open in a tab closes the tab first",
           "[shell][popout]")
 {
@@ -295,6 +360,23 @@ TEST_CASE("pop-outs of two accounts for the same room coexist", "[shell][popout]
     CHECK(f.s.owned_secondary_windows_.size() == 1);
     CHECK(f.s.active_popout_media_groups_.size() == 1);
     CHECK(f.s.room_subscription_refs_.size() == 1);
+}
+
+TEST_CASE("a pop-out's self-close is ignored while the shell is tearing down",
+          "[shell][popout]")
+{
+    PoFx f;
+    f.s.open_room_in_new_window("!a:x");
+    auto* w = f.s.window("!a:x");
+    REQUIRE(w != nullptr);
+
+    f.s.tearing_down_ = true;
+    w->self_close(); // would run post_to_ui_ (pure virtual in a real teardown)
+    CHECK(f.s.owned_secondary_windows_.size() == 1);
+
+    f.s.tearing_down_ = false;
+    w->self_close();
+    CHECK(f.s.owned_secondary_windows_.empty());
 }
 
 TEST_CASE("closing all pop-outs forgets them in settings", "[shell][popout]")
@@ -488,4 +570,39 @@ TEST_CASE("gif results fan out to every pop-out", "[shell][popout]")
     f.s.dispatch_gif_to_secondary_windows_(1, {});
     f.s.dispatch_gif_failed_to_secondary_windows_(1, "x");
     CHECK(f.s.cached_gif_source_bytes_("https://x/y.gif").empty());
+}
+
+TEST_CASE("an account another window keeps pop-outs of is not taken",
+          "[shell][popout][windows]")
+{
+    tesseract::test::SettingsGuard guard;
+    tesseract::Settings::instance().popout_windows.clear();
+    tesseract::AccountManager am;
+    tesseract::Client client;
+    PoShell primary(am), other(am);
+    auto b = po_acct("@b:x");
+    auto c = po_acct("@c:x");
+    am.add_account(b);
+    am.add_account(c);
+    am.register_window(&primary);
+    am.register_window(&other);
+
+    // The primary window opened a pop-out for B, then moved on to C.
+    primary.client_ = &client;
+    primary.active_account_ = b;
+    primary.my_user_id_ = "@b:x";
+    primary.open_room_in_new_window("!a:x");
+    REQUIRE(primary.window("!a:x") != nullptr);
+    primary.active_account_ = c;
+
+    CHECK(other.account_owned_elsewhere_("@b:x"));
+    CHECK_FALSE(other.switch_active_account_impl_("@b:x"));
+    CHECK_FALSE(primary.account_owned_elsewhere_("@b:x")); // its own pop-out
+
+    // Closing the pop-out frees the account.
+    primary.close_popouts_for_account_("@b:x");
+    CHECK_FALSE(other.account_owned_elsewhere_("@b:x"));
+    CHECK(other.switch_active_account_impl_("@b:x"));
+    am.unregister_window(&primary);
+    am.unregister_window(&other);
 }

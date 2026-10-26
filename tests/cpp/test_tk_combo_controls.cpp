@@ -19,8 +19,11 @@ namespace
 
 struct ComboStage
 {
-    PopupCapableStubHost host;
+    // Declared before host so it outlives it: the host can still hold images
+    // the surface's backend made, and on Win32 releasing them after that
+    // backend's CoUninitialize() crashes.
     std::unique_ptr<TestSurface> surface = TestSurface::create(400, 300);
+    PopupCapableStubHost host;
 
     LayoutCtx lc() { return LayoutCtx{surface->factory(), Theme::light()}; }
     PaintCtx pc()

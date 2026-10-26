@@ -156,14 +156,6 @@ msgstr "Парольна фраза"
 msgid "Recovery passphrase"
 msgstr "Фраза відновлення"
 
-#: ui/linux-gtk/src/MainWindow.cpp:3171
-msgid "Save message keys"
-msgstr "Зберегти ключі повідомлень"
-
-#: ui/linux-gtk/src/MainWindow.cpp:3200
-msgid "Open message keys"
-msgstr "Відкрити ключі повідомлень"
-
 #: ui/linux-gtk/src/MainWindow.cpp:3231 ui/linux-qt/src/SettingsWidget.cpp:176
 #: ui/macos/src/MainWindowController.mm:6748 ui/windows/src/MainWindow.cpp:6440
 msgid "Message keys exported successfully."
@@ -253,18 +245,6 @@ msgstr "Відео (*.mp4 *.webm *.mkv);;Усі файли (*.*)"
 msgid "Already in Saved Stickers"
 msgstr "Уже є у збережених стікерах"
 
-#: ui/linux-qt/src/MainWindow.cpp:2207
-msgid "Restoring sessions…"
-msgstr "Відновлення сеансів…"
-
-#: ui/linux-qt/src/MainWindow.cpp:2439
-msgid "Already signed in as %1"
-msgstr "Ви вже ввійшли як %1"
-
-#: ui/linux-qt/src/MainWindow.cpp:2458
-msgid "Sign-in failed: %1"
-msgstr "Не вдалося ввійти: %1"
-
 #: ui/linux-qt/src/MainWindow.cpp:3091
 msgid "Images (*.png *.jpg *.jpeg *.gif *.webp)"
 msgstr "Зображення (*.png *.jpg *.jpeg *.gif *.webp)"
@@ -273,9 +253,9 @@ msgstr "Зображення (*.png *.jpg *.jpeg *.gif *.webp)"
 msgid "Add Account"
 msgstr "Додати обліковий запис"
 
-#: ui/linux-qt/src/MainWindow.cpp:4523
-msgid "Signed out of %1"
-msgstr "Ви вийшли з облікового запису %1"
+#: ui/shared/app/ShellBase_accounts.cpp:1479
+msgid "Signed out of {0}"
+msgstr "Ви вийшли з облікового запису {0}"
 
 #: ui/linux-qt/src/SettingsWidget.cpp:161
 #: ui/shared/app/SettingsController.cpp:795

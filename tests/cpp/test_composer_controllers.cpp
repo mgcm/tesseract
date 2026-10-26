@@ -93,6 +93,7 @@ struct MentionRig
     std::string room = "!r:x";
     bool with_client = true;
     bool async_inline = true;
+    std::shared_ptr<void> owner;
     std::vector<std::function<void()>> deferred;
     std::unique_ptr<MentionController> ctl;
 
@@ -110,6 +111,7 @@ struct MentionRig
         h.room_id = [this] { return room; };
         h.client = [this]() -> tesseract::Client*
         { return with_client ? &client : nullptr; };
+        h.client_owner = [this] { return owner; };
         h.run_async = [this](std::function<void()> fn)
         {
             ++async_runs;
@@ -184,6 +186,21 @@ TEST_CASE("MentionController: an expired member cache is refetched",
     r.ctl->expire_member_cache_for_test();
     r.type("@r");
     CHECK(r.async_runs == 2);
+}
+
+TEST_CASE("MentionController: a pending fetch keeps the client's owner alive",
+          "[composer_controllers][mention]")
+{
+    MentionRig r;
+    r.async_inline = false;
+    auto owner = std::make_shared<int>(0);
+    r.owner     = owner;
+    r.build();
+    r.type("@");
+    REQUIRE(r.deferred.size() == 1);
+    CHECK(owner.use_count() > 2); // test + rig + the queued fetch
+    r.deferred.clear();
+    CHECK(owner.use_count() == 2);
 }
 
 TEST_CASE("MentionController: a pending fetch is not duplicated",

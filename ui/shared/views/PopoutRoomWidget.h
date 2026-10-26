@@ -56,10 +56,8 @@ public:
         return room_view_ ? room_view_->room_media_view() : nullptr;
     }
 
-    // Fires whenever the confirm dialog opens/closes, so the platform shell
-    // can re-query native-overlay visibility (hide the compose text area /
-    // search fields while the dialog covers them — native child controls
-    // always paint over canvas-drawn overlays otherwise).
+    // Fires whenever the confirm dialog opens/closes, so the host relayouts;
+    // arrange() then hides the compose text area while the dialog covers it.
     std::function<void()> on_layout_changed;
 
     void show_media_viewer(bool show);

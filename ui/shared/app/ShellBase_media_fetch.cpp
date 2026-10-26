@@ -188,10 +188,9 @@ std::pair<int, int> ShellBase::media_prefetch_decode_clamp_(MediaKind kind)
         return {20, 20};
     case MediaKind::RoomAvatar:
     case MediaKind::UserAvatar:
-        // Matches each shell's avatar-decode branch of on_media_bytes_ready_
-        // (e.g. ui/linux-qt/src/MainWindow.cpp) — a FIXED clamp, unscaled by
-        // current_scale_ (unlike the disk key, which IS scaled — see
-        // run_media_prefetch_impl_'s is_thumb-style branch below).
+        // Matches the avatar branch of on_media_bytes_ready_ — a FIXED clamp,
+        // unscaled by current_scale_ (unlike the disk key, which IS scaled —
+        // see run_media_prefetch_impl_'s is_thumb-style branch below).
         return {tesseract::visual::kAvatarCacheSize,
                 tesseract::visual::kAvatarCacheSize};
     default:
@@ -231,8 +230,8 @@ bool ShellBase::store_decoded_media_(const tk::CacheKey& cache_key, MediaKind ki
         return true;
     }
     // Past the animated-avatar case above (setting on): an avatar that is a
-    // multi-frame image is stored as its first-frame still — what the shells'
-    // own on_media_bytes_ready_ RoomAvatar/UserAvatar branch does too.
+    // multi-frame image is stored as its first-frame still — what
+    // on_media_bytes_ready_'s RoomAvatar/UserAvatar branch does too.
     //
     // Deliberately NOT storing a multi-frame (animated) result here: this
     // prefetch pass always decodes via the plain, unwindowed decode_image_,
@@ -972,8 +971,8 @@ void ShellBase::compute_cache_sizes_(
                 static_cast<uint64_t>(tk::PixmapCache::total_bytes_all_instances()) +
                 account_manager_.anim_cache().current_bytes() +
                 account_manager_.compressed_cache().current_bytes() +
-                sum_image_map_bytes_(viewer_fullres_) + voice_bytes + video_bytes +
-                shell_extra_memory_bytes_();
+                sum_image_map_bytes_(viewer_fullres_) +
+                sum_image_map_bytes_(gif_previews_) + voice_bytes + video_bytes;
             const uint64_t mem_hits =
                 account_manager_.image_cache().hits() + account_manager_.thumbnail_cache().hits() +
                 account_manager_.anim_cache().hits() +

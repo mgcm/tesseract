@@ -26,7 +26,7 @@ enum class FileDropOutcome
     TooMany,  // ComposeBar::kMaxAttachments already queued; nothing queued
 };
 
-// Per-shell async media-info extractor. Invoked for gif/webp/video/audio with
+// Per-shell async media-info extractor. Invoked for video/audio with
 // the compose bar's pending generation token (read after the attachment is
 // queued) so the eventual update_pending_attachment() can discard stale
 // results. Backends decode off the UI thread and post the result back to the

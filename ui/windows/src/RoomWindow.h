@@ -80,7 +80,6 @@ private:
     tk::TextArea* text_area_ = nullptr;
     tesseract::views::ForwardRoomPicker* forward_picker_widget_ = nullptr; // borrowed
     tesseract::views::RoomMediaView* room_media_view_widget_ = nullptr; // borrowed
-    tesseract::views::ConfirmDialog* confirm_dialog_widget_ = nullptr; // borrowed
 
     // Composer popups (@mention, /command, :shortcode:, /gif). Declared after
     // surface_ so the popups are destroyed before the Host they came from.

@@ -335,6 +335,8 @@ void EventHandlerBase::on_gif_results(std::uint64_t request_id,
         [shell = shell(), uid = user_id_, request_id, r]() mutable
         {
             ShellBase::EventAccountScope scope(*shell, uid);
+            // A new result set is a fresh popup session: retry failed strips.
+            shell->reset_gif_failures_();
             // Fan out to every open pop-out first (copy), then the main window's
             // own controller (move). request_ids are process-global, so only the
             // composer that issued the search matches.

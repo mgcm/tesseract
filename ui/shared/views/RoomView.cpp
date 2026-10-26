@@ -369,14 +369,15 @@ void RoomView::wire_message_list_callbacks_(MessageListView* ml)
         compose_bar_->focus();
     };
 
-    // Edit flow: hover ✏ → compose enters edit mode, shell prefills textarea.
+    // Edit flow: hover ✏ → compose enters edit mode, the textarea is prefilled
+    // with the message and focused (as the reply flow focuses it).
     ml->on_edit_requested =
         [this](const std::string& event_id, const std::string& current_body,
                bool is_caption)
     {
         compose_bar_->set_editing(event_id, is_caption);
-        compose_bar_->set_current_text(current_body);
-        if (on_edit_prefill) on_edit_prefill(current_body);
+        compose_bar_->set_text(current_body);
+        compose_bar_->focus();
     };
 
     // Clipboard write — forwarded to the shell via on_set_clipboard.
@@ -753,13 +754,7 @@ void RoomView::wire_internal_callbacks()
         if (on_cancel_voice)
             on_cancel_voice();
     };
-    compose_bar_->on_edit_cancelled = [this]
-    {
-        if (on_edit_cancelled)
-        {
-            on_edit_cancelled();
-        }
-    };
+    compose_bar_->on_edit_cancelled = [this] { compose_bar_->set_text({}); };
     compose_bar_->on_emoji = [this](tk::Rect r)
     {
         // Already open via this same toggle button (not a per-message

@@ -204,6 +204,14 @@ bool ShellBase::room_pinned_by_popout_(const std::string& room_id) const
     return it != room_subscription_refs_.end() && it->second > 0;
 }
 
+bool ShellBase::has_popout_for_account_(const std::string& user_id) const
+{
+    return std::any_of(owned_secondary_windows_.begin(),
+                       owned_secondary_windows_.end(),
+                       [&](const auto& w)
+                       { return w && w->owner_user_id() == user_id; });
+}
+
 void ShellBase::close_popouts_for_account_(const std::string& user_id)
 {
     // Collect first: each window's destructor unregisters itself.
@@ -535,4 +543,63 @@ views::RoomView* ShellBase::room_view_for_room_(const std::string& room_id) cons
     auto* w = find_event_secondary_(room_id);
     return w ? w->room_view() : nullptr;
 }
+
+void ShellBase::create_compose_popups_(tk::Host& host)
+{
+    tk::TextArea* text_area =
+        room_view_ ? room_view_->compose_bar()->text_area() : nullptr;
+    if (!text_area || !main_room_pane_)
+        return;
+    // Harmless no-op on every backend except Windows' BetterText control, see
+    // NativeTextArea::set_image_resolver.
+    text_area->set_image_resolver(make_static_image_provider_with_fetch_(28, 28));
+    text_area->set_on_edit_last(
+        [this] { return room_view_ && room_view_->edit_last_own(); });
+
+    ComposerPopups::Options options;
+    options.on_text_changed = [this](const std::string& text)
+    { handle_compose_text_changed_(text); };
+    options.extend_slash_hooks =
+        [this](views::SlashCommandController::Hooks& hooks)
+    { wire_selfie_hook_(hooks); };
+    options.shortcode_image_provider =
+        make_static_image_provider_with_fetch_(28, 28);
+    compose_popups_ = std::make_unique<ComposerPopups>(
+        host, text_area, main_room_pane_.get(), room_view_, std::move(options));
+}
+
+void ShellBase::wire_selfie_hook_(views::SlashCommandController::Hooks& hooks)
+{
+    hooks.on_selfie = [this]
+    {
+        if (!main_app_)
+            return;
+        main_app_->is_call_active = [this] { return active_call() != nullptr; };
+        main_app_->on_selfie_captured =
+            [this](std::vector<std::uint8_t> bgra, std::uint32_t w,
+                   std::uint32_t h)
+        {
+            auto jpeg = encode_selfie_jpeg_(bgra.data(), w, h);
+            if (!jpeg.empty() && main_app_ && main_app_->room_view()->compose_bar())
+                main_app_->room_view()->compose_bar()->add_pending_image(
+                    std::move(jpeg), "image/jpeg", "selfie.jpg");
+        };
+        main_app_->open_camera_overlay();
+    };
+}
+
+void ShellBase::handle_gif_results_ui_(std::uint64_t request_id,
+                                       std::vector<GifResult> results)
+{
+    if (compose_popups_)
+        compose_popups_->on_gif_results(request_id, std::move(results));
+}
+
+void ShellBase::handle_gif_search_failed_ui_(std::uint64_t request_id,
+                                             std::string message)
+{
+    if (compose_popups_)
+        compose_popups_->on_gif_search_failed(request_id, message);
+}
+
 } // namespace tesseract

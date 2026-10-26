@@ -67,6 +67,7 @@ add_executable(tesseract_tests
     cpp/test_tk_emoji_picker.cpp
     cpp/test_tk_encryption_reminder_banner.cpp
     cpp/test_tk_compose_bar.cpp
+    cpp/test_tk_surface_base.cpp
     cpp/test_tk_user_info.cpp
     cpp/test_tk_user_profile_panel.cpp
     cpp/test_tk_account_picker.cpp
@@ -457,6 +458,11 @@ elseif(_TESSERACT_TEST_UI STREQUAL "win32")
     # above, so mirror it here (mirrors the macOS branch below).
     target_sources(tesseract_tests PRIVATE
         "${CMAKE_SOURCE_DIR}/ui/windows/tk/screen_capture_win32.cpp")
+    # ShellBase::gif_strip_image_ (in tesseract_tk) calls
+    # tk::decode_video_frames(), whose Win32 backend lives outside
+    # tesseract_tk; same move-out gap as the capture backends above.
+    target_sources(tesseract_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}/ui/windows/tk/video_decode_mf.cpp")
     # tk::create_location_provider()'s _WIN32 branch calls
     # tk::make_location_provider_win32(), defined in location_provider_win32.cpp
     # which lives outside tesseract_tk; same move-out gap as screen/video
@@ -567,6 +573,15 @@ elseif(_TESSERACT_TEST_UI STREQUAL "macos")
         PROPERTIES COMPILE_OPTIONS "-fobjc-arc" SKIP_PRECOMPILE_HEADERS ON)
     target_link_libraries(tesseract_tests PRIVATE
         "-framework CoreLocation")
+
+    # ShellBase::gif_strip_image_ (in tesseract_tk) calls
+    # tk::decode_video_frames(), whose macOS backend lives outside
+    # tesseract_tk; same move-out gap as the backends above.
+    target_sources(tesseract_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}/ui/macos/tk/video_decode_av.mm")
+    set_source_files_properties(
+        "${CMAKE_SOURCE_DIR}/ui/macos/tk/video_decode_av.mm"
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc" SKIP_PRECOMPILE_HEADERS ON)
 endif()
 
 target_compile_features(tesseract_tests PRIVATE cxx_std_20)

@@ -33,6 +33,16 @@ struct HandlerShell : tesseract::test::TestShellBase
     void apply_thread_message_remove_(const std::string&,
                                       std::size_t) override {}
 
+    void mark_gif_failed(const std::string& url)
+    {
+        gif_preview_unavailable_.insert(url);
+        gif_anim_unavailable_.insert(url);
+    }
+    bool gif_failures_empty() const
+    {
+        return gif_preview_unavailable_.empty() && gif_anim_unavailable_.empty();
+    }
+
     std::vector<std::string> log;
     std::vector<std::string> accounts; // event_account_ at each call
     std::vector<std::vector<std::uint8_t>> frames;
@@ -496,6 +506,14 @@ TEST_CASE("simple string and value callbacks are forwarded", "[event_handler_bas
     CHECK(f.shell.log ==
           std::vector<std::string>{"packs", "prefs:@me:x:{\"a\":1}",
                                    "mpc:@me:x:{}", "gif:3:2", "giffail:4:nope"});
+}
+
+TEST_CASE("new GIF results clear the remembered strip failures", "[event_handler_base]")
+{
+    EhbFx f;
+    f.shell.mark_gif_failed("mxc://x/dead");
+    f.h.on_gif_results(5, std::vector<tesseract::GifResult>(1));
+    CHECK(f.shell.gif_failures_empty());
 }
 
 TEST_CASE("remaining callbacks are safe on an idle shell", "[event_handler_base]")

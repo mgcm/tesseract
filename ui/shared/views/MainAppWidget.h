@@ -153,8 +153,6 @@ public:
     // user cancel). May also be called by the shell (e.g. on window close).
     void close_camera_overlay();
 
-    bool camera_overlay_open() const { return camera_widget_ != nullptr; }
-
     // Set by the shell before calling open_camera_overlay(). Receives the raw
     // BGRA8888 frame; the shell encodes it to JPEG and calls add_pending_image.
     std::function<void(std::vector<std::uint8_t> bgra,
@@ -341,7 +339,7 @@ public:
     // otherwise "Can't reach the server".
     void set_offline(bool offline);
 
-    // ── Native overlay rects (call from the surface's set_on_layout) ──────
+    // ── Native overlay rects ───────────────────────────────────────────────
     //
     // While any modal overlay is up (ConfirmDialog at this level, or the
     // room-info / user-profile panels owned by RoomView) the compose-textarea

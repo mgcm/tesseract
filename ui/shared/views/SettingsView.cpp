@@ -303,7 +303,7 @@ void SettingsView::react_locally_(SettingKey key)
     switch (key)
     {
     case SettingKey::IndexMessages:
-        if (request_repaint_) request_repaint_();
+        request_relayout();
         break;
     case SettingKey::Msc2545Compat:
         // Reflect immediately in the Emojis & Stickers tab — the personal
@@ -477,6 +477,20 @@ void SettingsView::set_low_power_available(bool available)
     }
 }
 
+void SettingsView::load_device_lists()
+{
+    auto* h = host();
+    if (!h)
+        return;
+    set_audio_input_devices(h->enumerate_audio_inputs());
+    set_audio_output_devices(h->enumerate_audio_outputs());
+    set_camera_devices(h->enumerate_cameras());
+    const auto& s = tesseract::Settings::instance();
+    set_selected_audio_input(s.audio_input_device_id);
+    set_selected_audio_output(s.audio_output_device_id);
+    set_selected_camera(s.camera_device_id);
+}
+
 void SettingsView::load_persisted_settings()
 {
     binder_.reload();
@@ -511,8 +525,8 @@ void SettingsView::set_server_info(const tesseract::ServerInfo& info)
     // Toggling profile-fields editability now also shows/hides the whole
     // ExtendedFields block, which changes AccountSection's measured height —
     // needs a repaint/relayout if server info arrives after Settings is
-    // already open (see the comment on set_request_repaint()).
-    if (request_repaint_) request_repaint_();
+    // already open.
+    request_relayout();
 }
 
 void SettingsView::set_current_device_id(std::string id)
@@ -583,7 +597,7 @@ void SettingsView::set_cache_sizes(uint64_t local_bytes, uint64_t sdk_bytes,
         about_->set_memory_cache_stats(mem_hits, mem_misses);
         about_->set_local_cache_stats(disk_hits, disk_misses);
     }
-    if (request_repaint_) request_repaint_();
+    request_relayout();
 }
 
 bool SettingsView::about_tab_selected() const
@@ -591,9 +605,10 @@ bool SettingsView::about_tab_selected() const
     return tabs_ && tabs_->selected_idx() == kAboutTabIdx;
 }
 
-void SettingsView::set_request_repaint(std::function<void()> cb)
+void SettingsView::request_relayout()
 {
-    request_repaint_ = std::move(cb);
+    if (auto* h = host())
+        h->request_relayout();
 }
 
 // ---------------------------------------------------------------------------
@@ -727,7 +742,7 @@ void SettingsView::show_status_emoji_picker_(tk::Rect world_anchor)
     status_emoji_picker_->open_at({px, py, w, h});
     status_emoji_picker_->set_visible(true);
     status_emoji_picker_visible_ = true;
-    if (request_repaint_) request_repaint_();
+    request_relayout();
 }
 
 void SettingsView::hide_status_emoji_picker_()
@@ -735,7 +750,7 @@ void SettingsView::hide_status_emoji_picker_()
     status_emoji_picker_visible_ = false;
     if (status_emoji_picker_)
         status_emoji_picker_->set_visible(false);
-    if (request_repaint_) request_repaint_();
+    request_relayout();
 }
 
 void SettingsView::set_controller(tesseract::SettingsController* ctrl)
@@ -752,31 +767,31 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
         account_->set_avatar_busy(false);
         if (!ok)
             account_->set_avatar_error(std::move(error));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_name_result = [this](bool ok, std::string error)
     {
         account_->set_name_busy(false);
         if (!ok)
             account_->set_name_error(std::move(error));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_avatar_changed = [this](std::string mxc)
     {
         account_->set_avatar_url(std::move(mxc));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_avatar_preview = [this](std::shared_ptr<tk::Image> preview)
     {
         account_->set_avatar_preview(std::move(preview));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_name_changed = [this](std::string name)
     {
         account_->set_display_name(name);
         if (auto* nf = account_->name_field())
             nf->set_text(std::move(name));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
 
     if (auto* nf = account_->name_field())
@@ -786,7 +801,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
             {
                 ctrl->set_display_name(account_->name_field()->text());
                 account_->set_name_busy(true);
-                if (request_repaint_) request_repaint_();
+                request_relayout();
             });
     }
 
@@ -834,7 +849,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
                     if (on_profile_field_changed)
                         on_profile_field_changed(spec.key,
                                                  spec.to_json(f->text()));
-                    if (request_repaint_) request_repaint_();
+                    request_relayout();
                 });
         }
     }
@@ -860,7 +875,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
                 on_profile_field_changed(kStableTzKey, json);
                 on_profile_field_changed(kTzKey, json);
             }
-            if (request_repaint_) request_repaint_();
+            request_relayout();
         };
     }
 
@@ -900,7 +915,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
                 }
                 on_profile_field_changed(kPronounsKey, json);
             }
-            if (request_repaint_) request_repaint_();
+            request_relayout();
         };
     }
 
@@ -928,7 +943,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
                 }
                 on_profile_field_changed(kStatusKey, json);
             }
-            if (request_repaint_) request_repaint_();
+            request_relayout();
         };
     }
 
@@ -941,7 +956,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
     {
         if (!devices_) return;
         devices_->set_devices(std::move(devices));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_device_renamed =
         [this](std::string id, bool ok, std::string err)
@@ -950,7 +965,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
         devices_->set_device_busy(id, false);
         if (!ok)
             devices_->set_device_error(id, std::move(err));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_device_needs_uia =
         [this](std::string id, std::string fallback_url, std::string session)
@@ -958,7 +973,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
         if (!devices_) return;
         devices_->enter_uia_state(id, std::move(fallback_url),
                                   std::move(session));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_device_deleted =
         [this, ctrl](std::string id, bool ok, std::string err)
@@ -976,7 +991,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
             devices_->clear_uia_state(id);
             devices_->set_device_error(id, std::move(err));
         }
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
 
     // Wire DevicesSection click callbacks → controller.
@@ -985,7 +1000,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
         devices_->set_device_busy(id, true);
         devices_->set_device_error(id, "");
         ctrl->delete_device(std::move(id));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     devices_->on_uia_confirmed =
         [this, ctrl](std::string id, std::string session)
@@ -993,13 +1008,13 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
         devices_->set_device_busy(id, true);
         devices_->set_device_error(id, "");
         ctrl->confirm_device_deletion(std::move(id), std::move(session));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     devices_->on_uia_cancelled = [this, ctrl](std::string id)
     {
         ctrl->cancel_device_deletion(id);
         devices_->clear_uia_state(id);
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
 
     // Kick off the device list fetch so the Sessions tab is populated by
@@ -1024,31 +1039,31 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
         notifications_->set_notify_all_messages(all_messages);
         notifications_->set_notify_on_keywords(notify_on_keywords);
         notifications_->set_notification_keywords(std::move(keywords));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_mentions_toggle_result = [this](bool ok, bool enabled)
     {
         if (!notifications_) return;
         if (!ok) notifications_->set_mentions_enabled(!enabled); // revert on failure
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_room_mentions_toggle_result = [this](bool ok, bool enabled)
     {
         if (!notifications_) return;
         if (!ok) notifications_->set_room_mentions_enabled(!enabled);
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_notify_all_messages_result = [this](bool ok, bool enabled)
     {
         if (!notifications_) return;
         if (!ok) notifications_->set_notify_all_messages(!enabled);
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_notify_on_keywords_result = [this](bool ok, bool enabled)
     {
         if (!notifications_) return;
         if (!ok) notifications_->set_notify_on_keywords(!enabled);
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_keyword_add_result = [this](bool ok, std::string keyword)
     {
@@ -1063,7 +1078,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
         {
             notifications_->set_keyword_error("");
         }
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_keyword_remove_result = [this](bool ok, std::string keyword)
     {
@@ -1078,7 +1093,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
         {
             notifications_->set_keyword_error("");
         }
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
 
     // Wire NotificationsSection's Mentions & Keywords callbacks → controller.
@@ -1114,21 +1129,21 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
     {
         if (!image_packs_) return;
         image_packs_->set_known_packs(std::move(packs));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_user_pack_images_loaded =
         [this](std::vector<tesseract::ImagePackImage> images)
     {
         if (!image_packs_) return;
         image_packs_->set_user_pack_images(std::move(images));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
     ctrl->on_user_pack_save_result = [this](bool ok, std::string error)
     {
         if (!image_packs_) return;
         image_packs_->set_user_pack_saving(false);
         image_packs_->set_user_pack_save_result(ok, std::move(error));
-        if (request_repaint_) request_repaint_();
+        request_relayout();
     };
 
     // Wire ImagePacksSection click callbacks → controller.
@@ -1138,7 +1153,7 @@ void SettingsView::set_controller(tesseract::SettingsController* ctrl)
         auto* editor = image_packs_->user_pack_editor();
         if (!editor->has_changes()) return;
         image_packs_->set_user_pack_saving(true);
-        if (request_repaint_) request_repaint_();
+        request_relayout();
         ctrl->save_user_pack_changes(editor->build_result());
     };
     image_packs_->on_pack_subscription_toggled =

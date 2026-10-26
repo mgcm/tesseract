@@ -586,6 +586,29 @@ bool ShellBase::tick_anim_()
     return true;
 }
 
+void ShellBase::repaint_anim_frame_()
+{
+    update_main_anim_regions_();
+    // The pagination spinner reports no damage rect, so a backend that repaints
+    // only the animated-image rects (Win32) would freeze it while a GIF is on
+    // screen; repaint the whole main surface while it spins.
+    if (room_view_ && room_view_->message_list() &&
+        room_view_->message_list()->paginating())
+        request_repaint_();
+    if (compose_popups_)
+    {
+        compose_popups_->repaint_anim_frame();
+    }
+    if (room_view_)
+    {
+        if (room_view_->emoji_picker_visible() && room_view_->emoji_picker())
+            room_view_->emoji_picker()->invalidate_image_cache();
+        if (room_view_->sticker_picker_visible() && room_view_->sticker_picker())
+            room_view_->sticker_picker()->invalidate_image_cache();
+    }
+    update_settings_anim_regions_();
+}
+
 bool ShellBase::inflight_tick_()
 {
     if (!any_window_visible_() || !inflight_needs_anim_())

@@ -18,8 +18,11 @@ namespace
 
 struct TabBarStage
 {
-    StubHost host;
+    // Declared before host so it outlives it: the host can still hold images
+    // the surface's backend made, and on Win32 releasing them after that
+    // backend's CoUninitialize() crashes.
     std::unique_ptr<TestSurface> surface = TestSurface::create(800, 100);
+    StubHost host;
     std::unique_ptr<TabBar> bar = create_root_widget<TabBar>(&host);
 
     LayoutCtx lc() { return LayoutCtx{surface->factory(), Theme::light()}; }

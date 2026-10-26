@@ -526,6 +526,15 @@ void ComposeBar::set_current_text(std::string text)
     refresh_send_enabled();
 }
 
+void ComposeBar::set_text(std::string text)
+{
+    if (text_area_)
+    {
+        text_area_->set_text(text);
+    }
+    set_current_text(std::move(text));
+}
+
 void ComposeBar::focus()
 {
     if (text_area_)

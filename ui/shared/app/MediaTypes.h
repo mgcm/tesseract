@@ -139,14 +139,6 @@ struct MediaPrefetchBatch
     std::vector<std::tuple<tk::CacheKey, MediaKind, DecodedImage, std::uint64_t>> ready;
 };
 
-// The (on_first_frame, on_frame) callback pair make_streamed_decode_callbacks_
-// builds, ready to hand to decode_image_streamed_.
-struct StreamedDecodeCallbacks
-{
-    std::function<void(std::unique_ptr<tk::Image>, int)> on_first;
-    std::function<void(int, std::unique_ptr<tk::Image>, int)> on_extra;
-};
-
 // The (on_first, on_extra) pair make_streamed_decode_callbacks_windowed_
 // builds. on_first's signature matches decode_image_streamed_windowed_'s
 // on_first_frame parameter (session/total_frames delivered as arguments,

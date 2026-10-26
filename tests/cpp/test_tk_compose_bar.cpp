@@ -4,6 +4,8 @@
 #include "tk/controls.h"
 #include "tk/theme.h"
 #include "views/ComposeBar.h"
+#include "views/MessageListView.h"
+#include "views/RoomView.h"
 #include "tk_test_host.h"
 #include "tk_test_surface.h"
 
@@ -646,4 +648,66 @@ TEST_CASE("ComposeBar recording: set_recording false resets state",
     cb->set_recording(false);
     REQUIRE(!cb->is_recording());
     cb->push_amplitude(999); // must not crash
+}
+
+TEST_CASE("ComposeBar::set_text updates the mirrored text without sending",
+          "[tk][view][compose]")
+{
+    auto bar_owner = tk::create_root_widget<ComposeBar>(nullptr);
+    ComposeBar& bar = *bar_owner;
+    int sends = 0;
+    bar.on_send = [&](const std::string&) { ++sends; };
+    bar.set_text("draft");
+    CHECK(bar.current_text() == "draft");
+    bar.set_text({});
+    CHECK(bar.current_text().empty());
+    CHECK(sends == 0);
+}
+
+TEST_CASE("ComposeBar::set_text pushes the text into the native area",
+          "[tk][view][compose]")
+{
+    StubHost host;
+    TkComposeBarStage st;
+    auto bar_owner = tk::create_root_widget<ComposeBar>(&host);
+    ComposeBar& bar = *bar_owner;
+    st.run(bar, {0, 0, 640, ComposeBar::kMinHeight});
+    REQUIRE(host.areas_created.size() == 1);
+    bar.set_text("draft");
+    CHECK(host.areas_created[0]->text_ == "draft");
+    CHECK(bar.current_text() == "draft");
+}
+
+TEST_CASE("starting a message edit fills and focuses the composer; cancelling clears it",
+          "[tk][view][compose]")
+{
+    StubHost host;
+    TkComposeBarStage st;
+    auto view_owner = tk::create_root_widget<tesseract::views::RoomView>(&host);
+    auto& view = *view_owner;
+    tesseract::RoomInfo info;
+    info.id = "!r:x";
+    info.name = "R";
+    view.set_room(info);
+    st.run(view, {0, 0, 640, 480});
+
+    view.message_list()->on_edit_requested("$e", "old text", false);
+    // The composer is the native area that received the prefill.
+    StubTextArea* composer = nullptr;
+    for (auto* a : host.areas_created)
+    {
+        if (a->text_ == "old text")
+        {
+            composer = a;
+        }
+    }
+    REQUIRE(composer != nullptr);
+    CHECK(composer->focused_);
+    CHECK(view.compose_bar()->has_editing());
+
+    // What the banner's "×" does: clear the editing state, then notify.
+    view.compose_bar()->clear_editing();
+    view.compose_bar()->on_edit_cancelled();
+    CHECK_FALSE(view.compose_bar()->has_editing());
+    CHECK(composer->text_.empty());
 }

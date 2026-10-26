@@ -1268,6 +1268,8 @@ public:
     void set_historical_mode(bool historical);
     // Test seam: whether historical mode is currently on.
     bool historical_mode_for_test() const { return historical_mode_; }
+    // Test seam: the typing indicator text last set.
+    const std::string& typing_text_for_test() const { return typing_text_; }
 
     // Re-read display preferences that affect row layout (currently
     // Settings::message_layout) and force a full re-measure. The row

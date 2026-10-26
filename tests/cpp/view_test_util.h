@@ -20,8 +20,11 @@ namespace vt
 // A PopupCapableStubHost plus an offscreen canvas for layout/paint passes.
 struct Stage
 {
-    PopupCapableStubHost host;
+    // Declared before host so it outlives it: the host can still hold images
+    // the surface's backend made (e.g. a drag ghost), and on Win32 releasing
+    // them after that backend's CoUninitialize() crashes.
     std::unique_ptr<TestSurface> surface;
+    PopupCapableStubHost host;
 
     explicit Stage(int w = 800, int h = 600) : surface(TestSurface::create(w, h)) {}
 

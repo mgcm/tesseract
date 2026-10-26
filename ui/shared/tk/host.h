@@ -647,6 +647,11 @@ public:
     virtual void set_visible(bool visible) = 0;
     virtual bool visible() const = 0;
 
+    // The popup's own Host, so the shell can forward keys to it (a popup takes
+    // no native keyboard focus) and move tk focus inside it. nullptr when the
+    // backend has none.
+    virtual Host* popup_host() { return nullptr; }
+
     // Push the active tk::Theme into this popup's own Surface (it has its
     // own Host/Surface pair, so theme changes don't propagate automatically).
     virtual void set_theme(const Theme& theme) = 0;
@@ -1161,6 +1166,19 @@ public:
     // there's no next focusable widget.
     bool advance_focus(bool forward) { return advance_focus_(forward); }
 
+    // Offers `event` to `filter` before anything else in dispatch_key_down; a
+    // true return consumes the key. The shell uses it to steer keys into a
+    // popup that never takes native keyboard focus. Pass an empty function to
+    // remove it.
+    void set_key_prefilter(std::function<bool(const KeyEvent&)> filter)
+    {
+        key_prefilter_ = std::move(filter);
+    }
+
+    // dispatch_key_down for a key that arrived somewhere else (another host's
+    // prefilter). Same result as a key typed into this host's own surface.
+    bool forward_key_down(const KeyEvent& event) { return dispatch_key_down(event); }
+
     // ── Tooltip management ───────────────────────────────────────────────────
     // Any widget can request a tooltip near itself. Since on_pointer_move()/
     // on_pointer_leave() don't receive a PaintCtx, callers cache `ctx.host`
@@ -1483,6 +1501,7 @@ protected:
     // Returns false (leaving focus unchanged) if the tree has no focusable
     // widget to move to.
     bool advance_focus_(bool forward);
+    std::function<bool(const KeyEvent&)> key_prefilter_;
 
     // Draws the active tooltip (if any) above everything, called by each
     // backend's paint() right after root_->paint_overlay(ctx). `surface_bounds`

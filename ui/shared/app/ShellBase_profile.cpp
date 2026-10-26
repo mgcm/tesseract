@@ -7,6 +7,7 @@
 #include "views/pronoun_utils.h"
 #include <tesseract/prefs.h>
 #include <algorithm>
+#include <cmath>
 
 namespace tesseract
 {
@@ -36,6 +37,180 @@ bool ShellBase::other_accounts_have_unread() const
         }
     }
     return false;
+}
+
+void ShellBase::refresh_user_strip_()
+{
+    if (!main_app_ || !main_app_->user_info())
+        return;
+    auto* ui = main_app_->user_info();
+    ui->set_display_name(my_display_name_);
+    ui->set_user_id(my_user_id_);
+    ui->set_avatar_url(my_avatar_url_);
+    if (!my_avatar_url_.empty() && client_)
+        ensure_user_avatar_(my_avatar_url_);
+    request_relayout_();
+}
+
+void ShellBase::close_account_picker_()
+{
+    if (!account_picker_popup_)
+        return;
+    const bool was_visible = account_picker_popup_->visible();
+    account_picker_popup_->set_visible(false);
+    if (!was_visible)
+        return;
+    tk::SurfaceBase* main = main_surface_();
+    if (!main)
+        return;
+    main->host().set_key_prefilter({});
+    // Keyboard focus goes back to the user strip it was opened from.
+    if (main_app_ && main_app_->user_info())
+        main->host().request_focus(main_app_->user_info());
+}
+
+bool ShellBase::handle_account_picker_key_(const tk::KeyEvent& e)
+{
+    if (!account_picker_popup_ || !account_picker_popup_->visible())
+        return false;
+    if (e.ctrl || e.alt || e.meta)
+        return false;
+    switch (e.key)
+    {
+    case tk::Key::Up:
+    case tk::Key::Down:
+    case tk::Key::Tab:
+    case tk::Key::Backtab:
+    case tk::Key::Enter:
+    case tk::Key::Space:
+    case tk::Key::Escape:
+        break;
+    default:
+        return false;
+    }
+    tk::Host* popup_host = account_picker_popup_->popup_host();
+    return popup_host && popup_host->forward_key_down(e);
+}
+
+bool ShellBase::handle_escape_key_()
+{
+    if (account_picker_popup_ && account_picker_popup_->visible())
+    {
+        close_account_picker_();
+        return true;
+    }
+    if (!main_app_)
+        return false;
+    const bool had_quick_switch = main_app_->quick_switcher() &&
+                                  main_app_->quick_switcher()->is_open();
+    const bool had_message_search = main_app_->message_search() &&
+                                    main_app_->message_search()->is_open();
+    const bool had_room_search = main_app_->room_view() &&
+                                 main_app_->room_view()->room_search_open();
+    if (!main_app_->dispatch_key_down({tk::Key::Escape}))
+        return false;
+    if (had_quick_switch)
+        close_quick_switch_();
+    else if (had_message_search)
+        close_message_search_();
+    else if (had_room_search)
+        close_find_in_room_();
+    else if (auto* surface = main_surface_())
+        surface->relayout();
+    return true;
+}
+
+void ShellBase::rebuild_account_picker_()
+{
+    if (!account_picker_)
+        return;
+    account_picker_->set_entries(build_account_picker_entries_());
+    if (account_picker_popup_ && account_picker_popup_->visible())
+        account_picker_popup_->request_relayout();
+}
+
+void ShellBase::open_account_picker_()
+{
+    if (account_manager_.accounts().size() < 2 || !main_app_)
+        return;
+    // A click on the user strip that just dismissed the picker (the outside-press
+    // watcher does not consume it) must toggle it shut, not reopen it.
+    if (account_picker_dismissed_ms_ &&
+        monotonic_ms_() - *account_picker_dismissed_ms_ < kAccountPickerReopenGuardMs)
+        return;
+    tk::SurfaceBase* main = main_surface_();
+    if (!main)
+        return;
+    if (!account_picker_popup_)
+    {
+        account_picker_popup_ = main->host().make_popup_surface();
+        if (!account_picker_popup_)
+            return;
+        auto picker = std::make_unique<views::AccountPicker>();
+        account_picker_ = picker.get();
+        account_picker_->set_image_provider(make_avatar_image_provider_());
+        account_picker_->on_select = [this](const std::string& uid)
+        {
+            close_account_picker_();
+            on_account_picker_select_(uid);
+        };
+        account_picker_->on_avatar_needed =
+            [this](const std::string& mxc) { ensure_user_avatar_(mxc); };
+        account_picker_->on_dismiss = [this] { close_account_picker_(); };
+        account_picker_popup_->set_root(std::move(picker));
+        // The picker paints its own rounded card.
+        account_picker_popup_->set_corner_radius(8.0f);
+        account_picker_popup_->on_dismiss_requested = [this]
+        {
+            // The press that dismissed us also reaches the user strip, whose
+            // click would reopen the picker at once; see open_account_picker_.
+            account_picker_dismissed_ms_ = monotonic_ms_();
+            close_account_picker_();
+        };
+        account_picker_popup_->set_theme(current_theme_);
+    }
+    account_picker_->set_entries(build_account_picker_entries_());
+
+    // Size from the widget's own measure() so the popup fits its rows exactly.
+    constexpr float kWidth = views::AccountPicker::kPreferredWidth;
+    tk::LayoutCtx lc{main->factory(), main->theme()};
+    const float height = std::ceil(account_picker_->measure(lc, {kWidth, 0.0f}).h);
+    account_picker_popup_->set_rect(main_app_->user_info()->bounds(),
+                                    {kWidth, height},
+                                    tk::PopupPlacement::PreferAbove);
+    account_picker_popup_->set_visible(true);
+
+    // The popup takes no native focus: free the composer's native field so keys
+    // reach the main host, which hands them on (see handle_account_picker_key_),
+    // and start on the first row.
+    main->host().release_focus_to_canvas();
+    main->host().set_key_prefilter([this](const tk::KeyEvent& e)
+                                   { return handle_account_picker_key_(e); });
+    if (tk::Host* popup_host = account_picker_popup_->popup_host();
+        popup_host && !account_picker_->rows().empty())
+        popup_host->request_focus(account_picker_->rows().front());
+}
+
+std::vector<views::AccountEntry> ShellBase::build_account_picker_entries_()
+{
+    std::vector<views::AccountEntry> entries;
+    const auto& accs = account_manager_.accounts();
+    entries.reserve(accs.size());
+    for (const auto& s : accs)
+    {
+        views::AccountEntry e;
+        e.user_id      = s->user_id;
+        e.display_name = s->display_name;
+        e.avatar_url   = s->avatar_url;
+        e.active       = active_account_ && s->user_id == active_account_->user_id;
+        e.has_unread   = account_has_unread_for(s->user_id);
+        entries.push_back(std::move(e));
+        if (!s->avatar_url.empty())
+        {
+            ensure_user_avatar_(s->avatar_url);
+        }
+    }
+    return entries;
 }
 
 bool ShellBase::account_has_unread_for(const std::string& user_id) const
@@ -293,6 +468,8 @@ void ShellBase::dispatch_launch_action_(LaunchAction action, std::string room_id
 void ShellBase::mark_main_content_ready_()
 {
     main_content_ready_ = true;
+    // Settings opened over the login page does not outlive it.
+    settings_opened_from_login_ = false;
     if (pending_launch_action_ != LaunchAction::None)
     {
         const auto action = pending_launch_action_;
@@ -334,6 +511,9 @@ void ShellBase::open_launch_room_(const std::string& room_id)
         pending_launch_room_id_.clear();
         if (!active_account_ || active_account_->user_id != user_id)
         {
+            // Another window holds the account: open the room there.
+            if (open_room_in_holder_window_(user_id, target_room_id))
+                return;
             switch_active_account_(user_id);
         }
         navigate_to_room_(target_room_id);
@@ -1116,7 +1296,10 @@ ShellBase::build_tray_items_()
             std::move(label),
             [this, uid]
             {
-                if (auto* win = account_manager_.dedicated_window(uid))
+                auto* win = account_owner_window_(uid);
+                if (!win)
+                    win = account_manager_.dedicated_window(uid);
+                if (win)
                 {
                     win->raise_and_activate_();
                     return;
@@ -1369,6 +1552,10 @@ void ShellBase::notify_user_activity_()
 
 void ShellBase::notify_window_active_(bool active)
 {
+    // The account picker is a bare popup surface, not a registered popup.
+    if (!active)
+        close_account_picker_();
+
     // Alt-tabbing/switching to another program shouldn't leave a popup menu
     // (or any other registered popup — ComboBox dropdowns, the date picker,
     // etc.) floating on top of a now-background window.
@@ -1453,4 +1640,13 @@ void ShellBase::start_presence_tracking_()
     };
     presence_tracker_->notify_sync_started();
 }
+
+void ShellBase::on_account_badges_changed_(bool other_accounts_unread)
+{
+    if (!main_app_ || !main_app_->user_info())
+        return;
+    main_app_->user_info()->set_notification_dot(other_accounts_unread);
+    request_relayout_();
+}
+
 } // namespace tesseract

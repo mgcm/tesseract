@@ -1,7 +1,18 @@
 #include "app/ShellBase.h"
 #include "app/Launch.h"
 #include <tesseract/open_media.h>
+#include "views/ForwardRoomPicker.h"
 #include "views/MainAppWidget.h"
+#include "views/MessageListView.h"
+#include "views/MessageSearchView.h"
+#include "views/RoomListView.h"
+#include "views/RoomPreviewView.h"
+#include "views/RoomSettingsView.h"
+#include "views/SpaceRootView.h"
+#include "tk/tab_bar.h"
+#include "views/QuickSwitcher.h"
+#include "views/RoomSearchBar.h"
+#include "views/RoomView.h"
 #include "views/SettingsView.h"
 #include <algorithm>
 #ifndef _WIN32
@@ -12,13 +23,456 @@
 namespace tesseract
 {
 
+namespace
+{
+
+// Up/Down move the list selection, Escape closes the overlay; every other key
+// falls through to the search field. `open` is checked on each key because the
+// handler outlives the overlay.
+template <typename Overlay, typename Getter, typename Relayout, typename Close>
+void push_list_nav_(tk::TextField* field, Getter get, Relayout relayout,
+                    Close close)
+{
+    if (!field)
+    {
+        return;
+    }
+    field->push_popup_nav(
+        [get, relayout, close](tk::NavKey nk) -> bool
+        {
+            Overlay* ov = get();
+            if (!ov || !ov->is_open())
+            {
+                return false;
+            }
+            switch (nk)
+            {
+            case tk::NavKey::Up:
+                ov->move_selection(-1);
+                relayout();
+                return true;
+            case tk::NavKey::Down:
+                ov->move_selection(+1);
+                relayout();
+                return true;
+            case tk::NavKey::Escape:
+                close();
+                return true;
+            default:
+                return false;
+            }
+        });
+}
+
+} // namespace
+
+// Shell-level Up/Down/Escape navigation and on_close for the window overlays.
+// The search fields are self-owned by each overlay; only these callbacks need
+// wiring.
+void ShellBase::wire_overlay_nav_(views::MainAppWidget* app)
+{
+    auto relayout = [this] { request_relayout_(); };
+
+    if (auto* qs = app->quick_switcher())
+    {
+        push_list_nav_<views::QuickSwitcher>(
+            qs->search_field(),
+            [this] { return main_app_ ? main_app_->quick_switcher() : nullptr; },
+            relayout, [this] { close_quick_switch_(); });
+        qs->on_close = [this] { close_quick_switch_(); };
+    }
+    if (auto* ms = app->message_search())
+    {
+        push_list_nav_<views::MessageSearchView>(
+            ms->search_field(),
+            [this] { return main_app_ ? main_app_->message_search() : nullptr; },
+            relayout, [this] { close_message_search_(); });
+        ms->on_close = [this] { close_message_search_(); };
+    }
+    if (auto* fp = app->forward_picker())
+    {
+        push_list_nav_<views::ForwardRoomPicker>(
+            fp->search_field(),
+            [this] { return main_app_ ? main_app_->forward_picker() : nullptr; },
+            relayout, [this] { close_forward_picker_(); });
+        fp->on_close = [this] { close_forward_picker_(); };
+    }
+    if (auto* rv = app->room_view())
+    {
+        if (auto* bar = rv->room_search_bar())
+        {
+            if (auto* field = bar->search_field())
+            {
+                // Same keys, but the list is the room view's match cursor.
+                field->push_popup_nav(
+                    [this, relayout](tk::NavKey nk) -> bool
+                    {
+                        auto* view = main_app_ ? main_app_->room_view() : nullptr;
+                        if (!view || !view->room_search_open())
+                        {
+                            return false;
+                        }
+                        switch (nk)
+                        {
+                        case tk::NavKey::Up:
+                        case tk::NavKey::Down:
+                            if (view->on_room_search_navigate)
+                            {
+                                view->on_room_search_navigate(
+                                    nk == tk::NavKey::Up ? -1 : +1);
+                            }
+                            relayout();
+                            return true;
+                        case tk::NavKey::Escape:
+                            close_find_in_room_();
+                            return true;
+                        default:
+                            return false;
+                        }
+                    });
+            }
+            bar->on_close = [this] { close_find_in_room_(); };
+        }
+    }
+}
+
+// Callbacks every shell used to wire identically. The ones that need a native
+// effect (scroll debounce timers, context menus, status-bar links, cursors,
+// the composer) stay in the shells.
+void ShellBase::wire_view_callbacks_(views::MainAppWidget* app)
+{
+    app->on_quick_switch_shortcut = [this] { open_quick_switch_ui_(); };
+    app->on_message_search_shortcut = [this] { open_message_search_ui_(); };
+    app->on_find_in_room_shortcut = [this] { open_find_in_room_(); };
+    app->on_history_back_shortcut = [this] { navigate_history_back(); };
+    app->on_history_forward_shortcut = [this] { navigate_history_forward(); };
+    app->on_space_back = [this] { space_back_command_(); };
+
+    if (auto* rl = app->room_list_view())
+    {
+        rl->on_room_selected = [this, rl](const std::string& room_id)
+        {
+            // A space is not a room: clicking one drills into it rather than
+            // opening it as the active room/tab (which would put the space
+            // title in the room header).
+            for (const auto& r : rooms_)
+            {
+                if (r.id == room_id && r.is_space)
+                {
+                    space_nav_frames_.push_back(SpaceNavFrame::capture(rl));
+                    space_stack_.push_back(room_id);
+                    refresh_room_list_();
+                    SpaceNavFrame::enter(rl);
+                    return;
+                }
+            }
+            // Modifier+click opens the room in a new tab; a plain click
+            // switches the active tab.
+            if (click_modifier_held_())
+            {
+                tab_open_room(room_id);
+            }
+            else
+            {
+                tab_select_room(room_id);
+            }
+        };
+        rl->on_open_in_tab_requested = [this](const std::string& rid)
+        { tab_open_room(rid); };
+        rl->on_open_in_window_requested = [this](const std::string& rid)
+        { open_room_in_new_window(rid); };
+        rl->on_leave_room_requested = [this](const std::string& rid)
+        { confirm_leave_room_(rid); };
+        rl->on_mark_read_requested = [this](const std::string& rid)
+        { mark_room_read_(rid); };
+        rl->on_unjoined_room_selected = [this](const tesseract::RoomSummary& s)
+        {
+            if (!s.avatar_url.empty())
+            {
+                ensure_media_thumbnail_(s.avatar_url, 64, 64, false);
+            }
+            if (main_app_)
+            {
+                main_app_->show_room_preview(s, make_avatar_image_provider_());
+                request_relayout_();
+            }
+        };
+    }
+
+    if (auto* tabs = app->tab_bar())
+    {
+        tabs->on_tab_selected = [this](const std::string& room_id)
+        {
+            // Modifier+click pops the room out into its own window (and
+            // closes the tab); a plain click just switches to it.
+            if (click_modifier_held_())
+            {
+                tab_popout_room(room_id);
+            }
+            else
+            {
+                tab_select_room(room_id);
+            }
+        };
+        tabs->on_tab_closed = [this](const std::string& room_id)
+        { tab_close(room_id); };
+    }
+
+    if (auto* rp = app->room_preview())
+    {
+        rp->on_avatar_needed = [this](const std::string& mxc)
+        { ensure_media_thumbnail_(mxc, 64, 64, false); };
+        rp->on_join = [this, rp](const std::string& room_id)
+        {
+            rp->set_state(views::RoomPreviewView::State::Joining);
+            join_room_command_(room_id);
+        };
+        rp->on_dismiss = [this]
+        {
+            if (main_app_)
+            {
+                main_app_->hide_room_preview();
+            }
+        };
+    }
+
+    auto copy_to_clipboard = [this](std::string_view text)
+    {
+        if (main_app_ && main_app_->host())
+        {
+            main_app_->host()->set_clipboard_text(text);
+        }
+    };
+
+    if (auto* sr = app->space_root())
+    {
+        sr->on_layout_changed = [this] { request_relayout_(); };
+        sr->on_copy_to_clipboard = [copy_to_clipboard](std::string t)
+        { copy_to_clipboard(t); };
+        sr->on_leave_space = [this](std::string rid)
+        { confirm_leave_room_(rid); };
+        sr->on_settings_opened = [this](std::string room_id)
+        {
+            auto* v = main_app_->space_root()->settings_view();
+            if (!v)
+            {
+                return;
+            }
+            if (!client_)
+            {
+                v->set_field_permissions(false, false, false);
+                v->set_security_field_permissions(false, false, false, false);
+                v->set_permissions_field_permissions(false);
+                v->set_image_pack_field_permissions(false);
+                v->set_own_power_level({});
+                seed_image_pack_tab_(room_id, v);
+                return;
+            }
+            v->set_field_permissions(client_->can_set_room_name(room_id),
+                                     client_->can_set_room_topic(room_id),
+                                     client_->can_set_room_avatar(room_id));
+            v->set_security_field_permissions(
+                client_->can_set_room_encryption(room_id),
+                client_->can_set_room_join_rules(room_id),
+                client_->can_set_room_guest_access(room_id),
+                client_->can_set_room_history_visibility(room_id));
+            v->set_permissions_field_permissions(
+                client_->can_set_room_power_levels(room_id));
+            v->set_permissions_state(client_->room_power_levels(room_id));
+            v->set_own_power_level(client_->room_own_power_level(room_id));
+            fetch_room_security_state_(room_id);
+            seed_image_pack_tab_(room_id, v);
+        };
+        sr->on_settings_avatar_upload_requested = [this](std::string room_id)
+        {
+            stage_room_settings_avatar_upload_(
+                room_id, main_app_->space_root()->settings_view());
+        };
+        if (auto* sv = sr->settings_view())
+        {
+            sv->on_accept = [this](std::string room_id,
+                                   views::RoomSettingsChanges changes)
+            {
+                if (!client_)
+                {
+                    return;
+                }
+                auto* c = client_;
+                run_async_mut_(
+                    [this, c, room_id = std::move(room_id),
+                     changes = std::move(changes)]() mutable
+                    {
+                        auto outcome =
+                            ShellBase::apply_room_settings_(c, room_id, changes);
+                        post_to_ui_alive_(
+                            [this, outcome, room_id,
+                             media_override = changes.media_override]() mutable
+                            {
+                                if (!main_app_)
+                                {
+                                    return;
+                                }
+                                if (auto* v = main_app_->space_root()->settings_view())
+                                {
+                                    v->set_commit_result(outcome.ok, outcome.error);
+                                }
+                                if (outcome.ok && media_override)
+                                {
+                                    commit_room_media_preview_override_(
+                                        room_id, media_override->has_override,
+                                        media_override->mode);
+                                }
+                            });
+                    });
+            };
+            sv->on_image_pack_images_needed = [this](std::string pack_id)
+            {
+                handle_image_pack_images_needed_(
+                    pack_id, main_app_->space_root()->settings_view());
+            };
+            sv->on_image_pack_pending_image_added =
+                [this](std::uint64_t local_id,
+                       const std::vector<std::uint8_t>& bytes,
+                       const std::string& mime)
+            {
+                handle_image_pack_pending_image_added_(
+                    local_id, bytes, mime,
+                    main_app_->space_root()->settings_view());
+            };
+        }
+    }
+
+    if (auto* rv = app->room_view())
+    {
+        rv->on_layout_changed = [this] { request_relayout_(); };
+        rv->on_set_clipboard = copy_to_clipboard;
+        rv->on_selection_started = [this]
+        {
+            if (main_app_ && main_app_->host())
+            {
+                main_app_->host()->release_focus_to_canvas();
+            }
+        };
+        if (auto* ml = rv->message_list())
+        {
+            // The main window's RoomPane never runs finish_init(), which sets
+            // the same callback for pop-outs.
+            ml->on_tile_needed = [this](int z, int x, int y)
+            { ensure_tile_async(z, x, y); };
+        }
+        if (auto* rsv = rv->room_settings_view())
+        {
+            rsv->on_image_pack_images_needed = [this](std::string pack_id)
+            {
+                handle_image_pack_images_needed_(
+                    pack_id, main_app_->room_view()->room_settings_view());
+            };
+            rsv->on_image_pack_pending_image_added =
+                [this](std::uint64_t local_id,
+                       const std::vector<std::uint8_t>& bytes,
+                       const std::string& mime)
+            {
+                handle_image_pack_pending_image_added_(
+                    local_id, bytes, mime,
+                    main_app_->room_view()->room_settings_view());
+            };
+        }
+    }
+}
+
+// User-activity, pre-paint prefetch and display-scale hooks on the main
+// surface and its host.
+void ShellBase::wire_main_surface_(float initial_scale)
+{
+    // Pointer and wheel events keep the presence tracker "Online".
+    main_host_()->set_on_user_activity([this] { notify_user_activity_(); });
+    // Warm the decoded-image caches from the local disk cache only (never the
+    // SDK/network) for whatever media the visible views are about to paint,
+    // immediately before every paint pass; see run_media_prefetch_.
+    main_host_()->set_pre_paint_hook(
+        [this]
+        {
+            run_media_prefetch_();
+            on_pre_paint_();
+        });
+    // Thumbnail and avatar requests are sized for the display's current scale;
+    // the surface reports live changes.
+    main_surface_()->set_on_scale_changed([this](float s) { set_current_scale_(s); });
+    set_current_scale_(initial_scale);
+}
+
+std::unique_ptr<views::MainAppWidget> ShellBase::create_main_app_()
+{
+    auto owner = tk::create_root_widget<views::MainAppWidget>(main_host_());
+    main_app_  = owner.get();
+    room_view_ = main_app_->room_view();
+    return owner;
+}
+
+void ShellBase::create_main_room_pane_()
+{
+    // The sole source of truth for room_view_'s image/video viewer callbacks
+    // (see main_room_pane_'s doc comment).
+    main_room_pane_ = std::make_unique<RoomPane>(
+        RoomPane::Deps{
+            .shell = this,
+            .host = main_host_(),
+            .repaint = [this] { request_repaint_(); },
+            .relayout = [this] { request_relayout_(); },
+            .grab_surface_focus = [this] { grab_main_surface_focus_(); },
+            .update_window_title = [this](const std::string&)
+            { refresh_window_title_(); },
+            .on_left_room = [this](const std::string& room_id)
+            {
+                // Close the left room's tab; closing the last one also empties
+                // the view.
+                tab_close(room_id);
+                if (current_room_id_ == room_id)
+                {
+                    current_room_id_.clear();
+                    clear_messages_();
+                    if (main_app_)
+                        main_app_->room_list_view()->set_selected_room("");
+                }
+                refresh_window_title_();
+            },
+            .set_window_fullscreen = [this](bool on)
+            { set_window_fullscreen_(on); },
+        },
+        current_room_id_);
+    main_room_pane_->attach({
+        .room_view = main_app_->room_view(),
+        .media_viewer = main_app_->media_viewer(),
+        .forward_picker = main_app_->forward_picker(),
+        .room_media_view = main_app_->room_media_view(),
+        .focus_forward_picker_field = [this] { focus_forward_picker_field_(); },
+        .hide_forward_picker_field = [this] { hide_forward_picker_field_(); },
+    });
+    if (auto* host = main_host_())
+        main_app_->media_viewer()->set_video_player(host->make_video_player());
+    // One save handler for every viewer kind: RoomPane builds the spec and
+    // writes the file; the shell only shows the dialog.
+    main_room_pane_->install_media_viewer_save_(
+        [this](const views::MediaSaveSpec& spec, std::function<void(std::string)> done)
+        { pick_media_save_path_(spec, std::move(done)); });
+    if (auto* surface = main_surface_())
+    {
+        // Lets the animation timer repaint only the rects that hold animated
+        // images instead of the whole surface.
+        surface->set_anim_cache(&account_manager_.anim_cache());
+        surface->set_on_file_drop_error(
+            [this](std::string reason) { show_status_message_(std::move(reason)); });
+    }
+}
+
 // Wire MainAppWidget-level + RoomListView/RoomView/UserInfo providers
 // that read from tk_avatars_, tk_images_, anim_cache_, and
-// url_preview_data_. Each shell calls this once during construction after
+// url_preview_data_, plus the window overlays' keyboard navigation
+// (wire_overlay_nav_). Each shell calls this once during construction after
 // creating its MainAppWidget. Does NOT touch media_viewer
-// (RoomPane::wire_room_view_ owns those, via main_room_pane_) nor
-// non-provider callbacks (on_room_selected, on_scroll, on_search_clear,
-// etc.) — those touch shell-specific state and stay in the per-shell ctor.
+// (RoomPane::wire_room_view_ owns those, via main_room_pane_). Callbacks that
+// need a platform effect (native timers, menus, cursors) stay in the shell;
+// a shell may also re-assign any callback set here after this returns.
 void ShellBase::wire_main_app_widget_(views::MainAppWidget* app)
 {
     // Leftovers from a previous session's "open in default app" temp files.
@@ -28,6 +482,40 @@ void ShellBase::wire_main_app_widget_(views::MainAppWidget* app)
     { return avatar_image_(mxc); };
 
     app->set_avatar_provider(avatar_lookup);
+    // Image packs are ordinary room state, so a space's settings (the wrench
+    // on SpaceRootView) carries them too; only its Media tab is skipped.
+    app->room_view()->room_settings_view()->set_image_pack_provider(
+        make_static_image_provider_with_fetch_(96, 96));
+    app->space_root()->settings_view()->set_image_pack_provider(
+        make_static_image_provider_with_fetch_(96, 96));
+    setup_dm_callbacks();
+    if (auto* list = app->room_list_view())
+    {
+        list->set_room_open_in_tab_provider(
+            [this](const std::string& rid) { return room_open_in_tab(rid); });
+        list->set_room_open_in_window_provider(
+            [this](const std::string& rid) { return room_open_in_window(rid); });
+        // Background backfill follows the visible rows once scrolling settles.
+        list->on_scroll = [this]
+        {
+            debounce_(DebounceSlot::RoomListBackfill, 300,
+                      [this]
+                      {
+                          if (!main_app_ || !active_account_)
+                              return;
+                          auto ids  = main_app_->room_list_view()->visible_room_ids();
+                          auto sess = active_account_;
+                          run_async_mut_([sess, ids = std::move(ids)]() mutable
+                          {
+                              if (sess && sess->client)
+                              {
+                                  sess->client->stop_background_backfill();
+                                  sess->client->start_background_backfill(ids);
+                              }
+                          });
+                      });
+        };
+    }
     if (auto* reminder = app->encryption_reminder())
     {
         reminder->on_open    = [this] { reopen_encryption_setup_(); };
@@ -518,7 +1006,7 @@ void ShellBase::wire_main_app_widget_(views::MainAppWidget* app)
     // the user's own avatar whenever the strip paints with a miss — mirrors
     // room_list_view's on_room_avatar_needed and self-heals after a cache
     // flush (e.g. a display scale change) without needing an explicit
-    // populate_user_strip() call.
+    // refresh_user_strip_() call.
     app->user_info()->on_avatar_needed =
         [this](const std::string& mxc) { ensure_user_avatar_(mxc); };
     app->on_settings_shortcut = [this] { open_app_settings_ui_(); };
@@ -851,6 +1339,9 @@ void ShellBase::wire_main_app_widget_(views::MainAppWidget* app)
         };
     }
 
+    wire_overlay_nav_(app);
+    wire_view_callbacks_(app);
+
     // The shell is fully constructed and the widget tree is up: begin the ~2 s
     // image-GC tick (see run_image_gc_ / media_sweep_timer_).
     media_sweep_timer_.start();
@@ -898,8 +1389,7 @@ void ShellBase::wire_settings_view_(views::SettingsView* view)
 }
 
 void ShellBase::wire_settings_controller_common_(
-    views::SettingsView* view, tesseract::SettingsController* ctrl,
-    std::function<void()> relayout)
+    views::SettingsView* view, tesseract::SettingsController* ctrl)
 {
     if (!view || !ctrl)
         return;
@@ -920,19 +1410,86 @@ void ShellBase::wire_settings_controller_common_(
         handle_profile_field_change_(key, value_json);
     };
 
-    ctrl->on_avatar_changed = [this, view, relayout](std::string mxc)
+    ctrl->on_avatar_changed = [this, view](std::string mxc)
     {
         my_avatar_url_ = mxc;
         if (active_account_)
             active_account_->avatar_url = my_avatar_url_;
         view->set_avatar_url(mxc);
-        if (relayout) relayout();
+        view->request_relayout();
         refresh_user_strip_();
     };
 }
 
-// Wire voice-capture callbacks onto rv. Call once per shell after capture_
-// is initialised (not from RoomWindowBase::wire_room_view_() — pop-out
+// The main window's audio, video and repaint services on its RoomView.
+void ShellBase::wire_room_view_services_()
+{
+    auto* rv = main_app_->room_view();
+    auto* host = main_host_();
+    if (auto player = host->make_audio_player())
+    {
+        rv->set_audio_player(std::move(player));
+    }
+    capture_ = host->make_audio_capture();
+    wire_voice_capture_(
+        rv, [this]
+        {
+            request_repaint_();
+        },
+        [this]
+        {
+            return current_room_id_;
+        },
+        [this]
+        {
+            if (auto* area = room_view_->compose_bar()->text_area())
+            {
+                area->set_text("");
+            }
+            room_view_->set_current_text({});
+        });
+    rv->set_voice_bytes_provider(
+        [this](const std::string& source_json) -> std::vector<std::uint8_t>
+        {
+            // Non-blocking: warmed bytes or empty + async fetch (repaint on
+            // arrival) so playback never freezes the UI thread.
+            return voice_bytes_or_fetch_(source_json, [this]
+            {
+                request_relayout_();
+            });
+        });
+    rv->set_video_player_factory([host]
+    {
+        return host->make_video_player();
+    });
+    rv->set_video_fetch_provider(
+        [this](const std::string& src,
+               std::function<void(std::vector<std::uint8_t>)> on_ready)
+        {
+            if (!client_)
+            {
+                return;
+            }
+            auto req_id = begin_media_req_(
+                0, [on_ready = std::move(on_ready)](std::vector<std::uint8_t> bytes) mutable
+                {
+                    on_ready(std::move(bytes));
+                });
+            client_->fetch_source_bytes_async(req_id, src);
+        });
+    rv->set_repaint_requester([this]
+    {
+        request_repaint_();
+    });
+    rv->set_post_delayed(
+        [host](int ms, std::function<void()> fn)
+        {
+            host->post_delayed(ms, std::move(fn));
+        });
+}
+
+// Wire voice-capture callbacks onto rv. Called by wire_room_view_services_
+// once capture_ is created (not from RoomWindowBase::wire_room_view_() — pop-out
 // windows hide the mic button instead). `request_repaint` is called each
 // time an amplitude sample arrives. `get_room_id` is invoked when the user
 // starts recording so the message targets the room active at that moment,

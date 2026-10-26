@@ -9,11 +9,10 @@
 // bar; it is painted directly (no child widget) and always reserves its
 // space even when empty.
 //
-// The shell mounts this widget as the root of a single tk::Surface and
-// overlays one NativeTextArea at compose_text_area_rect() in the surface's
-// set_on_layout callback. The shell is responsible for all NativeTextArea
-// state (set_text, insert_at_cursor, set_focused) and calls
-// set_text_area_natural_height / set_current_text to feed changes back in.
+// The shell mounts this widget as the root of a single tk::Surface. The
+// shell is responsible for all NativeTextArea state (set_text,
+// insert_at_cursor, set_focused) and calls set_text_area_natural_height /
+// set_current_text to feed changes back in.
 //
 // Internal wiring (reply → compose, edit → compose, compose sends) is done
 // inside the constructor so the shell only wires SDK-touching callbacks.
@@ -155,7 +154,8 @@ public:
     // Called by the shell from NativeTextArea on_changed.
     void set_current_text(std::string text);
 
-    // Clear compose bar text state (call alongside roomTextArea_->set_text("")).
+    // Clear compose bar text state (the field is not touched; use
+    // ComposeBar::set_text to set both).
     void clear_compose_text();
 
     // Surface-space rect the shell should use to position the NativeTextArea.
@@ -763,14 +763,6 @@ public:
     // Fired when the compose bar or typing indicator changes the internal
     // layout. Shell should call roomSurface_->relayout() in response.
     std::function<void()> on_layout_changed;
-
-    // Fired when edit mode is entered (e.g. user clicked ✏ hover button).
-    // The shell should call roomTextArea_->set_text(body) and set_focused.
-    std::function<void(std::string body)> on_edit_prefill;
-
-    // Fired when the user clicks ✕ on the edit banner. Shell should call
-    // roomTextArea_->set_text("") and clear_compose_text().
-    std::function<void()> on_edit_cancelled;
 
     // ── Drop-into-compose-bar wiring ─────────────────────────────────────
     // Set once by the shell (alongside RoomView's other providers), not

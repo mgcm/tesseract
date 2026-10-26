@@ -2362,9 +2362,9 @@ private:
 // Windowed variant of decode_image_bytes' streaming mode. Returned
 // DecodedFrames is always empty here — success/failure is whether
 // on_first_frame fired, exactly like decode_image_bytes' own streaming
-// mode (both callbacks non-null) already works; MacShell::
+// mode (both callbacks non-null) already works; macos::MainWindow::
 // decode_image_streamed_windowed_ tracks that with its own wrapping
-// closure, the same way MacShell::decode_image_streamed_ already does.
+// closure, the same way macos::MainWindow::decode_image_streamed_ already does.
 DecodedFrames decode_image_bytes_windowed(
     std::span<const std::uint8_t> bytes, int max_w, int max_h,
     int window_threshold_frames,

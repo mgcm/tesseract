@@ -53,12 +53,16 @@ struct SearchShell : tesseract::test::TestShellBase
     }
     void on_restore_status_ui_() override { ++restores; }
     void request_relayout_() override { ++relayouts; }
+    // Runs the queued posts, including the ones a debounce re-arms while firing.
     void fire_delayed()
     {
-        auto pending = std::move(delayed);
-        delayed.clear();
-        for (auto& fn : pending)
-            fn();
+        while (!delayed.empty())
+        {
+            auto pending = std::move(delayed);
+            delayed.clear();
+            for (auto& fn : pending)
+                fn();
+        }
     }
     std::vector<std::function<void()>> delayed;
     std::vector<std::string> statuses;
@@ -194,7 +198,7 @@ TEST_CASE("global search: a keystroke burst issues one request for the last quer
     s.handle_search_query_("h");
     s.handle_search_query_("he");
     s.handle_search_query_("hel");
-    REQUIRE(s.delayed.size() == 3);
+    CHECK(s.delayed.size() == 1); // one pending post however many keystrokes
     s.fire_delayed();
     CHECK(s.search_request_id_ == 1);
     REQUIRE(s.search_pending_queries_.size() == 1);

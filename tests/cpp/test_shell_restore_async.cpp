@@ -151,6 +151,8 @@ struct RestoreAsyncShell : RestoreAsyncShellAccountManager, ShellBase
     make_account_bridge_(const std::string&) override { return nullptr; }
     void install_account_notifier_(tesseract::AccountSession&) override {}
     void request_relogin_(const std::string&) override {}
+    void show_sync_status_text_(const std::string& t) override { sync_texts_.push_back(t); }
+    std::vector<std::string> sync_texts_;
     void apply_thread_messages_(
         const std::string&,
         std::vector<tesseract::views::MessageRowData>, bool) override {}
@@ -161,6 +163,7 @@ struct RestoreAsyncShell : RestoreAsyncShellAccountManager, ShellBase
                                       std::size_t) override {}
 
     using ShellBase::restore_all_accounts_async_;
+    using ShellBase::my_user_id_;
     using ShellBase::RestoreResult;
 
     // Wait (bounded) for the worker's post_to_ui_alive_ continuation to land
@@ -201,6 +204,9 @@ TEST_CASE("restore_all_accounts_async_ defers the blocking restore off the "
     REQUIRE(s.progress_calls_.size() == 1);
     CHECK_FALSE(s.progress_calls_[0].empty());
     CHECK_FALSE(done_called);
+    // The status line says so too, through the shared interface.
+    REQUIRE(s.sync_texts_.size() == 1);
+    CHECK(s.sync_texts_[0] == "Restoring session…");
 
     // Wait for the real mut_pool_ round trip, then run the queued completion
     // on this thread (standing in for the UI thread).
@@ -211,4 +217,28 @@ TEST_CASE("restore_all_accounts_async_ defers the blocking restore off the "
     CHECK_FALSE(result.any_restore_failed);
     REQUIRE(s.progress_calls_.size() == 2);
     CHECK(s.progress_calls_[1].empty()); // cleared right before `done`
+    // Nothing restored: the line goes back to the signed-out state.
+    REQUIRE(s.sync_texts_.size() == 2);
+    CHECK(s.sync_texts_[1] == "Not logged in");
+}
+
+TEST_CASE("restore_all_accounts_async_ leaves the status line alone when an "
+          "account became active",
+          "[shell][restore-async]")
+{
+    RestoreDirFixture dir_fixture;
+    RestoreAsyncShell s;
+
+    bool done_called = false;
+    s.restore_all_accounts_async_(
+        [&](RestoreAsyncShell::RestoreResult)
+        {
+            done_called = true;
+            s.my_user_id_ = "@a:x"; // what switching to the account does
+        });
+    s.wait_and_drain(std::chrono::seconds(5));
+
+    REQUIRE(done_called);
+    REQUIRE(s.sync_texts_.size() == 1);
+    CHECK(s.sync_texts_[0] == "Restoring session…");
 }

@@ -97,6 +97,7 @@ set(_tk_sources
     tk/emoji_support.h
     tk/emoji_support.cpp
     tk/host.h
+    tk/surface.h
     tk/host.cpp
     tk/theme.h
     tk/theme.cpp

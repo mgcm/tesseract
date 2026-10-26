@@ -875,6 +875,60 @@ TEST_CASE("hover pill sits flush above the row's own top edge",
     CHECK(g.reply_button.y < row1.y);
 }
 
+TEST_CASE("pointer move reports dirty only when hover state changes",
+          "[message_list][hover]")
+{
+    // Returning true on every move repaints the window per mouse event, which
+    // starves the Win32 WM_TIMER animation clock.
+    TkMessageListLayoutCacheStage st;
+    MessageListView v;
+    v.set_messages(grouped_pair(), false);
+    st.run(v, {0, 0, 600, 400});
+
+    const tk::Rect row0 = v.row_world_rect(0);
+    const tk::Rect row1 = v.row_world_rect(1);
+
+    // Entering a row changes the hovered row.
+    CHECK(v.on_pointer_move({row1.x + 5.0f, row1.y + row1.h * 0.5f}));
+    st.run(v, {0, 0, 600, 400});
+    // Moving within the same row, away from any hover target, changes nothing.
+    CHECK_FALSE(v.on_pointer_move({row1.x + 8.0f, row1.y + row1.h * 0.5f}));
+    CHECK_FALSE(v.on_pointer_move({row1.x + 12.0f, row1.y + row1.h * 0.5f}));
+    // Moving to another row does.
+    CHECK(v.on_pointer_move({row0.x + 5.0f, row0.y + row0.h * 0.5f}));
+}
+
+TEST_CASE("pointer move over the action pill reports dirty only on a cell change",
+          "[message_list][hover]")
+{
+    // The pill cell under the pointer is highlighted, so crossing between
+    // cells is a visual change even though no other hover state moves.
+    TkMessageListLayoutCacheStage st;
+    MessageListView v;
+    v.set_messages(grouped_pair(), false);
+    st.run(v, {0, 0, 600, 400});
+
+    const tk::Rect row1 = v.row_world_rect(1);
+    v.on_pointer_move({row1.x + 5.0f, row1.y + row1.h * 0.5f});
+    st.run(v, {0, 0, 600, 400}); // records the pill geometry
+
+    const auto& g = v.hovered_row_geom();
+    REQUIRE(g.row_index == 1);
+    REQUIRE(g.react_button.w > 0.0f);
+    REQUIRE(g.reply_button.w > 0.0f);
+    const auto centre = [](const tk::Rect& r)
+    { return tk::Point{r.x + r.w * 0.5f, r.y + r.h * 0.5f}; };
+    const tk::Point on_react = centre(g.react_button);
+    const tk::Point on_reply = centre(g.reply_button);
+
+    CHECK(v.on_pointer_move(on_react));  // onto the first cell
+    st.run(v, {0, 0, 600, 400});
+    CHECK_FALSE(v.on_pointer_move({on_react.x + 1.0f, on_react.y}));
+    CHECK(v.on_pointer_move(on_reply));  // across to the next cell
+    st.run(v, {0, 0, 600, 400});
+    CHECK_FALSE(v.on_pointer_move({on_reply.x + 1.0f, on_reply.y}));
+}
+
 TEST_CASE("hover pill position is unaffected by reactions on the row",
           "[message_list][layout_cache]")
 {

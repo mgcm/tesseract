@@ -56,6 +56,18 @@ void ShellBase::handle_online_ui_()
     request_relayout_();
 }
 
+void ShellBase::handle_backup_progress_ui_(BackupProgress progress)
+{
+    // BackupProgress carries no user id, so the active client gates it.
+    if (!client_)
+    {
+        return;
+    }
+    last_backup_state_  = progress.state;
+    last_imported_keys_ = progress.imported_keys;
+    refresh_sync_status_();
+}
+
 void ShellBase::handle_enable_recovery_progress_ui_(uint8_t  step,
                                                     std::string recovery_key,
                                                     uint32_t backed_up,

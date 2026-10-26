@@ -10,6 +10,7 @@
 #include <tesseract/emoji.h>
 #include <tesseract/event_handler.h>
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -17,10 +18,9 @@
 namespace tesseract
 {
 
-// Outcome of restore_all_accounts_(): lets each shell decide between the
-// empty-accounts login fallback and finishing login on the active account
-// (that decision touches native login_view_ widgets, so it stays in the
-// shell).
+// Outcome of restore_all_accounts_(): lets the caller decide between the
+// empty-accounts login fallback (show_login_after_restore_) and finishing
+// login on the active account.
 struct RestoreResult
 {
     bool        any_accounts       = false; // at least one account restored
@@ -100,6 +100,36 @@ struct FinalizeLoginResult
     // Which EncryptionSetupOverlay::Mode to open when needs_encryption_setup
     // is true: false = Fresh, true = Recover.
     bool        encryption_setup_recover_mode = false;
+};
+
+// pending-* login data dirs whose client is retired but may still hold SQLite
+// files open (Windows cannot delete open files). remove_all() runs once the
+// clients are freed; the destructor does it too.
+struct RetiredLoginDirs
+{
+    RetiredLoginDirs() = default;
+    RetiredLoginDirs(const RetiredLoginDirs&)            = delete;
+    RetiredLoginDirs& operator=(const RetiredLoginDirs&) = delete;
+    ~RetiredLoginDirs() { remove_all(); }
+
+    void add(std::filesystem::path dir)
+    {
+        if (!dir.empty())
+            dirs_.push_back(std::move(dir));
+    }
+    void remove_all() noexcept
+    {
+        for (const auto& d : dirs_)
+        {
+            std::error_code ec;
+            std::filesystem::remove_all(d, ec);
+        }
+        dirs_.clear();
+    }
+    bool empty() const { return dirs_.empty(); }
+
+private:
+    std::vector<std::filesystem::path> dirs_;
 };
 
 struct FinalizeLoginIO

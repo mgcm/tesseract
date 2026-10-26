@@ -116,8 +116,9 @@ bool MentionController::on_text_changed(const std::string& text, int cursor)
                                     text_area_->cursor_byte_pos());
                 });
             auto hooks = hooks_;
+            auto owner = hooks_.client_owner ? hooks_.client_owner() : nullptr;
             hooks.run_async(
-                [c, rid, hooks, on_ready]() mutable
+                [c, owner, rid, hooks, on_ready]() mutable
                 {
                     auto members = c->get_room_members(rid);
                     hooks.post_to_ui(

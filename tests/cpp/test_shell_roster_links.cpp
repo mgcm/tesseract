@@ -32,6 +32,8 @@ namespace
 
 struct RlShell : tesseract::test::TestShellBase
 {
+    RlShell() = default;
+    explicit RlShell(tesseract::AccountManager& am) : TestShellBase(am) {}
     ~RlShell() override
     {
         pool_.wait_idle(std::chrono::seconds(5));
@@ -496,6 +498,29 @@ TEST_CASE("a launch room on another account switches to it first",
     f.s.open_launch_room_("!theirs");
     CHECK(f.s.switched == std::vector<std::string>{"@other:x"});
     CHECK(f.s.navigated == std::vector<std::string>{"!theirs"});
+}
+
+TEST_CASE("a launch room on an account another window shows opens there",
+          "[shell][launch]")
+{
+    tesseract::AccountManager am;
+    RlShell me(am), owner(am);
+    am.register_window(&me);
+    am.register_window(&owner);
+    me.active_account_ = std::make_shared<tesseract::AccountSession>();
+    me.active_account_->user_id = "@me:x";
+    owner.active_account_ = std::make_shared<tesseract::AccountSession>();
+    owner.active_account_->user_id = "@other:x";
+    me.per_account_rooms_["@other:x"] = {rl_room("!theirs")};
+
+    me.open_launch_room_("!theirs");
+    CHECK(me.switched.empty());
+    CHECK(me.navigated.empty());
+    CHECK(owner.activated == 1);
+    CHECK(owner.navigated == std::vector<std::string>{"!theirs"});
+    CHECK(me.pending_launch_room_id_.empty());
+    am.unregister_window(&me);
+    am.unregister_window(&owner);
 }
 
 // ── matrix links ────────────────────────────────────────────────────────────

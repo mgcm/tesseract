@@ -3012,6 +3012,17 @@ make_video_player_win32(std::function<void(std::function<void()>)> post,
 // QtPopupSurfaceHandle) without needing a system-wide low-level hook:
 // WH_MOUSE only observes messages destined for the calling thread's own
 // windows.
+static std::unordered_set<HWND>& live_popup_hwnds()
+{
+    static std::unordered_set<HWND> set; // UI thread only
+    return set;
+}
+
+bool is_popup_surface_hwnd(HWND hwnd)
+{
+    return hwnd && live_popup_hwnds().count(hwnd) != 0;
+}
+
 class Win32PopupSurfaceHandle : public tk::PopupSurfaceHandle
 {
 public:
@@ -3021,6 +3032,8 @@ public:
         popup_hwnd_ = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST, L"STATIC", L"", WS_POPUP, 0, 0,
             10, 10, nullptr, nullptr, inst, nullptr);
+        if (popup_hwnd_)
+            live_popup_hwnds().insert(popup_hwnd_);
         surface_ = std::make_unique<Surface>(inst, popup_hwnd_, theme);
     }
 
@@ -3030,6 +3043,7 @@ public:
         surface_.reset(); // destroy the embedded Surface's child HWND first
         if (popup_hwnd_)
         {
+            live_popup_hwnds().erase(popup_hwnd_);
             DestroyWindow(popup_hwnd_);
         }
     }
@@ -3116,6 +3130,8 @@ public:
     {
         return visible_;
     }
+
+    tk::Host* popup_host() override { return &surface_->host(); }
 
     void set_theme(const Theme& theme) override
     {
@@ -3578,8 +3594,17 @@ public:
     // Invalidate just the rects that contain animated images from the last paint.
     void invalidate_anim_damage()
     {
-        if (!hwnd_ || anim_damage_.empty())
+        if (!hwnd_)
             return;
+        if (anim_damage_.empty())
+        {
+            // No animated image was reported on the last paint (a pagination
+            // spinner, or a view like the settings sticker grid that does not
+            // report damage): repaint the whole surface, as the Qt and macOS
+            // hosts do, or those animations would stop.
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
         for (const auto& r : anim_damage_)
         {
             // See request_repaint_rect()'s comment — same DIP->physical-pixel
@@ -4200,20 +4225,11 @@ public:
         root_->measure(ctx, {bounds.w, bounds.h});
         root_->arrange(ctx, bounds);
         end_relayout_pass_();
-        if (on_layout_)
-        {
-            on_layout_();
-        }
         for (auto& cb : layout_listeners_)
         {
             cb();
         }
         request_repaint();
-    }
-
-    void set_on_layout(std::function<void()> cb)
-    {
-        on_layout_ = std::move(cb);
     }
 
     void add_layout_listener(std::function<void()> cb)
@@ -4508,7 +4524,6 @@ private:
     std::unordered_map<int, Win32TextAreaBase*> areas_by_id_;
 
     std::unique_ptr<Widget> root_;
-    std::function<void()> on_layout_;
     std::vector<std::function<void()>> layout_listeners_;
     HCURSOR current_cursor_ = LoadCursorW(nullptr, IDC_ARROW);
     Cursor current_cursor_kind_ = Cursor::Default;
@@ -5348,11 +5363,6 @@ void Surface::set_anim_cache(const tk::AnimImageCache* cache)
 void Surface::update_anim_regions()
 {
     host_->invalidate_anim_damage();
-}
-
-void Surface::set_on_layout(std::function<void()> cb)
-{
-    host_->set_on_layout(std::move(cb));
 }
 
 void Surface::add_layout_listener(std::function<void()> cb)

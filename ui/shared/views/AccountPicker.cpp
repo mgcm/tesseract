@@ -176,11 +176,21 @@ void AccountPicker::paint_before_children(tk::PaintCtx& ctx)
 
 bool AccountPicker::on_key_down(const tk::KeyEvent& e)
 {
+    if (e.key == tk::Key::Escape && !e.ctrl && !e.alt && !e.meta && on_dismiss)
+    {
+        on_dismiss();
+        return true;
+    }
     if ((e.key != tk::Key::Up && e.key != tk::Key::Down) || e.ctrl || e.alt || e.meta)
         return false;
-    if (auto* h = host())
-        return h->advance_focus(e.key == tk::Key::Down);
-    return false;
+    // Built detached, so host() is null; the surface's root widget has the Host.
+    tk::Host* h = host();
+    if (!h)
+    {
+        if (auto* root = get_root_widget())
+            h = root->host();
+    }
+    return h && h->advance_focus(e.key == tk::Key::Down);
 }
 
 } // namespace tesseract::views

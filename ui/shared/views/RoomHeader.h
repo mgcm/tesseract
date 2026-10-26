@@ -61,6 +61,7 @@ public:
     {
         show_calendar_btn_ = enabled;
     }
+    bool jump_to_date_enabled() const { return show_calendar_btn_; }
 
     // Show or hide the leading back button. Used in the narrow-window
     // adaptive layout (see MainAppWidget), where the room list and room

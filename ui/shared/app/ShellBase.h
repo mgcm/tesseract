@@ -39,6 +39,7 @@
 #include "tk/location_provider.h"
 #include "app/AuxWindowBase.h"
 #include "app/CallWindowBase.h"
+#include "views/AccountPicker.h"
 #include "views/ActivityMonitorView.h"
 #include "views/CallOverlayWidget.h"
 #include "tk/canvas.h"
@@ -51,10 +52,15 @@
 #include "app/SendPipeline.h"
 #include "views/ComposeBar.h"
 #include "views/EncryptionSetupOverlay.h"
+#include "app/ComposerPopups.h"
+#include "views/GifController.h"
+#include "views/GifPopup.h"
+#include "views/LoginView.h"
 #include "views/MessageListView.h"
 #include "views/QuickSwitcher.h"
 #include "views/RoomListView.h"
 #include "views/settings/SettingBinder.h"
+#include "tk/surface.h"
 #ifdef TESSERACT_SCREENSHOT_MODE_ENABLED
 #include "app/ScreenshotDirector.h"
 #include "app/ScreenshotFixture.h"
@@ -326,10 +332,6 @@ public:
     void navigate_history_back();
     void navigate_history_forward();
 
-    // Wire room_view_->on_open_dm and room_view_->on_has_dm.
-    // Call once per shell after main_app_ and room_view_ are set.
-    void setup_dm_callbacks();
-
     // Wire room_view_->on_link_clicked to intercept matrix: / matrix.to links
     // in-app and send everything else to the system browser.
     // Call once per shell after room_view_ is set.
@@ -356,13 +358,18 @@ public:
         RoomDirectorySearch,
         ActivityMonitor,
         CacheSizes,
+        SyncStatus,
+        MarkRead,
+        RoomListBackfill,
     };
 
     // Run fn() on the UI thread `ms` after the most recent call on `slot`,
     // dropping any earlier still-pending call on the same slot. Built on the
-    // platform's post_to_ui_after_; the generation guard means the primitive
-    // needs no cancel handle — superseded fires simply no-op. fn() always runs
-    // on the UI thread.
+    // platform's post_to_ui_after_, with at most one delayed post pending per
+    // slot however often it is called (a scroll handler can call it every
+    // frame, and a post can cost a thread): a later call only replaces fn and
+    // the pending post re-arms itself for the remainder. fn() always runs on
+    // the UI thread.
     void debounce_(DebounceSlot slot, int ms, std::function<void()> fn);
 
     // Drop any pending debounce on `slot` without scheduling a replacement.
@@ -415,10 +422,18 @@ public:
     };
 
 protected:
-    // Per-slot debounce generation counters (see debounce_). Keyed by
-    // static_cast<int>(DebounceSlot); a fire is honoured only if its captured
-    // generation still matches the slot's current value.
-    std::unordered_map<int, std::uint64_t> debounce_gen_;
+    // Per-slot debounce state (see debounce_). Keyed by
+    // static_cast<int>(DebounceSlot).
+    struct DebounceState
+    {
+        std::uint64_t gen   = 0;     // bumped by every call and cancel
+        bool          armed = false; // a delayed post is pending
+        int           ms    = 0;
+        std::chrono::steady_clock::time_point last_call;
+        std::function<void()> fn;    // the latest call's action; empty when cancelled
+    };
+    std::unordered_map<int, DebounceState> debounce_state_;
+    void arm_debounce_(int key, int delay_ms, std::uint64_t gen);
     // A debounced settings save is scheduled and has not run yet. The destructor
     // writes the settings in that case, since a superseded or late fire is dropped.
     bool settings_save_pending_ = false;
@@ -531,27 +546,30 @@ protected:
     uint64_t last_dock_badge_count_ = UINT64_MAX;
 
     // Owns the per-account settings controller. Rebuilt on every login /
-    // account switch via ensure_settings_controller_(); the native widget +
-    // dialog-hook binding is delegated to bind_settings_controller_().
+    // account switch via ensure_settings_controller_(), which installs the
+    // key-dialog hooks (prompt_passphrase_, pick_save_file_, pick_open_file_)
+    // and binds the controller to the settings view.
     std::unique_ptr<tesseract::SettingsController> settings_controller_;
 
     // Owns the per-account history-export controller. Rebuilt on every
-    // login/account switch via ensure_history_export_controller_(); unlike
-    // settings_controller_, binding a shell's native folder-picker dialog
-    // is optional (show_save_folder_dialog defaults unset) so all four
-    // shells compile without touching this until they wire the "Export
-    // History" trigger.
+    // login/account switch via ensure_history_export_controller_(), which
+    // installs the folder picker (pick_folder_) and the export dialog's
+    // callbacks.
     std::unique_ptr<tesseract::HistoryExportController> history_export_controller_;
 
     std::unique_ptr<Client> pending_login_client_;
     // Pending login clients replaced by reset_pending_login_client_() while a
     // LoginView worker may still be inside a call on them (the workers hold a
     // raw pointer). Freed once the pools are idle, or at shutdown after the
-    // pools drain.
+    // pools drain. Their pending-* data dirs wait here too: removed only after
+    // the clients (and their open SQLite files) are gone. Declared before the
+    // clients so it is destroyed after them.
+    tesseract::RetiredLoginDirs retired_login_dirs_;
     std::vector<std::unique_ptr<Client>> retired_login_clients_;
     std::filesystem::path pending_login_temp_dir_;
     bool pending_login_is_add_account_ = false;
-    int add_account_return_idx_ = -1;
+    // Account to return to when an add-account attempt ends without a new one.
+    std::string add_account_return_uid_;
     // URI from open_matrix_link() deferred until the first rooms-update.
     std::string pending_matrix_link_;
     // Event id to scroll to once a room joined from an event permalink finishes
@@ -1292,6 +1310,8 @@ protected:
     BackupState last_backup_state_ = BackupState::Unknown;
     std::uint64_t last_imported_keys_ = 0;
     bool sync_progress_shown_ = false;
+    // The 300 ms "Syncing rooms…" wait is scheduled and not yet fired.
+    bool sync_status_debounce_pending_ = false;
     bool offline_             = false;
     /// Extra in-flight HTTP request count (excludes the sync long-poll).
     std::uint32_t last_inflight_ = 0;
@@ -1311,7 +1331,7 @@ protected:
     std::string last_announced_status_;
     std::chrono::steady_clock::time_point last_announced_status_at_{};
     /// True while a persistent (auto_clear_ms=0) status override is active.
-    /// refresh_sync_status() checks this to avoid clobbering the override.
+    /// refresh_sync_status_() checks this to avoid clobbering the override.
     bool status_override_active_ = false;
 
     /// Set while the persistent status override has a click action — today,
@@ -1665,10 +1685,10 @@ protected:
     // (never the SDK/network — see load_media_bytes_) for whatever media the
     // currently-visible views are about to paint, immediately before that
     // paint runs. Wired as tk::Host's pre-paint hook (see
-    // set_pre_paint_hook()) by each shell in wire_main_app_widget_. Best
-    // effort: time/count-budgeted, never gates paint; anything not resolved
-    // in time falls through to the existing lazy-fetch-at-paint-time path
-    // unchanged (worst case == today's behavior).
+    // set_pre_paint_hook()) in wire_main_surface_. Best effort:
+    // time/count-budgeted, never gates paint; anything not resolved in time
+    // falls through to the existing lazy-fetch-at-paint-time path unchanged
+    // (worst case == today's behavior).
     //
     // Scope note: only MediaKind::MediaImage/MediaThumbnail/Sticker/
     // Reaction/RoomAvatar/UserAvatar are actually decoded here — these are
@@ -1743,10 +1763,10 @@ protected:
                                DecodedImage&& decoded);
 
     // (max_w, max_h) decode clamp for the kinds run_media_prefetch_impl_
-    // handles — mirrors each shell's on_media_bytes_ready_ MediaImage/
+    // handles — mirrors on_media_bytes_ready_'s MediaImage/
     // MediaThumbnail/Sticker/Reaction branch (which already draws these
     // sizes from the same shared tesseract::visual constants) and the
-    // avatar-decode branch's fixed kAvatarCacheSize clamp.
+    // avatar branch's fixed kAvatarCacheSize clamp.
     static std::pair<int, int> media_prefetch_decode_clamp_(MediaKind kind);
 
     // Decode clamp for bytes delivered to on_media_bytes_ready_ under
@@ -1778,11 +1798,23 @@ protected:
         return std::nullopt;
     }
 
-    // Apply theme to all surfaces owned by this shell. Called on the UI thread.
-    // Each platform shell overrides to call set_theme() on each of its surfaces.
-    virtual void apply_theme_ui_(const tk::Theme&)
+    // Apply a theme to the whole window: the OS chrome (apply_native_theme_),
+    // every surface (the shell's own through for_each_shell_surface_, and the
+    // settings, login, composer-popup, pop-out and call windows owned here),
+    // then what depends on the result (after_theme_applied_). UI thread only.
+    virtual void apply_theme_ui_(const tk::Theme& t);
+    // OS window chrome that follows the theme (dark title bar, link colour).
+    // Runs before the surfaces. Default: nothing.
+    virtual void apply_native_theme_(const tk::Theme&) {}
+    // Calls `fn` for each surface the shell owns itself (branding, main,
+    // account picker). Default: none.
+    virtual void for_each_shell_surface_(
+        const std::function<void(tk::SurfaceBase&)>&)
     {
     }
+    // What needs the surfaces themed first (status-bar palette and glyph, the
+    // OS appearance). Default: nothing.
+    virtual void after_theme_applied_(const tk::Theme&) {}
 
     // Called by apply_fonts_() after the toolkit has been told about
     // the new fonts and every RootWidget re-measured. A shell overrides this
@@ -1792,8 +1824,8 @@ protected:
     {
     }
 
-    // Re-theme every open pop-out room window. Each shell's apply_theme_ui_()
-    // calls this so secondary windows follow the theme setting.
+    // Re-theme every open pop-out room window. apply_theme_ui_() calls this so
+    // secondary windows follow the theme setting.
     void apply_theme_to_secondary_windows_(const tk::Theme& t);
 
     // The theme last resolved by apply_current_theme_(). Lets surfaces
@@ -1823,9 +1855,8 @@ protected:
     // callback whenever the display's scale changes live.
     void set_current_scale_(float scale);
 
-    // Per-shell microphone capture backend. Null when unavailable or
-    // unsupported on the current platform. Initialised in each shell
-    // constructor immediately after make_audio_player().
+    // Microphone capture backend. Null when unavailable or unsupported on the
+    // current platform. Initialised by wire_room_view_services_().
     std::unique_ptr<tk::AudioCapture> capture_;
 
     // Wire voice-capture callbacks onto rv.
@@ -1945,11 +1976,6 @@ protected:
     // default no-op covers headless / test builds.
     virtual void on_low_power_mode_ui_(bool /*active*/) {}
 
-    // Resident bytes of decoded images/buffers a platform shell holds outside
-    // ShellBase (e.g. its GIF-picker preview map), added to the "In-memory
-    // cache" total. UI thread only.
-    virtual std::uint64_t shell_extra_memory_bytes_() const { return 0; }
-
     // Sum Image::memory_bytes() over a CacheKey -> unique_ptr<Image> map.
     template <class Map>
     static std::uint64_t sum_image_map_bytes_(const Map& m)
@@ -1978,22 +2004,124 @@ protected:
     // Qt6 = Ctrl, GTK4 = Ctrl, Win32 = Ctrl, macOS = Command (⌘).
     virtual bool is_ctrl_held_() const = 0;
 
-    // Switch the active account to `user_id`. Called by on_account_picker_select_
-    // after the dedicated-window check. Each platform overrides with its own
-    // account-switch logic (switchActiveAccount / switch_active_account / etc.),
-    // which now defers to switch_active_account_impl_ + refresh_account_ui_after_switch_.
-    virtual void switch_active_account_(const std::string& user_id) = 0;
+    // Switch the active account to `user_id`: runs switch_active_account_impl_,
+    // then refresh_account_ui_after_switch_ if it changed anything. Virtual
+    // only so test doubles can stub it.
+    virtual void switch_active_account_(const std::string& user_id);
 
-    // Platform-agnostic account-switch bookkeeping, shared by every shell's
-    // switchActiveAccount / switch_active_account / _switchActiveAccount:.
+    // Platform-agnostic account-switch bookkeeping behind
+    // switch_active_account_().
     bool switch_active_account_impl_(const std::string& user_id);
 
-    // Native UI refresh after switch_active_account_impl_ has updated all shared
-    // state: each shell repopulates its account-avatar strip, refreshes the
-    // room-list view, shows/restores the active room or tab session in its native
-    // surface, updates the status bar, and (re)binds native pickers / tray. Called
-    // by switch_active_account_ at the tail of a successful switch.
-    virtual void refresh_account_ui_after_switch_() = 0;
+    // Start the "add another account" flow: remember the active account to
+    // return to on cancel, give the login view a fresh pending client, and show
+    // it (show_login_ui_). UI-thread only.
+    void begin_add_account();
+
+    // The login view finished: finalise the new account, then (success) switch to
+    // it, show the main content and start the platform services; (duplicate)
+    // say so and return to the account the flow started from; (failure) say so
+    // and re-arm the login view with a fresh client. UI-thread only.
+    void on_login_succeeded_();
+    // The user cancelled the login view: return to the account the add-account
+    // flow started from, or re-arm the sign-in screen when there is none.
+    void on_login_cancelled_();
+
+    // Show the login view in `mode`: create it if needed, bind it to
+    // pending_login_client_, reset it and put its page on screen
+    // (show_login_page_ui_).
+    virtual void show_login_ui_(views::LoginView::Mode mode);
+    // The login view holds a raw alias to pending_login_client_; clear it before
+    // the client is moved out.
+    virtual void detach_login_view_client_ui_()
+    {
+        if (login_view_)
+            login_view_->set_client(nullptr);
+    }
+
+    // The login page. Its surface is owned here and created on first use
+    // through create_login_surface_ui_(); login_view_ is its widget tree and is
+    // null while the page does not exist.
+    std::unique_ptr<tk::SurfaceBase> login_surface_;
+    views::LoginView* login_view_ = nullptr;
+    // Surfaces replaced before their deferred teardown ran; destroyed with the
+    // next teardown or at shutdown.
+    std::vector<std::unique_ptr<tk::SurfaceBase>> retired_login_surfaces_;
+    // The login view's post-to-UI relays reach their surface's host through
+    // these; emptied (set to null) before the surfaces are freed.
+    std::vector<std::shared_ptr<std::atomic<tk::Host*>>> login_host_gates_;
+    // Create the login page's surface, parent it in the window and leave it
+    // hidden. Default: none (test shells).
+    virtual std::unique_ptr<tk::SurfaceBase> create_login_surface_ui_()
+    {
+        return nullptr;
+    }
+    // Take the page out of the window just before its surface is destroyed.
+    virtual void unmount_login_surface_ui_()
+    {
+    }
+    // Make the login page the visible content. Default: nothing.
+    virtual void show_login_page_ui_()
+    {
+    }
+    // Open the sign-in URL in the system browser; false when that failed (the
+    // login view then shows the URL). Default: Client::open_in_browser.
+    virtual bool open_login_url_ui_(const std::string& url);
+    // Open `url` through open_login_url_ui_(); when that fails, show the URL
+    // in the login view so the user can open it by hand.
+    void open_login_url_or_show_(views::LoginView& view, const std::string& url);
+    void ensure_login_view_();
+    // Destroy the login page one tick from now (the view may be tearing itself
+    // down from inside one of its own callbacks), and not before the worker
+    // pools are idle: their discovery tasks hold the view by raw pointer.
+    void teardown_login_view_();
+    // One attempt of teardown_login_view_()'s deferred destroy; schedules
+    // another when the pools are still busy.
+    void destroy_login_page_when_idle_(tk::SurfaceBase* doomed,
+                                       views::LoginView* view, int delay_ms);
+    // Free every login surface and close their post-to-UI gates.
+    void destroy_login_surfaces_();
+    // Destroy the login page now. For the shell's destructor, before its own
+    // surfaces and windows go.
+    void release_login_surface_();
+    // Pushes a display-scale change into the login page's surface (the Win32
+    // and macOS shells push it per surface; Qt and GTK surfaces track their own).
+    void apply_scale_to_login_surface_(float scale);
+    // The startup restore found no usable account: show the sign-in screen,
+    // with the reason when a restore failed (`retry` runs the startup again).
+    void show_login_after_restore_(const RestoreResult& restore,
+                                   std::function<void()> retry);
+    // Make the main content (room list and timeline) the visible page and tear
+    // down the login view. Default no-op.
+    virtual void show_main_content_()
+    {
+    }
+    // Start what a signed-in window runs once: tray icon, search integration,
+    // now-playing, notification authorisation. Each start is a no-op when
+    // already running. Default no-op.
+    virtual void start_platform_services_ui_()
+    {
+    }
+
+    // Shared post-switch refresh, run by switch_active_account_ after
+    // switch_active_account_impl_ has updated all shared state: user strip, room
+    // list, tab session, account picker, then start_platform_services_ui_ (the
+    // shells' hook). Virtual only so test doubles can stub it.
+    virtual void refresh_account_ui_after_switch_();
+    // After the accounts are restored or a window starts on an existing account:
+    // make `uid` the active account (refreshing the UI, showing the main content
+    // and starting the platform services) and create the account's controllers.
+    void finish_login_ui_(const std::string& uid);
+    // Switch to `uid`, create its controllers and show the main content unless
+    // the switch already did. True when the switch also started the platform
+    // services.
+    bool switch_and_show_main_(const std::string& uid);
+    // Settings belongs to the page being replaced: close it if it is open.
+    void close_settings_if_open_();
+    // Set by refresh_account_ui_after_switch_() when it showed the main content.
+    bool main_shown_by_switch_ = false;
+    // Empty the timeline and the room view's current room.
+    void clear_messages_();
 
     // Spawn a new main window pre-assigned to `account`. Called by
     // on_account_picker_select_ on Ctrl+click when no dedicated window exists
@@ -2019,12 +2147,42 @@ protected:
     // account, if any.
     void claim_dedicated_for_active_();
     void release_dedicated_for_active_();
+    // Drops this window's dedicated mapping for `uid` (any account, not only the
+    // active one), handing it to another live window showing that account.
+    void release_dedicated_(const std::string& uid);
 
-    // Called from each shell's window-close handler before teardown. Hands this
-    // window's account's sole event bridge back to the primary window (so its SDK
-    // callbacks keep reaching a live window), releases this window's dedicated
-    // mapping, and releases tray ownership. No-op-safe for the primary window.
+    // The other window that holds `uid`: its dedicated window, else one showing
+    // it, else one with pop-outs of it (taking the account would starve them).
+    // nullptr when no other window holds it; a bridge pointing elsewhere does
+    // not count, so this window may take such an account.
+    ShellBase* account_owner_window_(const std::string& uid) const;
+    // True when another window than this one holds `uid`.
+    bool account_owned_elsewhere_(const std::string& uid) const;
+    // When another window holds `uid`: raises it, opens `room_id` there (and the
+    // thread of `event_id`, if any) when it shows the account, and returns true.
+    // False when no other window holds it, so the caller may switch and open it.
+    bool open_room_in_holder_window_(const std::string& uid,
+                                     const std::string& room_id,
+                                     const std::string& event_id = {});
+    // Consumes add_account_return_uid_: that account, or null when none was
+    // recorded, it was removed, or another window holds it.
+    std::shared_ptr<tesseract::AccountSession> take_add_account_return_();
+    // First account no other window holds, or null. The sign-out survivor.
+    std::shared_ptr<tesseract::AccountSession> pick_unowned_survivor_() const;
+
+    // Called from each shell's window-close handler before teardown. Hands every
+    // event bridge that targets this window (active or not) to the primary window
+    // (so SDK callbacks keep reaching a live window), releases this window's
+    // dedicated mappings, and releases tray ownership.
     void on_window_closing_();
+    // The account hand-over part of on_window_closing_(). Calls no virtuals, so
+    // ~ShellBase runs it for a window destroyed without a close event.
+    void hand_over_accounts_();
+    bool window_closing_handled_ = false;
+    // True while any account's event bridge still targets this window, i.e. SDK
+    // callbacks can still reach it. A window being destroyed may only be freed
+    // when this is false (on_window_closing_ finds no heir for the last window).
+    bool is_account_bridge_target_() const;
 
     // Re-point an account's sole event bridge at `win`. The bridge is stored
     // type-erased as IEventHandler* but is always an EventHandlerBase, so the
@@ -2123,14 +2281,16 @@ protected:
         std::unique_ptr<Client> pending_client,
         std::filesystem::path   pending_temp_dir);
 
-    // Async, platform-agnostic core of each shell's on_login_succeeded, run
-    // after OAuth completes for a NEWLY added account on
-    // pending_login_client_.
+    // Async core of on_login_succeeded_(), run after OAuth completes for a
+    // newly added account on pending_login_client_.
     void finalize_login_async_(std::function<void(FinalizeLoginResult)> done);
 
-    // Called by each shell right after it activates the newly-added account
-    // (switchActiveAccount / equivalent) inside its finalize_login_async_
-    // `done` callback.
+    // The outcome of finalize_login_async_(): success, duplicate or failure
+    // handling. Split out of on_login_succeeded_() so tests can feed results.
+    void on_login_finalized_(const FinalizeLoginResult& fin);
+
+    // Called by on_login_finalized_() right after it activates the
+    // newly-added account.
     void begin_gated_encryption_setup_if_needed_(const FinalizeLoginResult& fin);
 
     // Starts the sync that finalize_login_blocking_ withheld for
@@ -2157,6 +2317,12 @@ protected:
     // Platform-agnostic teardown for each shell's logoutActiveAccount /
     // logout_active_account / _logoutActiveAccount.
     LogoutResult logout_active_account_impl_();
+
+    // The two halves of removing an account's session that the active and
+    // non-active (request_relogin_) sign-outs share.
+    void forget_account_(const std::string& uid);
+    void drain_and_destroy_session_(const std::string& uid,
+                                    std::shared_ptr<AccountSession> draining_sess);
 
     // The sign-out sequence shared by every shell's entry point
     // (logoutActiveAccount / logout_active_account / _logoutActiveAccount):
@@ -2238,7 +2404,7 @@ protected:
 
     // Navigate the shell to room_id. Called on the UI thread.
     // Qt6/GTK4/Win32: delegates to navigate_to_room(id).
-    // macOS (MacShell): delegates to tab_navigate_room(id).
+    // macOS (macos::MainWindow): delegates to tab_navigate_room(id).
     virtual void navigate_to_room_(const std::string& room_id) = 0;
 
     // Returns true while a room-list search is active (search text is non-empty).
@@ -2248,8 +2414,8 @@ protected:
     bool is_room_search_active_() const { return !room_search_text_.empty(); }
 
     // Compute the filtered room list and push it to the shared RoomListView.
-    // Shells call this from their own refreshRoomList() wrapper to avoid
-    // duplicating the space-child filter and unread-override logic.
+    // Shells call this directly; it holds the space-child filter and
+    // unread-override logic.
     void refresh_room_list_();
 
     // Wire every SettingsView callback whose body is pure Settings
@@ -2257,19 +2423,23 @@ protected:
     // everything that does NOT need a Surface/Host/native dialog.
     void wire_settings_view_(views::SettingsView* view);
 
-    // Wire the SettingsView/SettingsController callbacks shared by every
-    // shell's bind_settings_controller_() override: avatar upload/remove
-    // delegation, extended-profile field changes, and the non-UI part of
-    // SettingsController::on_avatar_changed (sidebar refresh goes through
-    // the existing refresh_user_strip_() virtual). Each shell still wires
-    // set_request_repaint (needs its own Surface) and the native dialog /
-    // image-pack-provider callbacks itself before calling this. `relayout`,
-    // if set, is invoked after the avatar url is pushed into the view —
-    // shells pass their own `[this]{ surface_->relayout(); }` since the
-    // Surface type differs per platform.
+    // Everything a freshly created SettingsView needs on every shell: the
+    // low-power flag, the shared callbacks, close/logout/reset-identity
+    // (all leave settings through close_app_settings_ui_), tab relayout, the
+    // device lists and the server info. Sets stats_settings_view_.
+    void configure_new_settings_view_(views::SettingsView& view);
+
+    // Fill the (new or reopened) SettingsView with the account, the persisted
+    // settings, the launch-at-login and tray state, the extended profile and,
+    // asynchronously, the cache sizes.
+    void populate_settings_view_(views::SettingsView& view);
+
+    // Wire the SettingsView/SettingsController callbacks: avatar
+    // upload/remove delegation, profile-field changes, and the non-UI part of
+    // SettingsController::on_avatar_changed (the view relayouts itself; the
+    // sidebar refresh goes through refresh_user_strip_()).
     void wire_settings_controller_common_(views::SettingsView* view,
-                                          tesseract::SettingsController* ctrl,
-                                          std::function<void()> relayout = {});
+                                          tesseract::SettingsController* ctrl);
 
     // Show the chat-panel root view for a joined space. No-op if the room is
     // unknown or is not a space.
@@ -2291,8 +2461,14 @@ protected:
     void request_remove_room_from_space_(const std::string& space_id,
                                          const std::string& room_id);
 
-    // Called after rooms_ is updated — shell refreshes the room-list widget.
-    virtual void on_rooms_updated_() = 0;
+    // Called after rooms_ is updated: refresh the room list and the open room,
+    // restore the previous tabs once their rooms are known, and refresh the
+    // window title and the pop-out windows' room info.
+    virtual void on_rooms_updated_();
+    // The tail of on_rooms_updated_, for work only one platform has (the
+    // Windows taskbar's next-unread state, the macOS Spotlight reindex).
+    // Default: nothing.
+    virtual void after_rooms_updated_ui_() {}
 
     // Called after the active room is inserted into the shared shell's MRU.
     // Platform integrations may mirror that list into an OS-native surface.
@@ -2386,18 +2562,13 @@ protected:
     // device and this one must verify/recover against it (vs.
     bool foreign_cross_signing_identity_() const;
 
-    // Called after invites_ is updated — shell refreshes the invite UI.
-    // Non-pure: shells are added in Task H; until then the default no-op
-    // prevents compilation errors across the four platform shells.
-    virtual void on_invites_updated_()
-    {
-    }
+    // Called after invites_ is updated. Refreshes the room list's invite
+    // section and relayouts; skipped when ui_ready_() is false.
+    virtual void on_invites_updated_();
 
     // Called after my_knocks_ is updated — shell refreshes the "Requests to
     // Join" room-list section. Mirrors on_invites_updated_().
-    virtual void on_my_knocks_updated_()
-    {
-    }
+    virtual void on_my_knocks_updated_();
 
     // Called after current_room_knock_requests_ changes — either a fresh
     // pull from Client::list_knock_requests (handle_knock_requests_updated_ui_)
@@ -2414,12 +2585,9 @@ protected:
     }
 
     // Called on the UI thread when whether some *other* signed-in account
-    // (not the active one) has an unread notification changes. Each shell
-    // overrides to forward to its sidebar UserInfo's notification dot.
-    // Default no-op.
-    virtual void on_account_badges_changed_(bool /*other_accounts_unread*/)
-    {
-    }
+    // (not the active one) has an unread notification changes. Sets the
+    // sidebar UserInfo's notification dot and relayouts.
+    virtual void on_account_badges_changed_(bool other_accounts_unread);
 
     // Called on the UI thread when the total notification_count across all
     // signed-in accounts changes. Shells that expose a dock/taskbar badge
@@ -2443,12 +2611,46 @@ protected:
     // isn't popped out.
     bool focus_tray_unread_popout_();
 
-    // Called on the UI thread when async media bytes arrive.
-    // Shell decodes the bytes, stores a tk::Image in tk_avatars_ or tk_images_
-    // (or calls anim_cache_.store), and triggers a repaint.
+    // Called on the UI thread when async media bytes arrive. Decodes them into
+    // the avatar, image, thumbnail or animation cache and triggers a repaint.
+    // Shells customise it through the hooks below, not by overriding it.
     virtual void on_media_bytes_ready_(const tk::CacheKey& cache_key,
                                        MediaKind kind,
-                                       std::vector<uint8_t> bytes) = 0;
+                                       std::vector<uint8_t> bytes);
+    /// First look at arriving bytes, before any decode. Return false to drop
+    /// them. Default: accept.
+    virtual bool accept_media_bytes_(const tk::CacheKey& /*key*/,
+                                     MediaKind /*kind*/,
+                                     const std::vector<std::uint8_t>& /*bytes*/)
+    {
+        return true;
+    }
+    /// Decode an avatar to its cache size (kAvatarCacheSize square at most),
+    /// first frame only. Called on a worker thread. Null on failure.
+    /// Default: decode_image_ and take the still, or the first frame.
+    virtual std::unique_ptr<tk::Image>
+    decode_avatar_(const std::vector<std::uint8_t>& bytes);
+    /// Decode and store a map tile in image_cache(), then repaint and
+    /// notify_secondary_media_ready_. Platform-specific (thread and decoder
+    /// differ per backend). Default: ignore the tile.
+    virtual void ingest_tile_media_(const tk::CacheKey& /*key*/,
+                                    std::vector<std::uint8_t> /*bytes*/)
+    {
+    }
+    /// A decoded image has just landed in a cache: redraw what shows it. The
+    /// view data notifications (room_view_, RoomPane, secondary windows) are
+    /// done by the caller. Avatars have a fixed size, so they only repaint (and
+    /// refresh the settings page); any other image can change a row's height
+    /// and relayouts, and also refreshes the popups that may show it.
+    virtual void repaint_after_media_(MediaKind kind, const tk::CacheKey& key);
+    /// Repaints the settings page when it is open (a no-op otherwise); GTK
+    /// overrides it to queue a draw of its settings widget.
+    virtual void repaint_settings_ui_();
+    /// Bytes arrived for `key` but nothing could be decoded from them. Default:
+    /// remember the key so it is not requested again this session and, for
+    /// images, stickers and reactions, drop the cached bytes so the next session
+    /// fetches them afresh.
+    virtual void on_media_decode_failed_(const tk::CacheKey& key, MediaKind kind);
 
     // Client-side first-frame generation for m.video when the server provides
     // no thumbnail. Concrete: checks media_disk_cache_ first (so a thumbnail
@@ -2502,20 +2704,34 @@ protected:
         done({});
     }
 
-    // Drag-and-drop media probe. Each shell overrides this to detect gif/webp
-    // animation and extract a video/audio thumbnail + duration off the UI
-    // thread, then posts update_pending_attachment() back to `target` (a
-    // pop-out window's compose bar, guarded by `alive`) or, when `target` is
-    // null, the main window's compose bar. Default no-op so a shell can opt
-    // out; pop-out windows call this through ShellBase so the same platform
-    // probe serves the main and secondary windows. Pairs with
-    // views::route_file_drop_to_compose_bar, which invokes it for
-    // gif/webp/video/audio.
-    virtual void extract_drop_media_(std::uint32_t /*pending_gen*/,
-                                     std::vector<std::uint8_t> /*bytes*/,
-                                     std::string /*mime*/,
-                                     views::ComposeBar* /*target*/ = nullptr,
-                                     std::shared_ptr<bool> /*alive*/ = nullptr)
+    // Drag-and-drop media probe: for dropped video and audio, extracts a
+    // thumbnail + duration off the UI thread, then posts
+    // update_pending_attachment() back to `target` (a pop-out window's compose
+    // bar, guarded by `alive`) or, when `target` is null, the main window's.
+    // Pop-out windows call this through ShellBase so the same probe serves the
+    // main and secondary windows. Pairs with views::route_file_drop_to_compose_bar,
+    // which invokes it for video/audio (images carry their animation flag from
+    // the drop itself). Other mimes do nothing; the work is in the platform
+    // hooks below.
+    void extract_drop_media_(std::uint32_t pending_gen,
+                                     std::vector<std::uint8_t> bytes,
+                                     std::string mime,
+                                     views::ComposeBar* target = nullptr,
+                                     std::shared_ptr<bool> alive = nullptr);
+    // Platform probes: read the first frame (JPEG), size and duration of a
+    // dropped video, or the duration of an audio file, and finish with
+    // post_pending_attachment_(info, target, alive) on any thread. Default: no
+    // probe (the attachment keeps its placeholder metadata).
+    virtual void probe_drop_video_(std::uint32_t /*pending_gen*/,
+                                   std::vector<std::uint8_t> /*bytes*/,
+                                   views::ComposeBar* /*target*/,
+                                   std::shared_ptr<bool> /*alive*/)
+    {
+    }
+    virtual void probe_drop_audio_(std::uint32_t /*pending_gen*/,
+                                   std::vector<std::uint8_t> /*bytes*/,
+                                   views::ComposeBar* /*target*/,
+                                   std::shared_ptr<bool> /*alive*/)
     {
     }
 
@@ -2584,7 +2800,7 @@ protected:
     // function returns has a genuine data race if on_first_frame/on_frame's
     // own implementation posts work to another thread (as
     // make_streamed_decode_callbacks_windowed_'s on_first/on_extra do, via
-    // post_to_ui_): those posted tasks can run on the UI thread before the
+    // post_to_ui_alive_): those posted tasks can run on the UI thread before the
     // caller's post-return out-param assignment happens — PostMessage's
     // happens-before guarantee covers the posted closure's own captured
     // data, not a separate, later write to a shared out-param slot. Passing
@@ -2625,88 +2841,17 @@ protected:
                                       on_frame);
     }
 
-    using StreamedDecodeCallbacks = tesseract::StreamedDecodeCallbacks;
-
-    // Shared implementation of the streamed-decode wiring every shell's
-    // on_media_bytes_ready_ needs: `on_first` boxes frame 0 (tk::Image is
-    // move-only; std::function needs it copyable, hence the shared_ptr),
-    // posts to the UI thread, re-checks `still_cache`/anim_cache() for a
-    // race (the entry may have been stored/evicted by something else while
-    // this decode was in flight), stores it as a fresh anim_cache() entry,
-    // starts the anim tick, and calls `finish_first_frame`. `on_extra` boxes
-    // each later frame and posts an anim_cache().append_frame() call — no
-    // repaint/relayout needed there (image size doesn't change once frame 0
-    // has already sized it; the existing anim tick picks each new frame up
-    // once playback rotates to it). Runs entirely on already-virtual hooks
-    // (post_to_ui_, monotonic_ms_, start_anim_tick_) plus account_manager_,
-    // so no new per-shell plumbing is needed — each shell only supplies its
-    // own `finish_first_frame` (platform-specific repaint/notify hooks).
-    // `evict_image_cache_on_first` matches the Windows shell's pre-existing
-    // behavior of evicting a stale image_cache() entry once a source is
-    // confirmed animated (in case an earlier still decode of the same key
-    // is still cached there) — GTK4/Qt6/macOS never had this step, so it
-    // defaults to false to keep their behavior unchanged.
-    StreamedDecodeCallbacks make_streamed_decode_callbacks_(
-        tk::CacheKey cache_key, bool is_thumb,
-        std::function<void()> finish_first_frame,
-        bool evict_image_cache_on_first = false)
-    {
-        StreamedDecodeCallbacks cb;
-        cb.on_first =
-            [this, cache_key, is_thumb, finish_first_frame,
-             evict_image_cache_on_first](std::unique_ptr<tk::Image> frame0,
-                                         int delay0) mutable
-        {
-            auto boxed =
-                std::make_shared<std::unique_ptr<tk::Image>>(std::move(frame0));
-            post_to_ui_(
-                [this, cache_key, is_thumb, delay0, boxed, finish_first_frame,
-                 evict_image_cache_on_first]() mutable
-                {
-                    tk::PixmapCache& still_cache =
-                        is_thumb ? account_manager_.thumbnail_cache()
-                                 : account_manager_.image_cache();
-                    if (still_cache.contains(cache_key) ||
-                        account_manager_.anim_cache().has(cache_key))
-                    {
-                        return;
-                    }
-                    std::vector<std::unique_ptr<tk::Image>> frames;
-                    frames.push_back(std::move(*boxed));
-                    account_manager_.anim_cache().store(
-                        cache_key, std::move(frames), {delay0},
-                        monotonic_ms_());
-                    start_anim_tick_();
-                    if (evict_image_cache_on_first)
-                    {
-                        account_manager_.image_cache().evict(cache_key);
-                    }
-                    finish_first_frame();
-                });
-        };
-        cb.on_extra = [this, cache_key](int /*frame_index*/,
-                                        std::unique_ptr<tk::Image> frame,
-                                        int delay_ms) mutable
-        {
-            auto boxed =
-                std::make_shared<std::unique_ptr<tk::Image>>(std::move(frame));
-            post_to_ui_(
-                [this, cache_key, delay_ms, boxed]() mutable
-                {
-                    account_manager_.anim_cache().append_frame(
-                        cache_key, std::move(*boxed), delay_ms);
-                });
-        };
-        return cb;
-    }
-
     using WindowedStreamedDecodeCallbacks = tesseract::WindowedStreamedDecodeCallbacks;
 
-    // Windowed counterpart to make_streamed_decode_callbacks_, for a shell
-    // whose decode_image_streamed_windowed_ override can produce a
-    // tk::AnimDecodeSession. Behaves identically otherwise (frame 0 stores
-    // immediately, later frames append_frame_from_session() as they
-    // arrive). `on_first` stashes the session/total_frames it's called with
+    // The streamed-decode wiring on_media_bytes_ready_ needs, for
+    // decode_image_streamed_windowed_. `on_first` boxes frame 0 (tk::Image is
+    // move-only; std::function needs it copyable), posts to the UI thread,
+    // re-checks the still cache and anim_cache() for a race, stores it as a
+    // fresh anim_cache() entry, evicts any still of the key from
+    // image_cache(), starts the anim tick and calls `finish_first_frame`.
+    // `on_extra` posts later frames as append_frame_from_session(). Posts
+    // go through post_to_ui_alive_, so they are dropped once the shell is
+    // torn down. `on_first` stashes the session/total_frames it's called with
     // into session_box/total_box SYNCHRONOUSLY — on the calling (worker)
     // thread, before doing anything else, including its own post_to_ui_
     // call — so `on_extra` (which decode_next_batch only ever calls later,
@@ -2723,16 +2868,14 @@ protected:
     // anim_image_cache.cpp left in from finding it).
     WindowedStreamedDecodeCallbacks make_streamed_decode_callbacks_windowed_(
         tk::CacheKey cache_key, bool is_thumb,
-        std::function<void()> finish_first_frame,
-        bool evict_image_cache_on_first = false)
+        std::function<void()> finish_first_frame)
     {
         auto session_box =
             std::make_shared<std::shared_ptr<tk::AnimDecodeSession>>();
         auto total_box = std::make_shared<std::size_t>(0);
         WindowedStreamedDecodeCallbacks cb;
         cb.on_first =
-            [this, cache_key, is_thumb, finish_first_frame,
-             evict_image_cache_on_first, session_box,
+            [this, cache_key, is_thumb, finish_first_frame, session_box,
              total_box](std::unique_ptr<tk::Image> frame0, int delay0,
                         std::shared_ptr<tk::AnimDecodeSession> session,
                         std::size_t total_frames) mutable
@@ -2742,9 +2885,9 @@ protected:
 
             auto boxed =
                 std::make_shared<std::unique_ptr<tk::Image>>(std::move(frame0));
-            post_to_ui_(
+            post_to_ui_alive_(
                 [this, cache_key, is_thumb, delay0, boxed, finish_first_frame,
-                 evict_image_cache_on_first, session_box, total_box]() mutable
+                 session_box, total_box]() mutable
                 {
                     tk::PixmapCache& still_cache =
                         is_thumb ? account_manager_.thumbnail_cache()
@@ -2760,10 +2903,7 @@ protected:
                         cache_key, std::move(frames), {delay0},
                         monotonic_ms_(), *session_box, *total_box);
                     start_anim_tick_();
-                    if (evict_image_cache_on_first)
-                    {
-                        account_manager_.image_cache().evict(cache_key);
-                    }
+                    account_manager_.image_cache().evict(cache_key);
                     finish_first_frame();
                 });
         };
@@ -2773,7 +2913,7 @@ protected:
         {
             auto boxed =
                 std::make_shared<std::unique_ptr<tk::Image>>(std::move(frame));
-            post_to_ui_(
+            post_to_ui_alive_(
                 [this, cache_key, delay_ms, boxed, session_box]() mutable
                 {
                     // append_frame_from_session, not append_frame: if a
@@ -2795,23 +2935,43 @@ protected:
     virtual void pick_image_file_(
         std::function<void(std::vector<uint8_t>, std::string)> cb) = 0;
 
-    // Open a native save-file dialog suggesting `suggested_name`; `cb` gets the
-    // chosen path (never called on cancel). The default forwards to the
-    // settings controller's dialog hook, which Win32 / GTK4 / macOS bind for
-    // the controller's whole lifetime; Qt6 binds that hook only while the
-    // Settings window exists, so it overrides both of these.
-    virtual bool has_save_file_dialog_() const
+    // Native dialogs behind the settings controller's message-key export/import
+    // and the history export. `cb` runs on the UI thread and is never called on
+    // cancel. Defaults do nothing (test shells).
+    //
+    // Save-file dialog suggesting `suggested_name`; `title` is its translated
+    // title. has_save_file_dialog_ says whether the shell has one (the
+    // recovery-key "save" offer is only shown if so).
+    virtual bool has_save_file_dialog_() const { return false; }
+    virtual void pick_save_file_(std::string /*title*/,
+                                 std::string /*suggested_name*/,
+                                 std::function<void(std::string)> /*cb*/)
     {
-        return settings_controller_ && settings_controller_->show_save_file_dialog;
     }
-    // `title` is the dialog's (translated) title; the settings-controller
-    // fallback's dialogs carry their own fixed titles and ignore it.
-    virtual void pick_save_file_(std::string /*title*/, std::string suggested_name,
-                                 std::function<void(std::string)> cb)
+    // Save-file dialog for the media viewer's Save button. Default: the plain
+    // save dialog; a shell with file-type filters overrides it to use `spec`'s.
+    virtual void pick_media_save_path_(const views::MediaSaveSpec& spec,
+                                       std::function<void(std::string)> cb)
     {
-        if (has_save_file_dialog_())
-            settings_controller_->show_save_file_dialog(std::move(suggested_name),
-                                                        std::move(cb));
+        pick_save_file_(spec.title, spec.suggested_name, std::move(cb));
+    }
+    virtual void pick_open_file_(std::string /*title*/,
+                                 std::function<void(std::string)> /*cb*/)
+    {
+    }
+    virtual void pick_folder_(std::string /*title*/,
+                              std::function<void(std::string)> /*cb*/)
+    {
+    }
+    // Modal password prompt; `cb` gets the passphrase (never empty).
+    virtual void prompt_passphrase_(std::string /*title*/,
+                                    std::function<void(std::string)> /*cb*/)
+    {
+    }
+    // Informational (or, with `is_error`, warning) message box.
+    virtual void show_message_dialog_(std::string /*title*/,
+                                      std::string /*text*/, bool /*is_error*/)
+    {
     }
 
     // (Re)construct settings_controller_ with the three standard callbacks
@@ -2824,12 +2984,11 @@ protected:
     // callbacks (post_to_ui_ / run_async_).
     void ensure_history_export_controller_();
 
-    // Native binding hook invoked at the tail of ensure_settings_controller_():
-    // bind settings_controller_ to the shell's native settings widget/view and
-    // install native key/file dialog hooks (passphrase prompt, save/open file
-    // dialogs, export/import result alerts). settings_controller_ is non-null
-    // when this runs.
-    virtual void bind_settings_controller_() = 0;
+    // Bind settings_controller_ to the live settings view (stats_settings_view_):
+    // the shared controller wiring plus the user image pack's image provider.
+    // Called at the tail of ensure_settings_controller_() and again whenever the
+    // settings view is created; does nothing while there is no view or controller.
+    virtual void bind_settings_controller_();
 
     // Open a file picker, upload the selected image as raw media, and set it
     // as the current user's avatar in `room_id`. No-op if not logged in.
@@ -2899,12 +3058,16 @@ protected:
     {
     }
 
-    // Repaint the regions changed by an animation frame: the main app surface
-    // (partially, where the backend supports it) plus any visible picker
-    // surfaces. Default no-op; each shell with animated content overrides.
-    virtual void repaint_anim_frame_()
-    {
-    }
+    // Repaint what an animation frame changed: the main surface (partially,
+    // where the backend reports which rects hold animated images), the /gif
+    // popup, the emoji and sticker pickers' image caches, and the settings
+    // surface while it is up.
+    virtual void repaint_anim_frame_();
+    // The shell's own surfaces for repaint_anim_frame_: a call to
+    // update_anim_regions() on the main surface, and on the settings surface
+    // when it is showing. Default: nothing.
+    virtual void update_main_anim_regions_() {}
+    virtual void update_settings_anim_regions_();
 
     // Start the shell's inflight-spinner tick timer if not already running.
     // Separate from the GIF animation timer so the two concerns are independent.
@@ -2945,9 +3108,13 @@ protected:
     // when the dot is no longer needed or all windows are hidden.
     bool inflight_tick_();
 
-    // Repaint whichever picker surfaces are visible (relayout + invalidate).
-    // Default no-op.
-    virtual void repaint_pickers_()
+    // Repaint whichever picker surfaces are visible: drop the picker image
+    // caches, relayout, then repaint_pickers_native_().
+    virtual void repaint_pickers_();
+
+    // The native popups a shell owns that show picker images (Qt's shortcode
+    // popup). Default no-op.
+    virtual void repaint_pickers_native_()
     {
     }
 
@@ -2975,23 +3142,16 @@ protected:
     // clicks and the quick switcher reach it indirectly, via tab_select_room /
     // tab_open_room updating tabs_ and firing that hook.
     void on_room_selected_(const std::string& room_id);
-    // Hide the slash / shortcode / mention suggestion popups. Route through
-    // the shell's popup controllers so their visible_ state stays in sync with
-    // the hidden frames. Default no-op (test shells).
-    virtual void hide_compose_popups_()
+    // Hide the composer's suggestion popups (slash, shortcode, mention, /gif).
+    void hide_compose_popups_()
     {
+        if (compose_popups_)
+            compose_popups_->hide_all();
     }
     // (Re)arm the one-shot "mark current room read" timer to fire
     // mark_room_read_(current_room_id_) after `delay_ms`, cancelling any
-    // pending one. Default no-op (test shells).
-    virtual void restart_mark_read_timer_(int /*delay_ms*/)
-    {
-    }
-    // Runs in on_room_selected_() just before RoomView::set_room(). Default
-    // no-op.
-    virtual void before_room_set_()
-    {
-    }
+    // pending one.
+    void restart_mark_read_timer_(int delay_ms);
     // Runs in on_room_selected_() right after RoomView::set_room(). Default
     // no-op.
     virtual void after_room_set_()
@@ -2999,14 +3159,7 @@ protected:
     }
 
     // Read the current fractional scroll position [0,1] of the message list.
-    virtual float get_message_scroll_fraction_()
-    {
-        return 0.f;
-    }
-    // Seek the message list to fractional position t.
-    virtual void set_message_scroll_fraction_(float /*t*/)
-    {
-    }
+    virtual float get_message_scroll_fraction_();
     // Push a fresh thread reply timeline into the currently-open ThreadView.
     // Default implementations route into room_view_->thread_view() /
     // thread_list_view() when present; shells (Qt6/GTK4/Win32) inherit
@@ -3134,17 +3287,13 @@ protected:
     // Completion for an async get_url_preview_async fetch.
     void handle_url_preview_ready_ui_(std::uint64_t request_id,
                                       std::string preview_json);
-    // Completion for an async gif_search. Each shell forwards to its GIF
-    // controller(s); the controller drops superseded request_ids. Default
-    // no-op so shells opt in.
-    virtual void handle_gif_results_ui_(std::uint64_t /*request_id*/,
-                                        std::vector<GifResult> /*results*/)
-    {
-    }
-    virtual void handle_gif_search_failed_ui_(std::uint64_t /*request_id*/,
-                                              std::string /*message*/)
-    {
-    }
+    // Completion for an async gif_search: forwarded to the main composer's
+    // ComposerPopups, whose controller drops superseded request_ids. Virtual
+    // so test doubles can observe it.
+    virtual void handle_gif_results_ui_(std::uint64_t request_id,
+                                        std::vector<GifResult> results);
+    virtual void handle_gif_search_failed_ui_(std::uint64_t request_id,
+                                              std::string message);
     // Forward an async GIF search result/failure to every open pop-out window
     // (in addition to the main window's own handle_gif_results_ui_). request_ids
     // are process-global, so only the pop-out whose GifController issued the
@@ -3155,18 +3304,105 @@ protected:
     void dispatch_gif_failed_to_secondary_windows_(std::uint64_t request_id,
                                                     const std::string& message);
 
-    // Render one GIF strip cell. Each shell overrides with its backend-specific
-    // two-stage fetch/decode/animate provider; `repaint` is invoked (on the UI
-    // thread) when an async preview/animation lands so the caller's surface
-    // refreshes. Shared by the shell's own GIF strip and every pop-out's strip
-    // (a pop-out passes a repaint targeting its own popup surface). Default
-    // null = no GIF strip on this shell.
+    // Render one GIF strip cell: the static preview shows at once and is
+    // replaced by the animation once it has been fetched and decoded.
+    // `repaint` is invoked (on the UI thread) when either lands so the caller's
+    // surface refreshes. Shared by the shell's own GIF strip and every pop-out's
+    // strip (a pop-out passes a repaint targeting its own popup surface).
+    // Needs make_image_from_bgra_ for MP4 results.
     virtual const tk::Image*
-    gif_strip_image_(const GifResult& /*result*/,
-                     const std::function<void()>& /*repaint*/)
+    gif_strip_image_(const GifResult& result,
+                     const std::function<void()>& repaint);
+    // ── Composer popups (@mention, /command, :shortcode:, /gif) ──────────────
+    // The main composer's popups, built by create_compose_popups_() once the
+    // shell has its main surface, room view and main room pane (the same
+    // ComposerPopups the pop-out windows use).
+    std::unique_ptr<ComposerPopups> compose_popups_;
+    void create_compose_popups_(tk::Host& host);
+    // Destroy the popups. ShellBase destroys them after the shell's own
+    // members, so a shell whose surfaces must outlive them calls this at the
+    // top of its destructor.
+    void release_popups_()
+    {
+        compose_popups_.reset();
+        account_picker_ = nullptr;
+        account_picker_popup_.reset();
+    }
+
+    // The account picker: a popup over the main surface, anchored above the
+    // user strip, listing the signed-in accounts. Built on first open.
+    std::unique_ptr<tk::PopupSurfaceHandle> account_picker_popup_;
+    views::AccountPicker* account_picker_ = nullptr;
+    // When the picker was last dismissed by an outside press (monotonic_ms_()).
+    std::optional<std::int64_t> account_picker_dismissed_ms_;
+    static constexpr std::int64_t kAccountPickerReopenGuardMs = 200;
+    // Open it (needs two or more accounts), refresh its rows, close it, or
+    // refresh the rows of an open one.
+    void open_account_picker_();
+    void close_account_picker_();
+    void rebuild_account_picker_();
+    // Escape on the main surface: closes the account picker (a popup that takes
+    // no keyboard focus, so Escape never reaches it), else lets the main app
+    // widget dismiss an overlay. True when the key was consumed.
+    bool handle_escape_key_();
+    // Up, Down, Tab, Shift+Tab, Enter, Space and Escape while the account
+    // picker is open: forwarded to the picker's own host, since the popup takes
+    // no native keyboard focus. True when the picker consumed the key. Installed
+    // as the main host's key prefilter while the picker is open.
+    bool handle_account_picker_key_(const tk::KeyEvent& e);
+    // Encode a captured selfie (BGRA, stride w*4) as a JPEG. Empty on failure
+    // or when the backend cannot. Default: empty.
+    virtual std::vector<std::uint8_t>
+    encode_selfie_jpeg_(const std::uint8_t* /*bgra*/, std::uint32_t /*w*/,
+                        std::uint32_t /*h*/)
+    {
+        return {};
+    }
+    // Give the /selfie command its camera overlay and attach the result.
+    void wire_selfie_hook_(views::SlashCommandController::Hooks& hooks);
+    /// Wrap a decoded, pre-multiplied BGRA frame (stride w*4) in the backend's
+    /// image type. Called on the UI thread; null if the backend cannot (the
+    /// frame is skipped). Default: null.
+    virtual std::unique_ptr<tk::Image>
+    make_image_from_bgra_(int /*w*/, int /*h*/, const std::uint8_t* /*bgra*/)
     {
         return nullptr;
     }
+    /// True when make_image_from_bgra_ may run on a worker thread (Qt, GTK,
+    /// macOS); the strip then wraps its frames there instead of on the UI
+    /// thread. Win32 (D2D bitmaps are made on the UI thread) leaves it false.
+    virtual bool make_image_from_bgra_on_worker_() const { return false; }
+    /// Decode for an inline image the windowed streamed decoder declined (a
+    /// still, or an animation it cannot window). Default: decode_image_. GTK
+    /// overrides it with a still-only decode, since its decode_image_ repeats
+    /// the animation probe that already ran.
+    virtual DecodedImage decode_inline_fallback_(
+        const std::vector<std::uint8_t>& bytes, int max_w, int max_h)
+    {
+        return decode_image_(bytes, max_w, max_h);
+    }
+    /// Fetch a GIF source (preview or animation) from the media disk cache, or
+    /// the network on a miss, and hand the bytes to `on_bytes` on the UI thread
+    /// (empty on failure).
+    void fetch_gif_source_(const std::string& url,
+                           std::function<void(std::vector<std::uint8_t>)> on_bytes);
+    /// Static GIF strip thumbnails, and the URLs currently being fetched.
+    std::unordered_map<tk::CacheKey, std::unique_ptr<tk::Image>, tk::CacheKeyHash>
+        gif_previews_;
+    std::unordered_set<std::string> gif_preview_inflight_;
+    std::unordered_set<std::string> gif_anim_inflight_;
+    /// Strip animations that finished without frames (undecodable, a still, or
+    /// a failed download); not fetched again, or every repaint would redo the
+    /// work.
+    std::unordered_set<std::string> gif_anim_unavailable_;
+    /// Previews that failed to download or decoded to nothing; same reason.
+    std::unordered_set<std::string> gif_preview_unavailable_;
+    /// Forget the failed-download/decode marks so the next /gif results get a
+    /// fresh try (called when a search's results arrive).
+    void reset_gif_failures_();
+    /// reset_gif_failures_() plus the in-flight sets; for sign-out, account
+    /// switch and cache clearing.
+    void reset_gif_strip_state_();
     // Source bytes the GIF strip persisted to the media disk cache on fetch,
     // reused by a pop-out's GifController so a selected GIF sends without a
     // second download. Forwards to media_disk_cache_ via gif_src_disk_key_.
@@ -3229,18 +3465,37 @@ protected:
                                         int delay_ms);
 
     // Re-bind this window's identity strip (user-info widget) from the active
-    // account after its profile was re-fetched on a soft-logout recovery. Each
-    // shell repaints its native user strip (Qt/GTK populate_user_strip,
-    // macOS/Win equivalents). Default no-op for windows without a strip.
-    virtual void refresh_user_strip_()
-    {
-    }
+    // account after its profile was re-fetched on a soft-logout recovery.
+    // No-op for windows without a strip.
+    virtual void refresh_user_strip_();
 
     // Drive the shell to its login flow after an unrecoverable auth error
-    // (session expired / soft-logout recovery failed). Each shell maps this to
-    // its existing relogin path (doLogin / do_login / logout_active_account /
-    // _logoutActiveAccount).
-    virtual void request_relogin_(const std::string& user_id) = 0;
+    // (session expired / soft-logout recovery failed). The affected account's
+    // stored session is already cleared. The active account is signed out (this
+    // isn't the user's choice, so no offer to save an unsaved recovery key); any
+    // other account is forgotten and dropped from the stored index, without
+    // disturbing the foreground one.
+    virtual void request_relogin_(const std::string& user_id);
+
+    // Sign the active account out from the UI: the unsaved-key check, the
+    // shared teardown, then finish_sign_out_ui_. Virtual so tests can observe it.
+    virtual void logout_active_account_ui_();
+    // What follows a completed sign-out, on the UI thread: with no accounts
+    // left, clear the room list and any add-account state and show the sign-in
+    // screen; then say "Signed out" (or "Signed out of <uid>" while another
+    // account remains).
+    void finish_sign_out_ui_(const LogoutResult& result);
+    // Show the sign-in screen after the last account signed out: build the
+    // login view if needed, point it at a fresh client, put it in its initial
+    // mode and make it the visible content.
+    virtual void show_sign_in_screen_ui_()
+    {
+        reset_pending_login_client_();
+        show_login_ui_(views::LoginView::Mode::Initial);
+    }
+    // A sign-out finished (called before the above, in both cases). Default:
+    // nothing. macOS reindexes Spotlight and refreshes the invite list.
+    virtual void on_signed_out_ui_(const LogoutResult& /*result*/) {}
 
     // Show the offline connectivity banner in the main app widget and schedule
     // a relayout. Called when the sync service signals a network outage.
@@ -3249,19 +3504,18 @@ protected:
     // Hide the offline banner. Called when RoomListState transitions back to
     // Running after having been offline.
     virtual void handle_online_ui_();
-    virtual void handle_backup_progress_ui_(BackupProgress /*progress*/)
-    {
-    }
+    // Key-download progress for the active account; surfaced by
+    // refresh_sync_status_() ("Downloading message keys (N)…").
+    virtual void handle_backup_progress_ui_(BackupProgress progress);
     // Forwards encryption-setup progress to the overlay. Identical across all
     // shells, so it lives here (concrete) rather than being re-overridden.
     virtual void handle_enable_recovery_progress_ui_(uint8_t  step,
                                                      std::string recovery_key,
                                                      uint32_t backed_up,
                                                      uint32_t total);
-    // Per-shell native sticker/emoji picker refresh prologue. Default no-op.
-    virtual void refresh_pickers_packs_()
-    {
-    }
+    // Pack-dependent picker state: parent spaces of the open room, the sticker
+    // and emoticon lists, and the picker image caches.
+    virtual void refresh_pickers_packs_();
     // Concrete: runs the per-shell picker-refresh prologue, then rebuilds the
     // MSC2545 emoticon flat list (cached_emoticons_).
     virtual void handle_image_packs_updated_ui_();
@@ -3270,14 +3524,24 @@ protected:
     // of MSC4391 bot commands for `room_id` changes.
     virtual void handle_bot_commands_updated_ui_(std::string room_id);
 
-    // Per-shell hook: refresh any currently-open slash-command popup for the
-    // active room so a bot posting/editing/retracting a command description
-    // while the popup is open updates live. Default no-op (e.g. a shell
-    // with no live composer at the moment, or one that hasn't wired the
-    // bot-command autocomplete stack yet).
+    // The active room's bot commands changed: refresh the open slash popup.
     virtual void on_active_room_bot_commands_changed_ui_()
     {
+        if (compose_popups_)
+            compose_popups_->on_bot_commands_changed();
     }
+
+    // Tray icon clicks, shared by every shell. "Show" raises the window (or the
+    // pop-out holding the unread room) and opens the unread room; "toggle" hides
+    // the window instead when it is already the foreground one and nothing is
+    // unread. `token` is a platform activation token (may be empty).
+    void tray_activate_(const std::string& token = {});
+    void tray_toggle_(const std::string& token = {});
+    // The window state behind those clicks. Defaults: not in the foreground,
+    // nothing to do (test shells).
+    virtual bool main_window_foreground_for_tray_() const { return false; }
+    virtual void hide_main_window_for_tray_() {}
+    virtual void show_main_window_for_tray_(const std::string& /*token*/) {}
 
     // Look up the bare shortcode (no surrounding colons) for an mxc:// URI
     // by scanning cached_emoticons_. Used by the MSC4027 reaction path so
@@ -3357,15 +3621,26 @@ protected:
     // profile based on which pending map contains request_id.
     void handle_extended_profile_ready_ui_(std::uint64_t request_id,
                                            std::string profile_json);
+    // A message worth a notification arrived. Nothing is shown when the user
+    // is already looking at that room (the main window on screen, focused,
+    // showing that room of that account). Otherwise the OS is asked for
+    // attention if the window isn't focused, and the notification is delivered.
     virtual void
-    handle_notification_ui_(std::string /*user_id*/, std::string /*room_id*/,
-                            std::string /*room_name*/, std::string /*sender*/,
-                            std::string /*body*/, bool /*is_mention*/,
-                            std::vector<uint8_t> /*avatar_bytes*/,
-                            std::vector<uint8_t> /*image_bytes*/,
-                            std::string /*event_id*/)
-    {
-    }
+    handle_notification_ui_(std::string user_id, std::string room_id,
+                            std::string room_name, std::string sender,
+                            std::string body, bool is_mention,
+                            std::vector<uint8_t> avatar_bytes,
+                            std::vector<uint8_t> image_bytes,
+                            std::string event_id);
+    // True while the main window is the active window. Default: false (so a
+    // shell that does not say never suppresses a notification).
+    virtual bool is_main_window_focused_() const { return false; }
+    // A notification arrived while the main window is not focused: flash the
+    // taskbar, bounce the dock icon, and so on. Default: nothing.
+    virtual void request_notification_attention_() {}
+    // Show `n` for `user_id`. Default: that account's notifier, if it has one.
+    virtual void deliver_notification_(const std::string& user_id,
+                                       const tesseract::Notification& n);
 
     // Called on the UI thread when a locally generated waveform is ready for
     // a voice message that arrived without MSC1767 waveform data. Each shell
@@ -3634,11 +3909,9 @@ protected:
             });
     }
 
-    // Called after a failed apply_launch_at_login_() to re-push the
-    // actual OS state into the Settings General checkbox. Each shell
-    // overrides to forward into its SettingsWidget/SettingsView instance;
-    // default no-op covers headless/test builds.
-    virtual void on_launch_at_login_pref_ui_(bool /*enabled*/) {}
+    // Push the actual OS launch-at-login state into the Settings General
+    // checkbox (after a failed apply_launch_at_login_() or a refresh).
+    void on_launch_at_login_pref_ui_(bool enabled);
 
     // Whether a system tray icon currently exists. Each shell overrides this
     // to report its own ITrayIcon::is_available(); the default says no, which
@@ -3646,8 +3919,7 @@ protected:
     virtual bool tray_available_() const { return false; }
 
     // Called by push_tray_available_ui_() to forward into the Settings view.
-    // Default no-op covers headless/test builds.
-    virtual void on_tray_available_ui_(bool /*available*/) {}
+    void on_tray_available_ui_(bool available);
 
     // Push the live tray-availability state into Settings → General so the
     // close-action dropdown can drop "hide to tray" on a machine without one,
@@ -3774,7 +4046,7 @@ protected:
     // Called when the auto-clear timer fires to restore normal sync status.
     virtual void on_restore_status_ui_() {}
     // True while a persistent status override is showing; shells check this
-    // in refresh_sync_status() to avoid overwriting it with "Connected".
+    // in refresh_sync_status_() to avoid overwriting it with "Connected".
     bool has_status_override_() const { return status_override_active_; }
 
     // Called after push_room_list_state_() — shell refreshes its sync-status display.
@@ -3822,6 +4094,10 @@ protected:
         return last_inflight_ + (sync_on ? 1u : 0u);
     }
 
+    // Tooltip text for the in-flight dot: the request count, the media / fetch /
+    // send queue depths and, in debug builds, the URLs in flight.
+    std::string inflight_tooltip_text_() const;
+
     // Returns the color for the in-flight dot. Green ≤1 (sync only), amber
     // 2–10 (extra activity), red >10 (heavy load).
     tk::Color inflight_dot_color_() const
@@ -3841,18 +4117,19 @@ protected:
     // change. Call once from each shell's setup, after the UI is constructed.
     void init_pool_callbacks_();
 
-    /// Called on the UI thread after `server_info_` has been populated.
-    /// Override in shells that gate UI elements on server capabilities.
-    virtual void on_server_info_ready_ui_() {}
+    /// Called on the UI thread after `server_info_` has been populated: pushes
+    /// it into the open settings view and the room header, then relayouts.
+    /// Virtual only so test doubles can observe it.
+    virtual void on_server_info_ready_ui_();
 
     /// Called on the UI thread after `own_extended_profile_` has been
-    /// refreshed. Override to push the profile into the platform settings
-    /// widget (e.g. `settings_widget_->set_extended_profile(...)`).
-    virtual void on_own_extended_profile_ready_ui_() {}
+    /// refreshed: pushes it into the open settings view and relayouts it.
+    /// Virtual only so test doubles can observe it.
+    virtual void on_own_extended_profile_ready_ui_();
 
     /// Single UI-thread entry point for "own_extended_profile_ changed":
     /// pushes the MSC4426 status into the shared sidebar strip, then fires
-    /// the per-shell `on_own_extended_profile_ready_ui_()`. Call this instead
+    /// `on_own_extended_profile_ready_ui_()`. Call this instead
     /// of the virtual directly.
     void notify_own_extended_profile_changed_()
     {
@@ -3952,25 +4229,81 @@ protected:
 
     /// Bring the main window to the front, un-hiding it from the tray.
     virtual void raise_main_window_ui_() {}
-    virtual void open_quick_switch_ui_() {}
-    virtual void open_message_search_ui_() {}
+
+    // ── Sync status line ──────────────────────────────────────────────────────
+    // Recompute the status line from the room-list and key-download state
+    // ("Syncing rooms…", "Reconnecting…", "Downloading message keys (N)…",
+    // "Connected"). "Syncing rooms…" waits 300 ms and shows only if the state is
+    // still busy, so a warm restored session (Init to Running in well under
+    // that) doesn't flash it. A persistent status override is left alone. Shells
+    // call this when last_room_list_state_ or last_backup_state_ changes.
+    void refresh_sync_status_();
+    // An account just became this window's: say "Connected" at once. The room
+    // list state this window last saw (Init until the first push) says nothing
+    // about the new account, so refresh_sync_status_ would wrongly show it as
+    // still syncing; later room-list and key-download events correct the line.
+    void show_connected_status_();
+    // Put `text` in the status line (the shell's native label). Default: nothing.
+    virtual void show_sync_status_text_(const std::string& /*text*/) {}
+    // refresh_sync_status_ kept a persistent status override on screen instead
+    // of writing "Connected". Default: nothing. Qt re-shows its link label.
+    virtual void on_sync_status_override_kept_() {}
+    /// False once the native window behind this shell is gone (macOS: the
+    /// controller was released). Shared UI-thread handlers return early then.
+    virtual bool ui_ready_() const { return true; }
+    /// Open the quick switcher / message search (launch actions, shortcuts and
+    /// menus). Virtual so a test double can count the calls; the defaults are
+    /// open_quick_switch_ / open_message_search_.
+    virtual void open_quick_switch_ui_();
+    virtual void open_message_search_ui_();
+
+    // ── Window-level overlays (quick switcher, message search, forward
+    //    picker, per-room find) ────────────────────────────────────────────
+    // The open/close pairs and the Up/Down/Escape + on_close wiring
+    // (wire_overlay_nav_, called from wire_main_app_widget_) are identical on
+    // every shell; the platform bits are the two hooks below.
+    void open_quick_switch_();
+    void close_quick_switch_();
+    void open_message_search_();
+    void close_message_search_();
+    void close_forward_picker_();
+    void open_find_in_room_();
+    void close_find_in_room_();
+    void wire_overlay_nav_(views::MainAppWidget* app);
+    /// View callbacks that behave the same on every shell (room list, tab
+    /// bar, space root, room view, room preview, shortcuts). Called from
+    /// wire_main_app_widget_; a shell re-assigns one afterwards only for a
+    /// platform effect.
+    void wire_view_callbacks_(views::MainAppWidget* app);
+    /// True while the "open in a new tab / pop out" click modifier is held
+    /// (Ctrl, Cmd on macOS). Defaults to is_ctrl_held_(); GTK reads the
+    /// modifier its host captured from the click gesture instead.
+    virtual bool click_modifier_held_() const { return is_ctrl_held_(); }
+
+    /// An application-scoped shortcut can fire while a pop-out room window has
+    /// focus, but the overlays live in the main window: bring it forward (no-op
+    /// when it already is). Default: do nothing.
+    virtual void bring_main_window_forward_for_overlay_() {}
+    /// An overlay closed: give keyboard focus back to the compose field (or
+    /// the window). Default: nothing to restore.
+    virtual void restore_focus_after_overlay_() {}
 
     bool main_content_ready_ = false;
     LaunchAction pending_launch_action_ = LaunchAction::None;
     std::string pending_launch_room_id_;
 
     /// Called on the UI thread after a set_profile_field / delete_profile_field
-    /// call completes. Override to clear the busy state and surface errors.
-    virtual void on_profile_field_result_ui_(const std::string& /*key*/,
-                                              bool /*ok*/,
-                                              const std::string& /*error*/) {}
+    /// call completes: clears the busy state and shows any error in the open
+    /// settings view. Virtual only so test doubles can observe it.
+    virtual void on_profile_field_result_ui_(const std::string& key, bool ok,
+                                             const std::string& error);
 
     // Called on the UI thread after space_children_cache_ has been refreshed.
-    // Each shell overrides to call refresh_room_list_() or its wrapper.
+    // Each shell overrides to call refresh_room_list_().
     virtual void on_space_children_cache_ready_ui_() {}
 
     // Called on the UI thread after unjoined summaries for space_id arrive.
-    // Each shell overrides to call refresh_room_list_() or its wrapper.
+    // Each shell overrides to call refresh_room_list_().
     virtual void on_space_unjoined_summaries_ready_ui_(
         const std::string& /*space_id*/) {}
 
@@ -4044,7 +4377,7 @@ protected:
     void request_member_pronoun_ui_(const std::string& user_id);
 
     // Returns cached summaries if present; triggers a fetch and returns {}
-    // otherwise. Call from refresh_room_list() while drilled into a space.
+    // otherwise. Call from refresh_room_list_() while drilled into a space.
     const std::vector<tesseract::RoomSummary>&
     get_cached_unjoined_summaries_(const std::string& space_id);
 
@@ -4253,9 +4586,75 @@ protected:
     // every 30 s rather than every 5 s; the sizes are a rough gauge anyway.
     static constexpr int kCacheSizesPollMs = 30000;
     // Borrowed pointer to the shell's shared SettingsView (named distinctly so
-    // it never shadows a shell's own `settings_view_` member). Each shell sets
-    // it once.
+    // it never shadows a shell's own `settings_view_` member). Set by
+    // configure_new_settings_view_, cleared by teardown_settings_view_.
     tesseract::views::SettingsView* stats_settings_view_ = nullptr;
+
+    // The settings page's surface, owned here and created on first use through
+    // create_settings_surface_ui_(). stats_settings_view_ is its widget tree
+    // and is null exactly while the surface does not exist.
+    std::unique_ptr<tk::SurfaceBase> settings_surface_;
+    // Create the settings page's surface, parent it in the window and leave it
+    // hidden (a stack page, a child window, a subview). Default: none (test
+    // shells), in which case settings never open.
+    virtual std::unique_ptr<tk::SurfaceBase> create_settings_surface_ui_()
+    {
+        return nullptr;
+    }
+    // Take the page out of the window just before its surface is destroyed.
+    virtual void unmount_settings_surface_ui_()
+    {
+    }
+    // Last step of ensure_settings_view_(): per-backend look tweaks on the
+    // freshly configured view (e.g. GTK's compact entries). Default: nothing.
+    virtual void settings_view_created_ui_(views::SettingsView&) {}
+    // Bumped whenever the settings view is created or torn down, so a deferred
+    // teardown can tell its own surface from a newer one at the same address.
+    std::uint64_t settings_gen_ = 0;
+    // The shell's main surface (the room list and timeline). Popups anchor to
+    // it and the deferred teardowns run on its host, which outlives the pages
+    // being torn down. Default: none.
+    virtual tk::SurfaceBase* main_surface_() { return nullptr; }
+    virtual tk::Host* main_host_()
+    {
+        auto* surface = main_surface_();
+        return surface ? &surface->host() : nullptr;
+    }
+    // Give the main surface keyboard focus (after the lightbox opens). Default:
+    // nothing.
+    virtual void grab_main_surface_focus_() {}
+    // Build main_room_pane_ and attach it to main_app_'s views. Call once the
+    // main surface and main_app_ exist, before wire_main_app_widget_().
+    void create_main_room_pane_();
+    // Create the main app widget tree on the main surface's host and adopt it as
+    // main_app_ / room_view_. The shell then gives it to its surface with
+    // set_root(). Needs main_surface_().
+    std::unique_ptr<views::MainAppWidget> create_main_app_();
+    // Hook the main surface's activity, pre-paint and scale callbacks. Call right
+    // after the surface exists; `initial_scale` is its native scale factor.
+    void wire_main_surface_(float initial_scale);
+    // After the media prefetch, before every main-surface paint. Default: nothing.
+    virtual void on_pre_paint_() {}
+    // The main room view's playback and capture services (audio, voice notes,
+    // video fetch/player) and its repaint and delayed-post hooks. Needs
+    // main_surface_() and main_app_; call once after create_main_room_pane_().
+    void wire_room_view_services_();
+    // Create the settings view and its surface if they do not exist yet.
+    void ensure_settings_view_();
+    // Create the settings view if needed, fill it, and bind the controller. The
+    // shell then shows the page. False when no settings surface can be created.
+    bool prepare_settings_view_();
+    // Destroy the settings view and its surface one tick from now (the view
+    // may be tearing itself down from inside one of its own callbacks).
+    void teardown_settings_view_();
+    // Destroy the settings surface now. For the shell's destructor, before its
+    // own surfaces and windows go.
+    void release_settings_surface_()
+    {
+        stats_settings_view_ = nullptr;
+        ++settings_gen_;
+        settings_surface_.reset();
+    }
     bool search_stats_panel_open_ = false;
 
     // ── Activity Monitor window ──────────────────────────────────────────────
@@ -4283,12 +4682,9 @@ protected:
     // (e.g. the signature from a just-finished verification arrived). UI
     // thread, called by EventHandlerBase.
     void handle_user_identities_changed_ui_(std::vector<std::string> user_ids);
-    // Override in each shell to push text into the platform typing-bar widget.
-    // text is empty when no one is typing.
-    virtual void update_typing_bar_(const std::string& /*text*/,
-                                    bool /*visible*/)
-    {
-    }
+    // Pushes the typing text into room_view_ (empty when no one is typing);
+    // shells normally do not override.
+    virtual void update_typing_bar_(const std::string& text, bool visible);
 
     // ── Compose typing send helpers ───────────────────────────────────────────
     // Call from the shell's NativeTextArea on_changed callback.
@@ -4347,6 +4743,8 @@ protected:
     }
     // True when a pop-out of the active account keeps room_id subscribed.
     bool room_pinned_by_popout_(const std::string& room_id) const;
+    // True when this window has a pop-out that belongs to user_id.
+    bool has_popout_for_account_(const std::string& user_id) const;
     // Close every pop-out that belongs to user_id (on its logout, before its
     // Client is destroyed).
     void close_popouts_for_account_(const std::string& user_id);
@@ -4756,8 +5154,15 @@ protected:
 
     // Wire MainAppWidget-level + RoomListView/RoomView/UserInfo providers
     // that read from tk_avatars_, tk_images_, anim_cache_, and
-    // url_preview_data_.
+    // url_preview_data_; the image-pack providers of the room-settings and
+    // space-root settings views; and the DM / profile-panel callbacks
+    // (setup_dm_callbacks).
     void wire_main_app_widget_(views::MainAppWidget* app);
+
+    // Wire room_view_->on_open_dm / on_has_dm and the user-profile panel's
+    // extended-profile and common-rooms fetches. Called from
+    // wire_main_app_widget_ once main_app_ and room_view_ are set.
+    void setup_dm_callbacks();
 
     // Shared async picker-image path.
     void ensure_picker_image_(const std::string& url, bool is_sticker);
@@ -5225,10 +5630,13 @@ public:
 
     // True iff `user_id` has a cached room list with an unread notification.
     // False if the account isn't in per_account_rooms_ yet. Public (unlike
-    // per_account_rooms_ itself) so AccountPicker entry-building code — some
-    // of it reached only via composition (macOS's MacShell) rather than
-    // inheritance — doesn't need direct access to the map.
+    // per_account_rooms_ itself) so AccountPicker entry-building code doesn't
+    // need direct access to the map.
     bool account_has_unread_for(const std::string& user_id) const;
+
+    // One AccountPicker row per signed-in account (active flag, unread dot),
+    // and a fetch of each avatar. Every shell's picker calls this.
+    std::vector<views::AccountEntry> build_account_picker_entries_();
 
     // Pure function: returns the room id of an existing 1:1 DM with `user_id`
     // (the first room marked direct whose counterpart matches), or empty when
@@ -5523,8 +5931,8 @@ protected:
     // the deferred receipt path moves it once the user has seen the divider.
     void mark_room_read_(const std::string& room_id);
 
-    // Update last_room_list_state_.  Shells call their own refresh_sync_status
-    // implementation after this to update native UI.
+    // Update last_room_list_state_.  Shells call refresh_sync_status_() after
+    // this to update native UI.
     void push_room_list_state_(RoomListState state);
 
     // One-time check after push_rooms_(): if recovery is Disabled or Incomplete,

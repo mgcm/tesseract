@@ -140,6 +140,11 @@ public:
     /// Latest text — pushed by integration code on every `on_changed`
     /// callback from the NativeTextArea. Used to gate the send button.
     void set_current_text(std::string text);
+    /// Put `text` in the composer's field and in the copy `current_text_` the
+    /// send button and send use. A programmatic set_text on the field does not
+    /// fire its change callback, so setting the field alone leaves that copy
+    /// stale. A no-op on the field when it doesn't exist (no Host).
+    void set_text(std::string text);
     const std::string& current_text() const
     {
         return current_text_;
@@ -482,9 +487,8 @@ public:
                        const std::string& new_body, bool is_caption)>
         on_send_edit;
 
-    /// Fires when the user cancels an in-progress edit via the "×" button
-    /// in the edit banner. The host should restore the original text to the
-    /// compose field and call `clear_editing()`.
+    /// Fires after `clear_editing()` when the user cancels an edit via the
+    /// banner's "×"; RoomView clears the composer text in response.
     std::function<void()> on_edit_cancelled;
 
     // ── Voice recording state ────────────────────────────────────────────────

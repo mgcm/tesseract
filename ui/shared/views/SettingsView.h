@@ -132,6 +132,10 @@ public:
     void set_selected_audio_output(const std::string& id);
     void set_selected_camera(const std::string& id);
 
+    // Enumerate the audio and camera devices through this view's host and
+    // select the ones stored in Settings. Call once after creating the view.
+    void load_device_lists();
+
     // ----- Privacy section --------------------------------------------------
 
     // Update the search-index stats line under the checkbox (shown only while
@@ -189,13 +193,9 @@ public:
     // shell/Client state — those remain the shell's responsibility.
     void load_persisted_settings();
 
-    // Plug a relayout/repaint callback that the device async callbacks
-    // invoke after mutating the widget tree (the alternative is requiring
-    // every shell to re-wire the controller's device callbacks the same
-    // way Qt6/GTK4 already do for `on_name_changed`). Each shell should
-    // call this once, typically right after `set_controller`, with a
-    // lambda that calls `surface_->relayout()`.
-    void set_request_repaint(std::function<void()> cb);
+    // Relayout the surface hosting this view (through its tk::Host, so no
+    // shell needs to know which native surface that is).
+    void request_relayout();
 
     // State-forwarding methods (called by shells via controller callbacks):
     void set_name_busy(bool busy);
@@ -397,8 +397,6 @@ private:
     bool status_emoji_picker_visible_ = false;
 
     bool modal_was_open_ = false;
-
-    std::function<void()> request_repaint_;
 };
 
 } // namespace tesseract::views

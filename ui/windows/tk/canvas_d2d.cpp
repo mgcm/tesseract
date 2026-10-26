@@ -4282,7 +4282,7 @@ bool decode_animation_windowed(
     // before the first collect_topups()-driven top-up lands; the resident
     // window then settles to AnimImageCache's own (smaller) steady-state
     // size once its first trim_window_locked_() call runs. Same delivery
-    // shape ShellBase::make_streamed_decode_callbacks_(_windowed_) expects:
+    // shape ShellBase::make_streamed_decode_callbacks_windowed_ expects:
     // frame 0 via on_first_frame, the rest via on_extra_frame.
     bool got_first = false;
     session->decode_next_batch(

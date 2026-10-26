@@ -84,7 +84,6 @@ RoomWindow::RoomWindow(MainWindow* parent_shell, const std::string& room_id)
     media_viewer_          = room_widget->media_viewer();
     forward_picker_widget_ = room_widget->forward_picker();
     room_media_view_widget_ = room_widget->room_media_view();
-    confirm_dialog_widget_ = room_widget->confirm_dialog();
     room_widget->on_layout_changed = [this]
     {
         if (surface_)
@@ -271,41 +270,6 @@ RoomWindow::RoomWindow(MainWindow* parent_shell, const std::string& room_id)
     room_text_area_ = room_view_->compose_bar()->text_area();
     popups_ = std::make_unique<tesseract::ComposerPopups>(
         surface_->host(), room_text_area_, pane_.get(), room_view_);
-
-    surface_->set_on_layout(
-        [this]
-        {
-            // Native child controls always paint over canvas-drawn overlays,
-            // so hide them while the confirm dialog covers the window —
-            // otherwise the compose box/search fields would poke through on
-            // top of the modal backdrop. room_text_area_ self-positions via
-            // ComposeBar::arrange() otherwise (reached via the relayout this
-            // set_on_layout callback runs after), so only a force-hide is
-            // needed here — mirrors the search fields' own gating below.
-            const bool confirm_open =
-                confirm_dialog_widget_ && confirm_dialog_widget_->is_open();
-            if (confirm_open && room_text_area_)
-            {
-                room_text_area_->set_visible(false);
-            }
-            if (confirm_open && room_view_)
-            {
-                // Search field self-positions via RoomSearchBar::arrange(),
-                // but the ConfirmDialog covering this window is pop-out-local
-                // state the widget doesn't know about — force it off here.
-                if (auto* bar = room_view_->room_search_bar())
-                    if (auto* f = bar->search_field())
-                        f->set_visible(false);
-            }
-            if (confirm_open && forward_picker_widget_)
-            {
-                // Search field self-positions via ForwardRoomPicker::arrange(),
-                // but the ConfirmDialog covering this window is pop-out-local
-                // state the widget doesn't know about — force it off here.
-                if (auto* f = forward_picker_widget_->search_field())
-                    f->set_visible(false);
-            }
-        });
 
     // Per-room "find in conversation" — search field is self-owned; only the
     // shell-level Up/Down/Escape nav needs wiring here (on_close is already

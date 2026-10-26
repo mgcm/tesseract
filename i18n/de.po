@@ -166,10 +166,6 @@ msgstr "Zu gespeicherten Stickern hinzufügen"
 msgid "Not logged in"
 msgstr "Nicht angemeldet"
 
-#: ui/linux-qt/src/MainWindow.cpp:2207
-msgid "Restoring sessions…"
-msgstr "Sitzungen werden wiederhergestellt …"
-
 #: ui/linux-gtk/src/MainWindow.cpp:2888
 #: ui/shared/app/ShellBase_accounts.cpp:236 ui/windows/src/MainWindow.cpp:3553
 msgid "Restoring session…"
@@ -184,10 +180,6 @@ msgstr "Sitzung wird wiederhergestellt …"
 #: ui/windows/src/MainWindow.cpp:5760 ui/windows/src/MainWindow.cpp:5876
 msgid "Connected"
 msgstr "Verbunden"
-
-#: ui/linux-qt/src/MainWindow.cpp:2439
-msgid "Already signed in as %1"
-msgstr "Bereits angemeldet als %1"
 
 #: ui/shared/views/RoomHeader.cpp:102 ui/shared/views/RoomHeader.cpp:719
 msgid "Jump to Date"
@@ -250,9 +242,9 @@ msgstr "Konto hinzufügen"
 msgid "Signed out"
 msgstr "Abgemeldet"
 
-#: ui/linux-qt/src/MainWindow.cpp:4523
-msgid "Signed out of %1"
-msgstr "Von %1 abgemeldet"
+#: ui/shared/app/ShellBase_accounts.cpp:1479
+msgid "Signed out of {0}"
+msgstr "Von {0} abgemeldet"
 
 #: ui/shared/views/StickerPicker.cpp:44
 msgid "Search stickers"
@@ -3305,10 +3297,6 @@ msgstr "Zum Schließen irgendwo klicken"
 msgid "Click anywhere to cancel"
 msgstr "Zum Abbrechen irgendwo klicken"
 
-#: ui/linux-qt/src/MainWindow.cpp:2458
-msgid "Sign-in failed: %1"
-msgstr "Anmeldung fehlgeschlagen: %1"
-
 msgid "Choose a folder for the exported history"
 msgstr "Wähle einen Ordner für den exportierten Verlauf"
 
@@ -3656,14 +3644,6 @@ msgstr "_Abbrechen"
 #: ui/linux-gtk/src/MainWindow.cpp:3130
 msgid "_OK"
 msgstr "_OK"
-
-#: ui/linux-gtk/src/MainWindow.cpp:3171
-msgid "Save message keys"
-msgstr "Nachrichtenschlüssel speichern"
-
-#: ui/linux-gtk/src/MainWindow.cpp:3200
-msgid "Open message keys"
-msgstr "Nachrichtenschlüssel öffnen"
 
 #: ui/linux-gtk/src/MainWindow.cpp:3231 ui/linux-qt/src/SettingsWidget.cpp:176
 #: ui/macos/src/MainWindowController.mm:6748 ui/windows/src/MainWindow.cpp:6440

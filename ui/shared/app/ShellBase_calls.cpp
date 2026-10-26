@@ -304,6 +304,52 @@ void ShellBase::notify_reply_failed_(const std::string& user_id,
     sess->notifier->notify(n);
 }
 
+void ShellBase::handle_notification_ui_(
+    std::string user_id, std::string room_id, std::string room_name,
+    std::string sender, std::string body, bool is_mention,
+    std::vector<uint8_t> avatar_bytes, std::vector<uint8_t> image_bytes,
+    std::string event_id)
+{
+    if (!ui_ready_() || !Settings::instance().notifications_enabled)
+    {
+        return;
+    }
+    apply_notification_redaction_(sender, room_name, body, avatar_bytes,
+                                  image_bytes);
+
+    const bool focused = is_main_window_focused_();
+    // Already watching this exact room: say nothing.
+    if (focused && is_main_window_visible_() && active_account_ &&
+        active_account_->user_id == user_id && current_room_id_ == room_id)
+    {
+        return;
+    }
+    if (!focused)
+    {
+        request_notification_attention_();
+    }
+
+    tesseract::Notification n;
+    n.room_id = std::move(room_id);
+    n.room_name = std::move(room_name);
+    n.sender = std::move(sender);
+    n.body = std::move(body);
+    n.is_mention = is_mention;
+    n.avatar_bytes = std::move(avatar_bytes);
+    n.image_bytes = std::move(image_bytes);
+    n.event_id = std::move(event_id);
+    deliver_notification_(user_id, n);
+}
+
+void ShellBase::deliver_notification_(const std::string& user_id,
+                                      const tesseract::Notification& n)
+{
+    if (auto sess = account_manager_.find(user_id); sess && sess->notifier)
+    {
+        sess->notifier->notify(n);
+    }
+}
+
 void ShellBase::push_call_audio_bgnd_(const std::int16_t* samples,
                                        std::size_t sample_count,
                                        std::uint32_t sample_rate,

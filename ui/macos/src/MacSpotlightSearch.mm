@@ -12,7 +12,7 @@ namespace
 {
 // Every item this class indexes shares one domain so the whole index can be
 // wiped in one deleteSearchableItemsWithDomainIdentifiers: call on sign-out
-// (see MainWindowController's -_logoutActiveAccount).
+// (see MainWindow::logout_active_account_ui_).
 constexpr const char* kDomainIdentifier = "im.gnomos.tesseract.search";
 constexpr std::size_t kMaxIndexed = 500;
 } // namespace

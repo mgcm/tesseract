@@ -53,6 +53,9 @@ public:
     // threads when callbacks fire and written here on the UI thread, hence atomic.
     void set_shell(ShellBase* s) { shell_.store(s, std::memory_order_release); }
 
+    // The window this bridge currently delivers to.
+    ShellBase* shell() const { return shell_.load(std::memory_order_acquire); }
+
     void set_user_id(std::string id)
     {
         user_id_ = std::move(id);
@@ -261,8 +264,6 @@ protected:
     // Posts `deliver` to the UI thread as the newest frame for `key`, coalescing
     // with any frame not yet delivered.
     void post_latest_frame_(const std::string& key, std::function<void()> deliver);
-
-    ShellBase* shell() const { return shell_.load(std::memory_order_acquire); }
 };
 
 } // namespace tesseract

@@ -330,21 +330,51 @@ struct StubHost : public TestHost
 class StubPopupSurface : public tk::PopupSurfaceHandle
 {
 public:
+    // Mounts `root` under a RootWidget on the stub's own host, as a real popup
+    // surface does, so keys and focus can be driven through popup_host().
     void set_root(std::unique_ptr<tk::Widget> root) override
     {
-        root_ = std::move(root);
+        auto wrapper = tk::create_root_widget<tk::RootWidget>(&host_);
+        mounted_ = root.get();
+        wrapper->add_child(std::move(root));
+        root_ = std::move(wrapper);
+        host_.set_root(root_.get());
     }
-    tk::Widget* root() const { return root_.get(); }
+    tk::Widget* root() const { return mounted_; }
+    tk::Host* popup_host() override { return &host_; }
+    StubHost& stub_host() { return host_; }
 
-    void set_rect(tk::Rect, tk::Size, tk::PopupPlacement) override {}
+    void set_rect(tk::Rect a, tk::Size sz, tk::PopupPlacement p) override
+    {
+        last_anchor = a;
+        last_size = sz;
+        last_placement = p;
+        ++rect_sets;
+    }
+    void set_corner_radius(float r) override { corner_radius = r; }
+    tk::Rect last_anchor{};
+    tk::Size last_size{};
+    tk::PopupPlacement last_placement = tk::PopupPlacement::PreferBelow;
+    float corner_radius = 0.f;
+    int rect_sets = 0;
     void set_visible(bool v) override { visible_ = v; }
     bool visible() const override { return visible_; }
-    void set_theme(const tk::Theme&) override {}
-    void request_repaint() override {}
-    void request_relayout() override {}
+    void set_theme(const tk::Theme&) override { ++theme_sets; }
+    int theme_sets = 0;
+    void request_repaint() override { ++repaints; }
+    int repaints = 0;
+    void request_relayout() override { ++relayouts; }
+    int relayouts = 0;
+    void set_anim_cache(const tk::AnimImageCache* c) override { anim_cache_ = c; }
+    void update_anim_regions() override { ++anim_region_updates; }
+    const tk::AnimImageCache* anim_cache() const { return anim_cache_; }
+    int anim_region_updates = 0;
 
 private:
+    const tk::AnimImageCache* anim_cache_ = nullptr;
+    StubHost host_; // outlives the widget tree
     std::unique_ptr<tk::Widget> root_;
+    tk::Widget* mounted_ = nullptr;
     bool visible_ = false;
 };
 

@@ -76,7 +76,7 @@ struct WebPCFRetained
 // kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little is the same
 // premultiplied-BGRA pairing already used (and working) elsewhere in this
 // codebase for raw camera-capture BGRA buffers — see
-// MainWindowController.mm's on_selfie_captured. Getting this pairing wrong
+// MainWindow::encode_selfie_jpeg_. Getting this pairing wrong
 // would reproduce an R/B swap via a new mechanism, not one of ImageIO's
 // historical ones — this is the first thing to check visually once built.
 CGImageRef make_cgimage_from_bgra(const std::uint8_t* pixels, int width,

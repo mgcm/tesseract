@@ -4,11 +4,11 @@
 #include "LinuxNotifier.h"
 #include "LinuxUpConnectorQt.h"
 #include "views/ComposePopups.h"
-#include "LoginView.h"
+#include <QDesktopServices>
+#include <QUrl>
 #include "views/BrandView.h"
 #include "views/media_drop.h"
 #include "views/shortcut_registry.h"
-#include "SettingsWidget.h"
 #include "../../shared/linux_autostart.h"
 #include "LinuxPowerMonitorQt.h"
 #include "LinuxScreenLockQt.h"
@@ -77,6 +77,9 @@
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusInterface>
+#include <QDBusMessage>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
 #include <QDBusReply>
 #include <QDBusVariant>
 #include <QWindow>
@@ -196,38 +199,14 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
     brandingSurface_->set_root(std::move(branding_owner));
     contentStack_->addWidget(brandingSurface_);
 
-    // loginView_ is now constructed lazily — see ensureLoginView_(), called
-    // from doLogin()/beginAddAccount()/logoutActiveAccount() before each
-    // shows it.
+    // The login page is created lazily by ShellBase::ensure_login_view_
+    // (through create_login_surface_ui_) before each show.
 
     // Single surface hosting the MainAppWidget tree (sidebar + chat + overlays).
     mainAppSurface_ = new tk::qt6::Surface(tk::Theme::light(), contentStack_);
     contentStack_->addWidget(mainAppSurface_);
-    // Let the animation timer repaint only the rects where animated images are
-    // drawn (see onMessageAnimTick_) instead of the whole surface.
-    mainAppSurface_->set_anim_cache(&account_manager_.anim_cache());
 
-    // Feed pointer / wheel events into the PresenceTracker so we stay "Online"
-    // while the user is engaging with the app. Focus + timer ticks are wired
-    // separately below (changeEvent + QTimer).
-    mainAppSurface_->host().set_on_user_activity(
-        [this] { notify_user_activity_(); });
-
-    // Warm the decoded-image caches from the local disk cache only (never
-    // the SDK/network) for whatever media the visible views are about to
-    // paint, immediately before every paint pass — see
-    // ShellBase::run_media_prefetch_'s doc comment.
-    mainAppSurface_->host().set_pre_paint_hook([this] { run_media_prefetch_(); });
-
-    // Track the display's current scale so thumbnail/avatar requests can be
-    // sized for it — see ShellBase::set_current_scale_()'s doc comment. The
-    // initial query may not reflect the real screen yet if this widget
-    // isn't shown; the live QEvent::DevicePixelRatioChange/screenChanged
-    // handling wired into Surface::apply_scale_change() corrects it
-    // shortly after, same as any other live change.
-    mainAppSurface_->set_on_scale_changed(
-        [this](float s) { set_current_scale_(s); });
-    set_current_scale_(static_cast<float>(mainAppSurface_->devicePixelRatioF()));
+    wire_main_surface_(static_cast<float>(mainAppSurface_->devicePixelRatioF()));
 
     // 30 s periodic tick — granular enough for a 5 min idle threshold without
     // burning CPU. The tracker is lazily created on first activity once sync
@@ -251,322 +230,42 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
     }
 
     {
-        auto main_app_owner = tk::create_root_widget<tesseract::views::MainAppWidget>(
-            &mainAppSurface_->host());
-        mainApp_ = main_app_owner.get();
-        // Populate the shared ShellBase view pointers (before sync starts) so
-        // hoisted handle_*_ui_ implementations can drive the view.
-        main_app_ = mainApp_;
-        room_view_ = mainApp_->room_view();
+        auto main_app_owner = create_main_app_();
 
-        mainApp_->on_space_back = [this]
-        {
-            onSpaceBack();
-        };
-        mainApp_->on_quick_switch_shortcut = [this] { openQuickSwitch_(); };
-        mainApp_->on_message_search_shortcut = [this] { openMessageSearch_(); };
-        mainApp_->on_find_in_room_shortcut = [this] { openFindInRoom_(); };
-        mainApp_->on_history_back_shortcut = [this] { navigate_history_back(); };
-        mainApp_->on_history_forward_shortcut = [this] { navigate_history_forward(); };
-
-        // ---- Shared per-room pane (the sole source of truth for
-        // room_view_'s image/video viewer callbacks — see
-        // ShellBase::main_room_pane_'s doc comment) ----
-        main_room_pane_ = std::make_unique<tesseract::RoomPane>(
-            tesseract::RoomPane::Deps{
-                .shell = this,
-                .host = &mainAppSurface_->host(),
-                .repaint = [this] { request_repaint_(); },
-                .relayout = [this] { request_relayout_(); },
-                .grab_surface_focus = [this]
-                {
-                    if (mainAppSurface_)
-                        mainAppSurface_->setFocus();
-                },
-                .update_window_title = [this](const std::string&)
-                { refresh_window_title_(); },
-                .on_left_room = [this](const std::string& room_id)
-                {
-                    if (current_room_id_ != room_id)
-                        return;
-                    current_room_id_.clear();
-                    mainApp_->room_view()->clear_room();
-                    mainApp_->room_list_view()->set_selected_room("");
-                    if (mainAppSurface_)
-                        mainAppSurface_->relayout();
-                    refresh_window_title_();
-                },
-                .set_window_fullscreen = [this](bool on)
-                { set_window_fullscreen_(on); },
-            },
-            current_room_id_);
-        main_room_pane_->attach({
-            .room_view = mainApp_->room_view(),
-            .media_viewer = mainApp_->media_viewer(),
-            .forward_picker = mainApp_->forward_picker(),
-            .room_media_view = mainApp_->room_media_view(),
-            .focus_forward_picker_field = [this] { focus_forward_picker_field_(); },
-            .hide_forward_picker_field = [this] { hide_forward_picker_field_(); },
-        });
+        create_main_room_pane_();
 
         // ---- Provider wiring (avatar/image/sticker/preview/user-info) ----
-        wire_main_app_widget_(mainApp_);
-
-        // ---- Room list ----
-        mainApp_->room_list_view()->on_room_selected =
-            [this](const std::string& room_id)
-        {
-            // A space is not a room: clicking one drills into it (show its
-            // children + the back affordance) rather than opening it as the
-            // active room/tab. Without this guard tab_select_room would set
-            // the space as current_room_id_ and surface its title in the
-            // room header.
-            for (const auto& r : rooms_)
-            {
-                if (r.id == room_id && r.is_space)
-                {
-                    space_nav_frames_.push_back(
-                        SpaceNavFrame::capture(mainApp_->room_list_view()));
-                    space_stack_.push_back(room_id);
-                    refreshRoomList();
-                    SpaceNavFrame::enter(mainApp_->room_list_view());
-                    return;
-                }
-            }
-            if (QGuiApplication::keyboardModifiers() & Qt::ControlModifier)
-            {
-                tab_open_room(room_id);
-            }
-            else
-            {
-                tab_select_room(room_id);
-            }
-        };
-        mainApp_->room_list_view()->set_room_open_in_tab_provider(
-            [this](const std::string& rid) { return room_open_in_tab(rid); });
-        mainApp_->room_list_view()->set_room_open_in_window_provider(
-            [this](const std::string& rid) { return room_open_in_window(rid); });
-        mainApp_->room_list_view()->on_open_in_tab_requested =
-            [this](const std::string& rid) { tab_open_room(rid); };
-        mainApp_->room_list_view()->on_open_in_window_requested =
-            [this](const std::string& rid) { open_room_in_new_window(rid); };
-        mainApp_->room_list_view()->on_leave_room_requested =
-            [this](const std::string& rid) { confirm_leave_room_(rid); };
-        mainApp_->room_list_view()->on_mark_read_requested =
-            [this](const std::string& rid) { mark_room_read_(rid); };
-        {
-            auto* scrollDebounce = new QTimer(this);
-            scrollDebounce->setSingleShot(true);
-            mainApp_->room_list_view()->on_scroll = [this, scrollDebounce]
-            {
-                scrollDebounce->start(300);
-            };
-            connect(scrollDebounce, &QTimer::timeout, this,
-                    [this]
-                    {
-                        if (!mainApp_ || !active_account_)
-                        {
-                            return;
-                        }
-                        auto ids =
-                            mainApp_->room_list_view()->visible_room_ids();
-                        auto sess = active_account_;
-                        run_async_mut_([sess, ids = std::move(ids)]() mutable
-                        {
-                            if (sess && sess->client)
-                            {
-                                sess->client->stop_background_backfill();
-                                sess->client->start_background_backfill(ids);
-                            }
-                        });
-                    });
-        }
-        mainApp_->room_list_view()->on_unjoined_room_selected =
-            [this](const tesseract::RoomSummary& s)
-        {
-            if (!s.avatar_url.empty())
-                ensure_media_thumbnail_(s.avatar_url, 64, 64, false);
-            if (mainApp_)
-            {
-                mainApp_->show_room_preview(s, make_avatar_image_provider_());
-                request_relayout_();
-            }
-        };
-        if (auto* rp = mainApp_->room_preview())
-        {
-            rp->on_avatar_needed = [this](const std::string& mxc)
-            {
-                ensure_media_thumbnail_(mxc, 64, 64, false);
-            };
-            rp->on_join = [this, rp](const std::string& room_id)
-            {
-                rp->set_state(tesseract::views::RoomPreviewView::State::Joining);
-                join_room_command_(room_id);
-            };
-            rp->on_dismiss = [this]
-            {
-                if (mainApp_)
-                    mainApp_->hide_room_preview();
-            };
-        }
-
-        // ---- Tab bar ----
-        mainApp_->tab_bar()->on_tab_selected =
-            [this](const std::string& room_id)
-        {
-            // Ctrl+click pops the room out into its own window (and closes the
-            // tab); a plain click just switches to it.
-            if (QGuiApplication::keyboardModifiers() & Qt::ControlModifier)
-            {
-                tab_popout_room(room_id);
-            }
-            else
-            {
-                tab_select_room(room_id);
-            }
-        };
-        mainApp_->tab_bar()->on_tab_closed = [this](const std::string& room_id)
-        {
-            tab_close(room_id);
-        };
+        wire_main_app_widget_(main_app_);
 
         // ---- User info strip ----
         // The mouse right-click path is the surface-level region check in
         // customContextMenuRequested below; this is the keyboard route
         // (context-menu key / Enter with one account).
-        mainApp_->user_info()->on_secondary = [this](tk::Point world)
+        main_app_->user_info()->on_secondary = [this](tk::Point world)
         {
             onUserStripContextMenu(mainAppSurface_->mapToGlobal(
                 QPoint(static_cast<int>(world.x), static_cast<int>(world.y))));
         };
-        mainApp_->user_info()->on_primary = [this](tk::Point world)
+        main_app_->user_info()->on_primary = [this](tk::Point world)
         {
-            if (account_manager_.accounts().size() < 2)
-            {
-                return;
-            }
-            openAccountPicker(mainAppSurface_->mapToGlobal(
-                QPoint(static_cast<int>(world.x), static_cast<int>(world.y))));
+            open_account_picker_();
         };
 
-        // ---- Media viewer ----
-        // Providers / repaint / on_close come from RoomPane::wire_room_view_
-        // via main_room_pane_->attach() above; only the video player is
-        // shell-specific (needs this window's Host), same as every pop-out
-        // wires it directly in its own constructor.
-        mainApp_->media_viewer()->set_video_player(mainAppSurface_->host().make_video_player());
-
-        // ---- Room view ----
-        mainApp_->room_view()->set_shortcode_provider(
-            [this](const std::string& mxc) -> std::string
-            {
-                return shortcode_for_mxc_(mxc);
-            });
         // Mention-pill avatar provider + on_fetch_room_members (which
         // populates the cache it reads) already provided by
         // main_room_pane_->attach() above (RoomPane::wire_room_view_), using
         // RoomPane's own cached_room_members_/cached_members_room_ instead
         // of this window's now-removed copy of those fields.
-        if (auto player = mainAppSurface_->host().make_audio_player())
-        {
-            mainApp_->room_view()->set_audio_player(std::move(player));
-        }
-        capture_ = mainAppSurface_->host().make_audio_capture();
-        {
-            QPointer<tk::qt6::Surface> sfp = mainAppSurface_;
-            wire_voice_capture_(
-                mainApp_->room_view(),
-                [sfp]() { if (sfp) sfp->update(); },
-                [this]() { return current_room_id_; },
-                [this]() { mainApp_->room_view()->set_current_text({}); });
-        }
-        mainApp_->room_view()->set_voice_bytes_provider(
-            [this](const std::string& source_json) -> std::vector<std::uint8_t>
-            {
-                // Non-blocking: warmed bytes or empty + async fetch (repaint on
-                // arrival) so playback never freezes the UI thread.
-                return voice_bytes_or_fetch_(source_json,
-                                             [this] { request_relayout_(); });
-            });
-        {
-            QPointer<tk::qt6::Surface> sfp = mainAppSurface_;
-            mainApp_->room_view()->set_repaint_requester(
-                [sfp]()
-                {
-                    if (sfp)
-                    {
-                        sfp->update();
-                    }
-                });
-            mainApp_->room_view()->set_post_delayed(
-                [sfp](int ms, std::function<void()> fn)
-                {
-                    if (sfp)
-                    {
-                        sfp->host().post_delayed(ms, std::move(fn));
-                    }
-                });
-        }
-        mainApp_->room_view()->set_video_player_factory(
-            [this]()
-            {
-                return mainAppSurface_->host().make_video_player();
-            });
-        mainApp_->room_view()->set_video_fetch_provider(
-            [this](const std::string& src,
-                   std::function<void(std::vector<std::uint8_t>)> on_ready)
-            {
-                if (client_)
-                {
-                    auto req_id = begin_media_req_(0,
-                        [on_ready = std::move(on_ready)](
-                            std::vector<std::uint8_t> bytes) mutable
-                        {
-                            on_ready(std::move(bytes));
-                        });
-                    client_->fetch_source_bytes_async(req_id, src);
-                }
-            });
+        wire_room_view_services_();
 
         // Drop-into-compose-bar wiring for RoomView::on_file_drop already
         // provided by main_room_pane_->attach() above (RoomPane::wire_room_view_),
         // equivalent to this block's old body — see RoomPane.cpp.
 
-        mainApp_->room_view()->on_layout_changed = [this]
+        setup_link_clicked_(main_app_->room_view());
+        main_app_->room_view()->on_show_copy_menu = [this]()
         {
-            if (mainAppSurface_)
-            {
-                mainAppSurface_->relayout();
-            }
-        };
-        mainApp_->space_root()->on_layout_changed = [this]
-        {
-            if (mainAppSurface_)
-            {
-                mainAppSurface_->relayout();
-            }
-        };
-        setup_link_clicked_(mainApp_->room_view());
-        mainApp_->room_view()->on_set_clipboard = [this](std::string_view t)
-        {
-            if (mainAppSurface_)
-                mainAppSurface_->host().set_clipboard_text(t);
-        };
-        mainApp_->room_view()->on_selection_started = [this]()
-        {
-            if (mainAppSurface_)
-                mainAppSurface_->host().release_focus_to_canvas();
-        };
-        mainApp_->space_root()->on_copy_to_clipboard = [this](std::string t)
-        {
-            if (mainAppSurface_)
-                mainAppSurface_->host().set_clipboard_text(t);
-        };
-        mainApp_->space_root()->on_leave_space =
-            [this](std::string rid) { confirm_leave_room_(rid); };
-        mainApp_->room_view()->on_show_copy_menu = [this]()
-        {
-            auto* rv = mainApp_->room_view();
+            auto* rv = main_app_->room_view();
             auto* menu = new QMenu(mainAppSurface_);
             menu->setAttribute(Qt::WA_DeleteOnClose);
             menu->setStyleSheet(tk::qt6::build_menu_qss(current_theme_));
@@ -579,7 +278,7 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
         };
         {
             QPointer<tk::qt6::Surface> sfp = mainAppSurface_;
-            mainApp_->room_view()->on_link_hovered =
+            main_app_->room_view()->on_link_hovered =
                 [sfp](const std::string& url)
             {
                 if (sfp)
@@ -591,7 +290,7 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
                                                        : Qt::ArrowCursor);
                 }
             };
-            mainApp_->space_root()->on_link_hovered =
+            main_app_->space_root()->on_link_hovered =
                 [sfp](const std::string& url)
             {
                 if (sfp)
@@ -600,7 +299,7 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
                                                : Qt::PointingHandCursor);
                 }
             };
-            mainApp_->on_sidebar_cursor =
+            main_app_->on_sidebar_cursor =
                 [sfp](tesseract::views::MainAppWidget::SidebarCursor c)
             {
                 if (!sfp) return;
@@ -610,103 +309,6 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
                                                  : Qt::ArrowCursor);
             };
         }
-        // on_receipt_needed / on_member_pronoun_needed / on_near_top /
-        // on_near_bottom / on_return_to_live / on_scroll_to_original already
-        // provided by main_room_pane_->attach() above
-        // (RoomPane::wire_room_view_ + RoomPane::request_pagination_back_,
-        // which now also calls set_paginating(true)/reset_near_top_latch()
-        // to match this window's old requestMoreHistory/onPaginateFinished
-        // spinner behavior — see RoomPane.cpp).
-        mainApp_->room_view()->message_list()->on_tile_needed =
-            [this](int z, int x, int y)
-        {
-            ensure_tile_async(z, x, y);
-        };
-        // on_date_jump already provided by main_room_pane_->attach() above
-        // (RoomPane::wire_room_view_) — this call was fully redundant with
-        // it (and silently overrode it, since it ran after attach()).
-        // on_threads_button_clicked / on_thread_open_requested /
-        // on_thread_close_requested / on_thread_send / on_thread_send_reply
-        // already provided by main_room_pane_->attach() above
-        // (RoomPane::wire_room_view_) — equivalent bodies, including the
-        // mention/emoticon draft rebuild on send. See RoomPane.cpp's
-        // apply_thread_transition_/on_thread_send/on_thread_send_reply for
-        // the shared implementation.
-        // on_pin_requested / on_unpin_requested already provided by
-        // main_room_pane_->attach() above (RoomPane::wire_room_view_ ->
-        // pin_event_/unpin_event_, equivalent to ShellBase::on_pin_requested/
-        // on_unpin_requested's bodies).
-        // wire_room_view_picker_ (set_client/emoji+sticker picker image
-        // providers/on_sticker_picked) already provided by
-        // main_room_pane_->attach() above (RoomPane::wire_room_view_'s
-        // picker tail) — this call was fully redundant with it.
-        // on_delete_requested / on_copy_event_source_requested /
-        // on_reaction_toggled already provided by main_room_pane_->attach()
-        // above (RoomPane::wire_room_view_) — equivalent bodies, so the
-        // duplicate assignments that used to be here are gone. See
-        // RoomPane.cpp's delete_event_/copy_event_source_to_clipboard_/
-        // toggle_reaction_ for the shared implementation (toggle_reaction_
-        // includes the same MSC4027 shortcode lookup this block used to do
-        // inline).
-        // on_send / on_send_reply / on_send_edit / on_send_image /
-        // on_send_video / on_send_audio / on_send_file / on_send_gallery
-        // already provided by main_room_pane_->attach() above
-        // (RoomPane::wire_room_view_), which
-        // is a verbatim port of this window's old on_send body — including
-        // the composer mention-draft-to-markdown conversion — so nothing is
-        // lost by dropping the local copy. on_send_reply/on_send_edit now
-        // report failures via an async status toast (RoomPane::send_reply_/
-        // send_edit_); previously this window blocked the UI thread on the
-        // synchronous SDK call to show the same toast. on_send's own local
-        // error branch was already dead code before this change: it read
-        // ShellBase::dispatch_room_send_'s outcome, which always returns
-        // success for the non-slash-command path (the actual send happens
-        // asynchronously in a background task with the result discarded).
-        // already provided by main_room_pane_->attach() above
-        // (RoomPane::wire_room_view_). Deliberate behavior change as part of
-        // this refactor: the main window's sync client_->send_image()/etc.
-        // (blocked the UI thread, showed an inline error toast on failure)
-        // is replaced by RoomPane's async client_->send_image_async()/etc.
-        // (matches what pop-outs always did). Error reporting is NOT lost —
-        // ShellBase::handle_upload_complete_ui_ already shows a generic
-        // "Upload failed: ..." status toast on IEventHandler::on_upload_complete
-        // for every async send regardless of which window/pane started it,
-        // so no additional code was needed here.
-        mainApp_->room_view()->on_edit_prefill = [this](const std::string& body)
-        {
-            if (roomTextArea_)
-            {
-                roomTextArea_->set_text(body);
-                roomTextArea_->set_focused(true);
-            }
-        };
-        mainApp_->room_view()->on_edit_cancelled = [this]
-        {
-            if (roomTextArea_)
-            {
-                roomTextArea_->set_text("");
-            }
-            mainApp_->room_view()->clear_compose_text();
-        };
-        // on_image_clicked / on_avatar_clicked already provided by
-        // main_room_pane_->attach() above (RoomPane::wire_room_view_), which
-        // uses this window's own Deps.grab_surface_focus (mainAppSurface_->
-        // setFocus()) in place of the direct call this window used to make.
-        // One save handler for every viewer kind: RoomPane builds the spec
-        // (title / suggested name / filter) and writes the file; this window
-        // only shows the dialog.
-        main_room_pane_->install_media_viewer_save_(
-            [this](const tesseract::views::MediaSaveSpec& spec,
-                   std::function<void(std::string)> done)
-            {
-                QString path = QFileDialog::getSaveFileName(
-                    this, QString::fromStdString(spec.title),
-                    QString::fromStdString(spec.suggested_name), save_filter_for(spec));
-                if (!path.isEmpty())
-                {
-                    done(path.toStdString());
-                }
-            });
         // on_video_clicked (both room_view()'s and room_media_view()'s
         // gallery-reuse alias) already provided by main_room_pane_->attach()
         // above (RoomPane::wire_room_view_, which aliases
@@ -720,533 +322,15 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
         // Deps.on_left_room, constructed above). on_save_topic now reports
         // failures via an async status message (RoomPane::wire_room_view_'s
         // on_save_topic), matching the send_reply_/send_edit_ fix.
-        mainApp_->room_view()->room_settings_view()->set_image_pack_provider(
-            make_static_image_provider_with_fetch_(96, 96));
-        mainApp_->room_view()->room_settings_view()->on_image_pack_images_needed =
-            [this](std::string pack_id)
-        { handle_image_pack_images_needed_(pack_id, mainApp_->room_view()->room_settings_view()); };
-        mainApp_->room_view()->room_settings_view()->on_image_pack_pending_image_added =
-            [this](std::uint64_t local_id, const std::vector<std::uint8_t>& bytes,
-                  const std::string& mime)
-        { handle_image_pack_pending_image_added_(local_id, bytes, mime, mainApp_->room_view()->room_settings_view()); };
-        // Space-root settings (wrench icon on SpaceRootView): the same
-        // per-room-id permission gating / accept / avatar-upload plumbing
-        // above works unchanged for a space's room id — including image
-        // packs, which are ordinary room state so a space can host its own
-        // (only the Media tab is skipped, since it has no meaning for a
-        // space).
-        mainApp_->space_root()->on_settings_opened =
-            [this](const std::string& room_id)
-        {
-            auto* v = mainApp_->space_root()->settings_view();
-            if (!v)
-                return;
-            if (!client_)
-            {
-                v->set_field_permissions(false, false, false);
-                v->set_security_field_permissions(false, false, false, false);
-                v->set_permissions_field_permissions(false);
-                v->set_image_pack_field_permissions(false);
-                v->set_own_power_level({});
-                seed_image_pack_tab_(room_id, v);
-                return;
-            }
-            v->set_field_permissions(client_->can_set_room_name(room_id),
-                                     client_->can_set_room_topic(room_id),
-                                     client_->can_set_room_avatar(room_id));
-            v->set_security_field_permissions(
-                client_->can_set_room_encryption(room_id),
-                client_->can_set_room_join_rules(room_id),
-                client_->can_set_room_guest_access(room_id),
-                client_->can_set_room_history_visibility(room_id));
-            v->set_permissions_field_permissions(
-                client_->can_set_room_power_levels(room_id));
-            v->set_permissions_state(client_->room_power_levels(room_id));
-            v->set_own_power_level(client_->room_own_power_level(room_id));
-            fetch_room_security_state_(room_id);
-            seed_image_pack_tab_(room_id, v);
-        };
-        mainApp_->space_root()->on_settings_avatar_upload_requested =
-            [this](const std::string& room_id)
-        {
-            stage_room_settings_avatar_upload_(
-                room_id, mainApp_->space_root()->settings_view());
-        };
-        mainApp_->space_root()->settings_view()->on_accept =
-            [this](std::string room_id, tesseract::views::RoomSettingsChanges changes)
-        {
-            if (!client_)
-                return;
-            auto* c = client_;
-            run_async_mut_(
-                [this, c, room_id = std::move(room_id),
-                 changes = std::move(changes)]()
-                {
-                    auto outcome = ShellBase::apply_room_settings_(c, room_id, changes);
-                    QMetaObject::invokeMethod(
-                        this,
-                        [this, outcome, room_id,
-                         media_override = changes.media_override]()
-                        {
-                            if (!mainApp_)
-                                return;
-                            if (auto* v =
-                                    mainApp_->space_root()->settings_view())
-                                v->set_commit_result(outcome.ok, outcome.error);
-                            if (outcome.ok && media_override)
-                                commit_room_media_preview_override_(
-                                    room_id, media_override->has_override,
-                                    media_override->mode);
-                        },
-                        Qt::QueuedConnection);
-                });
-        };
-        mainApp_->space_root()->settings_view()->set_image_pack_provider(
-            make_static_image_provider_with_fetch_(96, 96));
-        mainApp_->space_root()->settings_view()->on_image_pack_images_needed =
-            [this](std::string pack_id)
-        {
-            handle_image_pack_images_needed_(
-                pack_id, mainApp_->space_root()->settings_view());
-        };
-        mainApp_->space_root()->settings_view()->on_image_pack_pending_image_added =
-            [this](std::uint64_t local_id, const std::vector<std::uint8_t>& bytes,
-                  const std::string& mime)
-        {
-            handle_image_pack_pending_image_added_(
-                local_id, bytes, mime, mainApp_->space_root()->settings_view());
-        };
-        setup_dm_callbacks();
         // on_ignore_user already provided by main_room_pane_->attach() above
         // (RoomPane::wire_room_view_).
 
         mainAppSurface_->set_root(std::move(main_app_owner));
     }
 
-    // ---- Compose text area (self-owned — see ComposeBar::text_area()) ----
-    roomTextArea_ = mainApp_->room_view()->compose_bar()->text_area();
-    // Harmless no-op on every backend except Windows' BetterText control —
-    // see NativeTextArea::set_image_resolver's own doc comment. Wired
-    // unconditionally here for symmetry with pop-out wiring (RoomWindowBase::
-    // finish_init_() already does this unconditionally for every pop-out).
-    roomTextArea_->set_image_resolver(make_static_image_provider_with_fetch_(28, 28));
-    // All four composer popups (gif > slash > shortcode > mention) are driven
-    // through the shared ComposePopups dispatch; the controllers are created
-    // just below (slash/shortcode/mention) and in the GIF block further down.
-    roomTextArea_->set_on_changed(
-        [this](const std::string& s)
-        {
-            if (mainApp_)
-            {
-                mainApp_->room_view()->set_current_text(s);
-            }
-            tesseract::views::dispatch_compose_text_changed(
-                s, roomTextArea_->cursor_byte_pos(), gif_controller_.get(),
-                slash_controller_.get(), shortcode_controller_.get(),
-                mention_controller_.get());
-        });
-    roomTextArea_->set_on_submit(
-        [this]
-        {
-            if (tesseract::views::dispatch_compose_submit(
-                    gif_controller_.get(), slash_controller_.get(),
-                    shortcode_controller_.get(), mention_controller_.get()))
-            {
-                return;
-            }
-            onSendClicked();
-        });
-    roomTextArea_->push_popup_nav(
-        [this](tk::NavKey nk) -> bool
-        {
-            return tesseract::views::dispatch_compose_nav(
-                nk, gif_controller_.get(), slash_controller_.get(),
-                shortcode_controller_.get(), mention_controller_.get());
-        });
-
-    // ── /command autocomplete popup ───────────────────────────────────────
-    if (mainAppSurface_)
-        slash_popup_ = mainAppSurface_->host().make_popup_surface();
-    {
-        auto w = std::make_unique<tesseract::views::SlashCommandPopup>();
-        slash_popup_widget_ = w.get();
-        if (slash_popup_)
-            slash_popup_->set_root(std::move(w));
-    }
-    {
-        tesseract::views::SlashCommandController::Hooks sh;
-        sh.show = [this](tk::Rect cursor, int rows)
-        {
-            tesseract::RoomPane::position_dropdown_popup_(
-                slash_popup_.get(), cursor, rows,
-                tesseract::views::SlashCommandPopup::kRowHeight,
-                tesseract::views::SlashCommandPopup::kWidth);
-        };
-        sh.hide = [this] { hide_slash_popup_(); };
-        sh.repaint = [this]
-        {
-            if (slash_popup_)
-                slash_popup_->request_repaint();
-        };
-        main_room_pane_->wire_slash_hooks_(sh);
-        sh.on_selfie = [this]
-        {
-            if (!mainApp_)
-                return;
-            mainApp_->is_call_active = [this] { return active_call() != nullptr; };
-            mainApp_->on_selfie_captured =
-                [this](std::vector<std::uint8_t> bgra,
-                       std::uint32_t w, std::uint32_t h)
-                {
-                    QImage img(bgra.data(), static_cast<int>(w),
-                               static_cast<int>(h), QImage::Format_ARGB32);
-                    QBuffer buf;
-                    buf.open(QIODevice::WriteOnly);
-                    img.save(&buf, "JPEG", 90);
-                    const QByteArray& ba = buf.data();
-                    if (!ba.isEmpty() && mainApp_ &&
-                        mainApp_->room_view()->compose_bar())
-                    {
-                        mainApp_->room_view()->compose_bar()->add_pending_image(
-                            std::vector<std::uint8_t>(ba.begin(), ba.end()),
-                            "image/jpeg", "selfie.jpg");
-                    }
-                };
-            mainApp_->open_camera_overlay();
-        };
-        slash_controller_ =
-            std::make_unique<tesseract::views::SlashCommandController>(
-                roomTextArea_, slash_popup_widget_, std::move(sh));
-    }
-    if (slash_popup_)
-    {
-        slash_popup_->on_dismiss_requested = [this]
-        {
-            if (slash_controller_)
-                slash_controller_->hide();
-        };
-    }
-
-    // ── :shortcode: emoji/emoticon autocomplete popup ─────────────────────
-    if (mainAppSurface_)
-        shortcode_popup_ = mainAppSurface_->host().make_popup_surface();
-    {
-        auto w = std::make_unique<tesseract::views::ShortcodePopup>();
-        shortcode_popup_widget_ = w.get();
-        shortcode_popup_widget_->set_image_provider(
-            make_static_image_provider_with_fetch_(28, 28));
-        if (shortcode_popup_)
-            shortcode_popup_->set_root(std::move(w));
-    }
-    {
-        tesseract::views::ShortcodeController::Hooks sh;
-        sh.show = [this](tk::Rect cursor, int rows)
-        {
-            tesseract::RoomPane::position_dropdown_popup_(
-                shortcode_popup_.get(), cursor, rows,
-                tesseract::views::ShortcodePopup::kRowHeight,
-                tesseract::views::ShortcodePopup::kWidth);
-        };
-        sh.hide = [this] { hide_shortcode_popup_(); };
-        sh.repaint = [this]
-        {
-            if (shortcode_popup_)
-                shortcode_popup_->request_repaint();
-        };
-        // Popup passed as nullptr: this popup's own image provider is set
-        // above with fetch-on-miss (make_static_image_provider_with_fetch_),
-        // richer than wire_shortcode_hooks_'s peek-only default — don't let
-        // it clobber that. resolve_image is overridden right after for the
-        // same reason.
-        main_room_pane_->wire_shortcode_hooks_(nullptr, sh);
-        sh.resolve_image = make_static_image_provider_with_fetch_(28, 28);
-        shortcode_controller_ =
-            std::make_unique<tesseract::views::ShortcodeController>(
-                roomTextArea_, shortcode_popup_widget_, std::move(sh));
-    }
-    if (shortcode_popup_)
-    {
-        shortcode_popup_->on_dismiss_requested = [this]
-        {
-            if (shortcode_controller_)
-                shortcode_controller_->hide();
-        };
-    }
-
-    // ── @mention autocomplete popup ───────────────────────────────────────
-    if (mainAppSurface_)
-        mention_popup_ = mainAppSurface_->host().make_popup_surface();
-    {
-        auto w = std::make_unique<tesseract::views::MentionPopup>();
-        mention_popup_widget_ = w.get();
-        if (mention_popup_)
-            mention_popup_->set_root(std::move(w));
-    }
-    {
-        tesseract::views::MentionController::Hooks mh;
-        mh.show = [this](tk::Rect cursor, int rows)
-        {
-            tesseract::RoomPane::position_dropdown_popup_(
-                mention_popup_.get(), cursor, rows,
-                tesseract::views::MentionPopup::kRowHeight,
-                tesseract::views::MentionPopup::kWidth);
-        };
-        mh.hide = [this] { hide_mention_popup_(); };
-        mh.repaint = [this]
-        {
-            if (mention_popup_)
-                mention_popup_->request_repaint();
-        };
-        main_room_pane_->wire_mention_hooks_(mention_popup_widget_, mh);
-        mention_controller_ =
-            std::make_unique<tesseract::views::MentionController>(
-                roomTextArea_, client_, mention_popup_widget_,
-                std::move(mh));
-    }
-    if (mention_popup_)
-    {
-        mention_popup_->on_dismiss_requested = [this]
-        {
-            if (mention_controller_)
-                mention_controller_->hide();
-        };
-    }
-
-    // ── GIF picker (/gif <query>) ────────────────────────────────────────────
-    // Eagerly create the strip + controller so the on_changed/on_submit lambdas
-    // above (which capture `this`) can drive it once the user types `/gif `.
-    if (mainAppSurface_)
-        gif_popup_ = mainAppSurface_->host().make_popup_surface();
-    {
-        auto w = std::make_unique<tesseract::views::GifPopup>();
-        gif_popup_widget_ = w.get();
-        if (gif_popup_)
-        {
-            gif_popup_->set_root(std::move(w));
-            gif_popup_->set_anim_cache(&account_manager_.anim_cache());
-        }
-    }
-    // Strip preview provider: two-stage loading.
-    // Stage 1 — preview_url (static JPEG, fast): shown immediately as fallback.
-    // Stage 2 — image_url (MP4/WebP/GIF): replaces static once decoded.
-    // Two-stage GIF strip cell provider, parameterised on a `repaint` callback
-    // so the identical body serves the main window's strip and every pop-out's
-    // (each passes a repaint targeting its own popup surface, self-guarded by
-    // that window's liveness token). Stored as a member; pop-outs reach it via
-    // the gif_strip_image_() override.
-    gif_strip_provider_ =
-        [this](const tesseract::GifResult& result,
-               const std::function<void()>& repaint) -> const tk::Image*
-        {
-            // The strip animates strip_url (WebP/GIF, native decode), keyed in
-            // anim_cache. Serving a cached frame means animated content is on
-            // screen, so make sure the tick timer is running: re-shown searches
-            // take this path without re-fetching, skipping the fetch-path start.
-            const tk::CacheKey strip_key = tk::CacheKey::media(result.strip_url);
-            if (const tk::Image* f = account_manager_.anim_cache().current_frame(strip_key))
-            {
-                start_anim_tick_();
-                return f;
-            }
-            // NOTE: the static-preview fallback is returned at the *end* of this
-            // lambda, AFTER the animated re-fetch is kicked below. Returning it
-            // here would short-circuit re-animation on a re-shown search whose
-            // anim_cache_ entry was evicted (budget/TTL) while its static
-            // thumbnail lingers in gif_previews_.
-            // Kick off static preview fetch only when not already cached.
-            if (!gif_previews_.count(tk::CacheKey::gif_preview(result.preview_url)) &&
-                gif_preview_inflight_.insert(result.preview_url).second)
-            {
-                auto alive = gif_alive_;
-                auto url = result.preview_url;
-                {
-                    const tk::CacheKey disk_key = tk::CacheKey::gif_source(url);
-                    auto req_id = begin_media_req_(0,
-                        [this, url, disk_key, alive, repaint](
-                            std::vector<std::uint8_t> bytes) mutable
-                        {
-                            gif_preview_inflight_.erase(url);
-                            if (bytes.empty()) return;
-                            run_async_(
-                                [this, disk_key, bytes]() mutable
-                                {
-                                    store_media_bytes_(disk_key, bytes);
-                                });
-                            if (!*alive) return;
-                            using CW = tesseract::views::GifPopup;
-                            DecodedImage d = decode_image_(
-                                bytes, int(CW::kCellW) * 2, int(CW::kCellH) * 2);
-                            if (d.still)
-                                gif_previews_[tk::CacheKey::gif_preview(url)] = std::move(d.still);
-                            repaint();
-                        });
-                    run_async_(
-                        [this, req_id, url, disk_key]()
-                        {
-                            auto bytes = load_media_bytes_(disk_key);
-                            if (!bytes.empty())
-                            {
-                                post_to_ui_(
-                                    [this, req_id, bytes = std::move(bytes)]() mutable
-                                    {
-                                        handle_media_ready_ui_(req_id, std::move(bytes));
-                                    });
-                                return;
-                            }
-                            if (client_)
-                                client_->fetch_url_async(req_id, 0, url);
-                        });
-                }
-            }
-            // Kick off the strip-display fetch (strip_url: WebP/GIF) — decode
-            // entirely on the worker thread. The MP4 send form is fetched
-            // separately at send time, not here.
-            if (gif_anim_inflight_.insert(result.strip_url).second)
-            {
-                auto alive = gif_alive_;
-                auto anim_url = result.strip_url;
-                auto anim_mime = result.strip_mime;
-                {
-                    const tk::CacheKey disk_key = tk::CacheKey::gif_source(anim_url);
-                    auto req_id = begin_media_req_(0,
-                        [this, anim_url, anim_mime, disk_key, alive, repaint](
-                            std::vector<std::uint8_t> bytes) mutable
-                        {
-                            gif_anim_inflight_.erase(anim_url);
-                            if (bytes.empty()) return;
-                            run_async_(
-                                [this, anim_url, anim_mime, disk_key, alive,
-                                 repaint, bytes = std::move(bytes)]() mutable
-                                {
-                                    store_media_bytes_(disk_key, bytes);
-                                    using CW = tesseract::views::GifPopup;
-                                    if (anim_mime == "video/mp4")
-                                    {
-                                        tk::DecodedVideoFrames dvf =
-                                            tk::decode_video_frames(
-                                                bytes.data(), bytes.size(),
-                                                int(CW::kCellW) * 2,
-                                                int(CW::kCellH) * 2);
-                                        auto imgs = std::make_shared<
-                                            std::vector<std::unique_ptr<tk::Image>>>();
-                                        std::vector<int> delays;
-                                        for (auto& f : dvf.frames)
-                                        {
-                                            QImage qi(f.bgra.data(), f.w, f.h,
-                                                      QImage::Format_ARGB32);
-                                            imgs->push_back(
-                                                tk::qt6::make_image(qi.copy()));
-                                            delays.push_back(f.delay_ms);
-                                        }
-                                        post_to_ui_(
-                                            [this, anim_url, imgs,
-                                             delays = std::move(delays),
-                                             alive, repaint]() mutable
-                                            {
-                                                if (!*alive) return;
-                                                if (!imgs->empty())
-                                                {
-                                                    account_manager_.anim_cache().store(
-                                                        tk::CacheKey::media(anim_url), std::move(*imgs),
-                                                        std::move(delays),
-                                                        QDateTime::currentMSecsSinceEpoch());
-                                                    if (tk_anim_timer_ &&
-                                                        !tk_anim_timer_->isActive())
-                                                        tk_anim_timer_->start();
-                                                }
-                                                repaint();
-                                            });
-                                    }
-                                    else
-                                    {
-                                        auto d = std::make_shared<DecodedImage>(
-                                            decode_image_(bytes,
-                                                          int(CW::kCellW) * 2,
-                                                          int(CW::kCellH) * 2));
-                                        post_to_ui_(
-                                            [this, anim_url, d, alive,
-                                             repaint]() mutable
-                                            {
-                                                if (!*alive) return;
-                                                if (!d->frames.empty())
-                                                {
-                                                    account_manager_.anim_cache().store(
-                                                        tk::CacheKey::media(anim_url), std::move(d->frames),
-                                                        std::move(d->delays_ms),
-                                                        QDateTime::currentMSecsSinceEpoch());
-                                                    if (tk_anim_timer_ &&
-                                                        !tk_anim_timer_->isActive())
-                                                        tk_anim_timer_->start();
-                                                }
-                                                else if (d->still)
-                                                {
-                                                    gif_previews_[tk::CacheKey::gif_preview(anim_url)] =
-                                                        std::move(d->still);
-                                                }
-                                                repaint();
-                                            });
-                                    }
-                                });
-                        });
-                    run_async_(
-                        [this, req_id, anim_url, disk_key]()
-                        {
-                            auto bytes = load_media_bytes_(disk_key);
-                            if (!bytes.empty())
-                            {
-                                post_to_ui_(
-                                    [this, req_id, bytes = std::move(bytes)]() mutable
-                                    {
-                                        handle_media_ready_ui_(req_id, std::move(bytes));
-                                    });
-                                return;
-                            }
-                            if (client_)
-                                client_->fetch_url_async(req_id, 0, anim_url);
-                        });
-                }
-            }
-            // Static JPEG preview shown while the animation decodes (or as the
-            // permanent fallback for a non-animated result).
-            if (auto it = gif_previews_.find(tk::CacheKey::gif_preview(result.preview_url));
-                it != gif_previews_.end())
-                return it->second.get();
-            return nullptr;
-        };
-    // The main window's own strip repaints its own surface.
-    gif_popup_widget_->set_image_provider(
-        [this](const tesseract::GifResult& result) -> const tk::Image*
-        {
-            return gif_strip_provider_(result,
-                                       [this]
-                                       {
-                                           if (gif_popup_)
-                                               gif_popup_->request_repaint();
-                                       });
-        });
-    {
-        tesseract::views::GifController::Hooks gh;
-        gh.show = [this] { show_gif_popup_(); };
-        gh.hide = [this] { hide_gif_popup_(); };
-        gh.repaint = [this]
-        {
-            if (gif_popup_)
-                gif_popup_->request_repaint();
-        };
-        main_room_pane_->wire_gif_hooks_(gh);
-        gif_controller_ = std::make_unique<tesseract::views::GifController>(
-            roomTextArea_, gif_popup_widget_, std::move(gh));
-    }
-
-    roomTextArea_->set_on_edit_last(
-        [this]
-        {
-            return mainApp_ && mainApp_->room_view() &&
-                   mainApp_->room_view()->edit_last_own();
-        });
-    // Auto-grow (set_on_height_changed) and image-paste (set_on_image_paste)
-    // are wired internally by ComposeBar's own constructor now — see
-    // ComposeBar::ComposeBar()'s text_area_ setup.
+    // The composer's popups (@mention, /command, :shortcode:, /gif) and the text
+    // area's change/submit/navigation wiring are the shared ComposerPopups.
+    create_compose_popups_(mainAppSurface_->host());
 
     // The topic field and the new-pack-name/shortcode/rename fields are all
     // self-owned by each RoomSettingsView instance (room_view_'s and the
@@ -1257,133 +341,6 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
 
     // The room-list search field is wired in ShellBase::wire_main_app_widget_()
     // (shared across all four shells).
-
-    // Quick switcher (Ctrl+K) — search field is self-owned; only the
-    // shell-level Up/Down/Escape nav and on_close need wiring here.
-    if (auto* qsf = mainApp_->quick_switcher()->search_field())
-    {
-        qsf->push_popup_nav(
-            [this](tk::NavKey nk) -> bool
-            {
-                auto* qs = mainApp_ ? mainApp_->quick_switcher() : nullptr;
-                if (!qs || !qs->is_open())
-                    return false;
-                switch (nk)
-                {
-                case tk::NavKey::Up:
-                    qs->move_selection(-1);
-                    mainAppSurface_->relayout();
-                    return true;
-                case tk::NavKey::Down:
-                    qs->move_selection(+1);
-                    mainAppSurface_->relayout();
-                    return true;
-                case tk::NavKey::Escape:
-                    closeQuickSwitch_();
-                    return true;
-                default:
-                    return false;
-                }
-            });
-    }
-    if (mainApp_ && mainApp_->quick_switcher())
-        mainApp_->quick_switcher()->on_close = [this] { closeQuickSwitch_(); };
-
-    // Message search (Ctrl+Shift+F) — search field is self-owned; only the
-    // shell-level Up/Down/Escape nav and on_close need wiring here.
-    if (auto* msf = mainApp_->message_search()->search_field())
-    {
-        msf->push_popup_nav(
-            [this](tk::NavKey nk) -> bool
-            {
-                auto* ms = mainApp_ ? mainApp_->message_search() : nullptr;
-                if (!ms || !ms->is_open())
-                    return false;
-                switch (nk)
-                {
-                case tk::NavKey::Up:
-                    ms->move_selection(-1);
-                    mainAppSurface_->relayout();
-                    return true;
-                case tk::NavKey::Down:
-                    ms->move_selection(+1);
-                    mainAppSurface_->relayout();
-                    return true;
-                case tk::NavKey::Escape:
-                    closeMessageSearch_();
-                    return true;
-                default:
-                    return false;
-                }
-            });
-    }
-    if (mainApp_ && mainApp_->message_search())
-        mainApp_->message_search()->on_close = [this] { closeMessageSearch_(); };
-
-    // Forward room picker — search field is self-owned; only the
-    // shell-level Up/Down/Escape nav and on_close need wiring here.
-    if (auto* fpf = mainApp_->forward_picker()->search_field())
-    {
-        fpf->push_popup_nav(
-            [this](tk::NavKey nk) -> bool
-            {
-                auto* fp = mainApp_ ? mainApp_->forward_picker() : nullptr;
-                if (!fp || !fp->is_open())
-                    return false;
-                switch (nk)
-                {
-                case tk::NavKey::Up:
-                    fp->move_selection(-1);
-                    mainAppSurface_->relayout();
-                    return true;
-                case tk::NavKey::Down:
-                    fp->move_selection(+1);
-                    mainAppSurface_->relayout();
-                    return true;
-                case tk::NavKey::Escape:
-                    closeForwardPicker_();
-                    return true;
-                default:
-                    return false;
-                }
-            });
-    }
-    if (mainApp_ && mainApp_->forward_picker())
-        mainApp_->forward_picker()->on_close = [this] { closeForwardPicker_(); };
-
-    // Per-room "find in conversation" (Ctrl+F) — search field is self-owned;
-    // only the shell-level Up/Down/Escape nav and on_close need wiring here.
-    if (mainApp_ && mainApp_->room_view() && mainApp_->room_view()->room_search_bar())
-    {
-        auto* bar = mainApp_->room_view()->room_search_bar();
-        if (auto* rif = bar->search_field())
-        {
-            rif->push_popup_nav(
-                [this](tk::NavKey nk) -> bool
-                {
-                    auto* rv = mainApp_ ? mainApp_->room_view() : nullptr;
-                    if (!rv || !rv->room_search_open())
-                        return false;
-                    switch (nk)
-                    {
-                    case tk::NavKey::Up:
-                        if (rv->on_room_search_navigate) rv->on_room_search_navigate(-1);
-                        mainAppSurface_->relayout();
-                        return true;
-                    case tk::NavKey::Down:
-                        if (rv->on_room_search_navigate) rv->on_room_search_navigate(+1);
-                        mainAppSurface_->relayout();
-                        return true;
-                    case tk::NavKey::Escape:
-                        closeFindInRoom_();
-                        return true;
-                    default:
-                        return false;
-                    }
-                });
-        }
-        bar->on_close = [this] { closeFindInRoom_(); };
-    }
 
     // Global shortcuts (Ctrl+K, Ctrl+F, Ctrl+Tab, Alt+Left, Ctrl+/, ...),
     // bound from the shared registry. A QShortcut fires even while the
@@ -1411,21 +368,12 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
             connect(sc, &QShortcut::activated, this,
                     [this, event = tk::to_key_event(chord)]
                     {
-                        if (mainApp_)
-                            mainApp_->dispatch_key_down(event);
+                        if (main_app_)
+                            main_app_->dispatch_key_down(event);
                     });
         }
     }
 
-    // roomTextArea_ self-positions via ComposeBar's own arrange() and is
-    // force-hidden by MainAppWidget::arrange() while any modal is open — no
-    // set_on_layout wiring needed for it anymore.
-
-    mainAppSurface_->set_on_file_drop_error(
-        [this](std::string reason)
-        {
-            show_status_message_(std::move(reason));
-        });
 
     // Right-click: user-strip actions (lower-left corner) or sticker save (chat).
     mainAppSurface_->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1434,10 +382,10 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
         [this](const QPoint& pos)
         {
             const bool in_user_strip =
-                mainApp_ && mainApp_->user_info() &&
+                main_app_ && main_app_->user_info() &&
                 [&]
             {
-                const auto& r = mainApp_->user_info()->bounds();
+                const auto& r = main_app_->user_info()->bounds();
                 return pos.x() >= r.x && pos.x() < r.right() &&
                        pos.y() >= r.y && pos.y() < r.bottom();
             }();
@@ -1446,12 +394,12 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
                 onUserStripContextMenu(mainAppSurface_->mapToGlobal(pos));
                 return;
             }
-            if (!mainApp_ || mainApp_->room_view()->is_overlay_open())
+            if (!main_app_ || main_app_->room_view()->is_overlay_open())
             {
                 return;
             }
             auto hit =
-                mainApp_->room_view()->message_list()->sticker_hit_at(tk::Point{
+                main_app_->room_view()->message_list()->sticker_hit_at(tk::Point{
                     static_cast<float>(pos.x()), static_cast<float>(pos.y())});
             if (!hit)
             {
@@ -1491,20 +439,14 @@ MainWindow::MainWindow(tesseract::AccountManager& account_manager,
                                         body, body, mxc_url, info_json);
                                     if (res.ok)
                                         return;
-                                    QMetaObject::invokeMethod(
-                                        this,
-                                        [this, message = res.message]()
-                                        {
-                                            statusBar()->showMessage(
-                                                QString::fromStdString(message), 6000);
-                                        });
+                                    show_status_message_(res.message, 6000);
                                 });
                         });
             }
             menu->popup(mainAppSurface_->mapToGlobal(pos));
         });
 
-    statusBar()->showMessage(QString::fromStdString(tk::tr("Not logged in")));
+    refresh_sync_status_(); // "Not logged in" until a session restores
     // Generic status-bar click (distinct from statusLinkLabel_'s
     // http(s)-only QLabel::linkActivated handling) — see eventFilter()'s
     // QEvent::MouseButtonRelease branch. Safe unconditionally:
@@ -1645,10 +587,9 @@ void MainWindow::captureScreenshots(const std::string& output_dir)
         qCritical("Could not load screenshot assets");
         std::exit(EXIT_FAILURE);
     }
-    populateUserStrip();
+    refresh_user_strip_();
 
-    statusBar()->showMessage(QString::fromStdString(tk::tr("Connected")));
-    showMainContent_();
+    show_main_content_();
     resize(1100, 768);
 
     const QString dir = QString::fromStdString(output_dir);
@@ -1666,6 +607,8 @@ void MainWindow::captureScreenshots(const std::string& output_dir)
 
 MainWindow::~MainWindow()
 {
+    release_popups_();
+    release_settings_surface_();
     // unregister_window is called in closeEvent (before quit) so it is not
     // repeated here; broadcast_rebuild_tray_ is still needed to refresh any
     // remaining windows' tray menus after this window's C++ resources are freed.
@@ -1720,12 +663,9 @@ MainWindow::~MainWindow()
     client_ = nullptr;
     event_handler_ = nullptr;
 
-    // LoginView is a child widget, normally destroyed during ~QMainWindow
-    // — but that runs *after* the AccountSessions (and thus their
-    // Clients) are destroyed, and ~LoginView calls cancel_oauth on its
-    // bound client. Tear it down here while everything is still alive.
-    delete loginView_;
-    loginView_ = nullptr;
+    // Release the login page before the AccountSessions (and thus the Clients
+    // it is bound to) and pending_login_client_ are destroyed.
+    release_login_surface_();
 
     pending_login_client_.reset();
     // AccountManager owns the sessions — they are cleaned up when
@@ -1904,60 +844,11 @@ void MainWindow::activateOnStartup()
 // eventFilter is defined further down (multi-account section) so it can
 // dispatch user-strip left-clicks into the AccountPicker popover.
 
-void MainWindow::openQuickSwitch_()
-{
-    if (!mainApp_ || !mainApp_->quick_switcher())
-        return;
-    // The Ctrl+K shortcut is application-scoped, so this can fire while a
-    // pop-out room window holds focus. Bring the main window forward (the
-    // switcher lives here) so it is visible and its search field can focus.
-    if (!isActiveWindow())
-        activateWindowWithToken_(QString{});
-    mainApp_->show_quick_switch(true);
-    if (mainAppSurface_)
-        mainAppSurface_->relayout();
-}
-
-void MainWindow::closeQuickSwitch_()
-{
-    if (mainApp_)
-        mainApp_->show_quick_switch(false);
-    if (mainAppSurface_)
-        mainAppSurface_->relayout();
-}
-
-void MainWindow::openMessageSearch_()
-{
-    if (!mainApp_ || !mainApp_->message_search())
-        return;
-    // Application-scoped shortcut: may fire while a pop-out holds focus. Bring
-    // the main window forward (search lives here) so its field can focus.
-    if (!isActiveWindow())
-        activateWindowWithToken_(QString{});
-    mainApp_->show_message_search(true);
-    if (mainAppSurface_)
-        mainAppSurface_->relayout();
-}
-
-void MainWindow::closeMessageSearch_()
-{
-    if (mainApp_)
-        mainApp_->show_message_search(false);
-    if (mainAppSurface_)
-        mainAppSurface_->relayout();
-}
-
-void MainWindow::closeForwardPicker_()
-{
-    if (mainApp_ && mainApp_->forward_picker())
-        mainApp_->forward_picker()->close();
-}
-
 void MainWindow::focus_forward_picker_field_()
 {
-    if (!mainApp_ || !mainApp_->forward_picker())
+    if (!main_app_ || !main_app_->forward_picker())
         return;
-    if (auto* f = mainApp_->forward_picker()->search_field())
+    if (auto* f = main_app_->forward_picker()->search_field())
     {
         f->set_text("");
         f->set_focused(true);
@@ -1966,53 +857,17 @@ void MainWindow::focus_forward_picker_field_()
 
 void MainWindow::hide_forward_picker_field_()
 {
-    if (mainApp_ && mainApp_->forward_picker())
-        if (auto* f = mainApp_->forward_picker()->search_field())
+    if (main_app_ && main_app_->forward_picker())
+        if (auto* f = main_app_->forward_picker()->search_field())
             f->set_visible(false);
-}
-
-void MainWindow::openFindInRoom_()
-{
-    if (!mainApp_ || !mainApp_->room_view())
-        return;
-    if (current_room_id_.empty())
-        return;
-    mainApp_->room_view()->open_room_search();
-    if (mainAppSurface_)
-        mainAppSurface_->relayout();
-}
-
-void MainWindow::closeFindInRoom_()
-{
-    if (mainApp_ && mainApp_->room_view())
-        mainApp_->room_view()->close_room_search();
-    if (mainAppSurface_)
-        mainAppSurface_->relayout();
 }
 
 void MainWindow::keyPressEvent(QKeyEvent* ev)
 {
-    if (ev->key() == Qt::Key_Escape)
+    if (ev->key() == Qt::Key_Escape && handle_escape_key_())
     {
-        const bool had_quick_switch = mainApp_ && mainApp_->quick_switcher() &&
-                                      mainApp_->quick_switcher()->is_open();
-        const bool had_message_search = mainApp_ && mainApp_->message_search() &&
-                                        mainApp_->message_search()->is_open();
-        const bool had_room_search = mainApp_ && mainApp_->room_view() &&
-                                     mainApp_->room_view()->room_search_open();
-        if (mainApp_ && mainApp_->dispatch_key_down({tk::Key::Escape}))
-        {
-            if (had_quick_switch)
-                closeQuickSwitch_();
-            else if (had_message_search)
-                closeMessageSearch_();
-            else if (had_room_search)
-                closeFindInRoom_();
-            else if (mainAppSurface_)
-                mainAppSurface_->relayout();
-            ev->accept();
-            return;
-        }
+        ev->accept();
+        return;
     }
     // Ctrl+K is handled by an application-scoped QShortcut (see ctor) so it
     // works while a native text widget has focus; no keyPressEvent branch.
@@ -2033,10 +888,8 @@ void MainWindow::resizeEvent(QResizeEvent* ev)
     // from whatever control anchored it. Close everything instead.
     if (mainAppSurface_) mainAppSurface_->host().dismiss_active_popup();
     if (room_view_) room_view_->dismiss_popups();
-    tesseract::views::hide_all_compose_popups(
-        gif_controller_.get(), slash_controller_.get(),
-        shortcode_controller_.get(), mention_controller_.get());
-    if (accountPickerPopover_) accountPickerPopover_->hide();
+    hide_compose_popups_();
+    close_account_picker_();
 }
 
 void MainWindow::moveEvent(QMoveEvent* ev)
@@ -2105,72 +958,19 @@ void MainWindow::hideEvent(QHideEvent* ev)
 
 // ---------------------------------------------------------------------------
 
-void MainWindow::ensureLoginView_()
-{
-    if (loginView_)
-        return;
-    loginView_ = new LoginView(contentStack_);
-    loginView_->set_theme(current_theme_);
-    contentStack_->addWidget(loginView_);
-    // Route the homeserver-discovery debounce through the shell's worker
-    // drain so a blocked discover_homeserver call can't outlive ~LoginView
-    // and corrupt the heap (mirrors the SettingsController wiring below).
-    loginView_->set_run_async(
-        [this](std::function<void()> fn) { run_async_(std::move(fn)); });
-    connect(loginView_, &LoginView::loginSucceeded, this,
-            &MainWindow::onLoginSucceeded);
-    connect(loginView_, &LoginView::loginCancelled, this,
-            &MainWindow::onLoginCancelled);
-    connect(loginView_, &LoginView::settingsRequested, this,
-            [this] { open_settings_from_login_(); });
-}
-
-void MainWindow::teardownLoginView_()
-{
-    if (!loginView_)
-        return;
-    loginView_->set_client(nullptr);
-    auto* to_destroy = loginView_;
-    tesseract::schedule_deferred_teardown(
-        mainAppSurface_->host(),
-        [this, to_destroy] { return loginView_ == to_destroy; },
-        [this, to_destroy]
-        {
-            delete to_destroy;
-            loginView_ = nullptr;
-        });
-}
-
-void MainWindow::teardownSettingsView_()
-{
-    if (!settingsWidget_)
-        return;
-    stats_settings_view_ = nullptr;
-    auto* to_destroy = settingsWidget_;
-    tesseract::schedule_deferred_teardown(
-        mainAppSurface_->host(),
-        [this, to_destroy] { return settingsWidget_ == to_destroy; },
-        [this, to_destroy]
-        {
-            delete to_destroy;
-            settingsWidget_ = nullptr;
-        });
-}
-
 void MainWindow::close_app_settings_ui_()
 {
-    if (!settingsWidget_ || contentStack_->currentWidget() != settingsWidget_)
+    if (!settings_surface_ || contentStack_->currentWidget() != settings_native_())
         return;
-    // Same steps as SettingsWidget::settingsClosed.
     stop_search_index_stats_poll_();
     leaveSettings_();
 }
 
 void MainWindow::rebind_login_client_ui_()
 {
-    if (!loginView_)
+    if (!login_view_)
         return;
-    loginView_->set_client(reset_pending_login_client_());
+    login_view_->set_client(reset_pending_login_client_());
     // Swap only. Settings is open on top of the login view, and reset() would
     // refocus its homeserver field mid-typing; the homeserver check is re-run
     // by leaving Settings (take_login_recheck_()).
@@ -2180,26 +980,34 @@ void MainWindow::leaveSettings_()
 {
     // Opened from the login screen: go back to it (the view is still alive
     // in the stack) instead of the main content, which would tear it down.
-    if (take_settings_from_login_() && loginView_)
+    if (take_settings_from_login_() && login_view_)
     {
-        contentStack_->setCurrentWidget(loginView_);
+        contentStack_->setCurrentWidget(login_native_());
         // A proxy change made in Settings replaced the client: re-run the
         // homeserver check against it (a failed lookup made before the proxy
         // was fixed would otherwise stay on screen).
         if (take_login_recheck_())
-            loginView_->reset();
+            login_view_->reset();
     }
     else
-        showMainContent_();
+        show_main_content_();
     set_app_settings_open_(false);
-    teardownSettingsView_();
+    teardown_settings_view_();
 }
 
-void MainWindow::showMainContent_()
+void MainWindow::show_main_content_()
 {
     contentStack_->setCurrentWidget(mainAppSurface_);
-    teardownLoginView_();
+    teardown_login_view_();
     mark_main_content_ready_();
+}
+
+void MainWindow::bring_main_window_forward_for_overlay_()
+{
+    if (!isActiveWindow())
+    {
+        activateWindowWithToken_(QString{});
+    }
 }
 
 void MainWindow::raise_main_window_ui_()
@@ -2225,11 +1033,9 @@ void MainWindow::doLogin()
     // the UI to it without touching disk, restoring, or re-adding accounts.
     if (is_secondary_window_startup_())
     {
-        finishLoginUi_(active_account_->user_id);
+        finish_login_ui_(active_account_->user_id);
         return;
     }
-
-    statusBar()->showMessage(QString::fromStdString(tk::tr("Restoring sessions\xe2\x80\xa6")));
 
     // Pre-flight OS-level connectivity check — see tk::Host::
     // is_network_available()'s doc comment. Computed here, on the UI
@@ -2254,29 +1060,12 @@ void MainWindow::doLogin()
                     start_hidden_ = false;
                     show();
                 }
-                ensureLoginView_();
-                loginView_->set_mode(tesseract::views::LoginView::Mode::Initial);
-                pending_login_is_add_account_ = false;
-                add_account_return_idx_ = -1;
-                pending_login_temp_dir_.clear();
-                pending_login_client_ = std::make_unique<tesseract::Client>();
-                loginView_->set_client(pending_login_client_.get());
-                loginView_->set_on_begin_oauth([this] { arm_pending_login_(); });
-                loginView_->reset();
-                contentStack_->setCurrentWidget(loginView_);
-                statusBar()->showMessage(QString::fromStdString(tk::tr("Not logged in")));
-                if (restore.any_restore_failed)
-                {
-                    if (restore.network_unavailable)
-                        loginView_->show_offline_error([this] { doLogin(); });
-                    else
-                        loginView_->show_restore_error(restore.restore_error,
-                                                       [this] { doLogin(); });
-                }
+                add_account_return_uid_.clear();
+                show_login_after_restore_(restore, [this] { doLogin(); });
                 return;
             }
 
-            finishLoginUi_(restore.active_uid);
+            finish_login_ui_(restore.active_uid);
         },
         network_available);
 }
@@ -2345,64 +1134,31 @@ tesseract::AuxWindowBase* MainWindow::create_aux_window_(std::string title,
     return new qt6::AuxWindow(title, std::move(root), width, height, current_theme_);
 }
 
-std::function<void()> MainWindow::make_tray_show_callback_()
+std::vector<std::uint8_t> MainWindow::encode_selfie_jpeg_(
+    const std::uint8_t* bgra, std::uint32_t w, std::uint32_t h)
 {
-    return [this]
-    {
-        // If the unread room is popped out, raise that window instead.
-        if (focus_tray_unread_popout_())
-            return;
-        activateWindowWithToken_(QString{});
-        navigate_tray_unread_();
-    };
+    QImage img(bgra, static_cast<int>(w), static_cast<int>(h),
+               QImage::Format_ARGB32);
+    QBuffer buf;
+    buf.open(QIODevice::WriteOnly);
+    img.save(&buf, "JPEG", 90);
+    const QByteArray& ba = buf.data();
+    return std::vector<std::uint8_t>(ba.begin(), ba.end());
 }
 
-std::function<void()> MainWindow::make_tray_toggle_callback_()
+bool MainWindow::main_window_foreground_for_tray_() const
 {
-    return [this]
-    {
-        // If the unread room is popped out, raise that window instead.
-        if (focus_tray_unread_popout_())
-            return;
-        if (isVisible() && isActiveWindow() && !last_tray_unread_)
-            hide();
-        else
-        {
-            activateWindowWithToken_(QString{});
-            navigate_tray_unread_();
-        }
-    };
+    return isVisible() && isActiveWindow();
 }
 
-void MainWindow::finishLoginUi_(const std::string& uid)
+void MainWindow::hide_main_window_for_tray_()
 {
-    switchActiveAccount(uid);
-    ensure_settings_controller_();
-    ensure_history_export_controller_();
-    wire_history_export_dialog_callbacks_();
-    statusBar()->showMessage(QString::fromStdString(tk::tr("Connected")));
-    showMainContent_();
+    hide();
+}
 
-    // Exactly one window owns the single app-wide tray icon (multi-window).
-    if (!tray_ && account_manager_.claim_tray_owner(this))
-    {
-        tray_ = std::make_unique<LinuxQtTrayIcon>(
-            make_tray_show_callback_(), make_tray_toggle_callback_(),
-            [this] { do_quit_(); }, this);
-        if (tray_->is_available())
-        {
-            qApp->setQuitOnLastWindowClosed(false);
-            // Seed the new tray with the current aggregate so an already-
-            // unread state shows immediately instead of waiting for the next
-            // sync tick to flip on_tray_unread_changed_.
-            tray_->set_unread(last_tray_unread_, last_tray_highlight_);
-            // tray_ didn't exist yet when switchActiveAccount() above last
-            // broadcast a rebuild, so its per-account submenu is still empty.
-            broadcast_rebuild_tray_();
-        }
-    }
-    start_search_provider_if_needed_();
-    start_mpris_if_needed_();
+void MainWindow::show_main_window_for_tray_(const std::string& token)
+{
+    activateWindowWithToken_(QString::fromStdString(token));
 }
 
 void MainWindow::start_search_provider_if_needed_()
@@ -2442,114 +1198,6 @@ void MainWindow::start_mpris_if_needed_()
     {
         mpris_.reset();
         account_manager_.release_mpris_owner(this);
-    }
-}
-
-void MainWindow::onLoginSucceeded()
-{
-    if (!pending_login_client_)
-    {
-        return; // defensive — should not happen
-    }
-
-    // The LoginView holds a raw alias to pending_login_client_; clear it before
-    // finalize_login_async_ moves the client out from under us.
-    loginView_->set_client(nullptr);
-
-    // Agnostic add-account core: dedupe check, export/rename-to-final/save,
-    // reopen + restore + prefs, bridge/notifier/UP via the shared install
-    // hooks, add_account, index update — runs off the UI thread. See
-    // ShellBase::finalize_login_async_.
-    finalize_login_async_(
-        [this](FinalizeLoginResult fin)
-        {
-            if (fin.rejected_duplicate)
-            {
-                statusBar()->showMessage(
-                    QString::fromStdString(tk::tr("Already signed in as %1"))
-                        .arg(QString::fromStdString(fin.user_id)),
-                    4000);
-                // Restore previous active account's UI.
-                const int back = add_account_return_idx_;
-                if (back >= 0 &&
-                    back < static_cast<int>(account_manager_.accounts().size()))
-                {
-                    switchActiveAccount(account_manager_.accounts()[back]->user_id);
-                    showMainContent_();
-                }
-                pending_login_is_add_account_ = false;
-                add_account_return_idx_ = -1;
-                return;
-            }
-
-            if (!fin.ok)
-            {
-                statusBar()->showMessage(
-                    QString::fromStdString(tk::tr("Sign-in failed: %1")).arg(QString::fromStdString(fin.error)),
-                    6000);
-                return;
-            }
-
-            switchActiveAccount(fin.user_id);
-            ensure_settings_controller_();
-            ensure_history_export_controller_();
-            wire_history_export_dialog_callbacks_();
-            statusBar()->showMessage(QString::fromStdString(tk::tr("Connected")));
-            showMainContent_();
-            begin_gated_encryption_setup_if_needed_(fin);
-
-            pending_login_is_add_account_ = false;
-            add_account_return_idx_ = -1;
-
-            // Exactly one window owns the single app-wide tray icon (multi-window).
-            if (!tray_ && account_manager_.claim_tray_owner(this))
-            {
-                tray_ = std::make_unique<LinuxQtTrayIcon>(
-                    make_tray_show_callback_(), make_tray_toggle_callback_(),
-                    [this] { do_quit_(); }, this);
-                if (tray_->is_available())
-                {
-                    qApp->setQuitOnLastWindowClosed(false);
-                    tray_->set_unread(last_tray_unread_, last_tray_highlight_);
-                }
-            }
-            // A new account was just added (and/or tray_ may have just been
-            // created above with an empty submenu) — refresh every menu.
-            broadcast_rebuild_tray_();
-            start_search_provider_if_needed_();
-            start_mpris_if_needed_();
-        });
-}
-
-void MainWindow::onLoginCancelled()
-{
-    // The user clicked Cancel, either during AddAccount (return to the
-    // previous foreground account) or during the very first (Initial-mode)
-    // login. Either way the in-flight client is discarded.
-    loginView_->set_client(nullptr);
-    pending_login_client_.reset();
-    if (!pending_login_is_add_account_)
-    {
-        // Initial mode: no back-state to return to — rearm a fresh pending
-        // client so Sign In works again, mirroring the one-time setup in
-        // restore_all_accounts_async_'s no-accounts branch. Without this,
-        // loginView_ is left clientless and Sign In silently does nothing.
-        ensureLoginView_();
-        loginView_->set_mode(tesseract::views::LoginView::Mode::Initial);
-        pending_login_client_ = std::make_unique<tesseract::Client>();
-        loginView_->set_client(pending_login_client_.get());
-        loginView_->set_on_begin_oauth([this] { arm_pending_login_(); });
-        loginView_->reset();
-        return;
-    }
-
-    int back = add_account_return_idx_;
-    pending_login_is_add_account_ = false;
-    add_account_return_idx_ = -1;
-    if (back >= 0 && back < static_cast<int>(account_manager_.accounts().size()))
-    {
-        switchActiveAccount(account_manager_.accounts()[back]->user_id);
-        showMainContent_();
     }
 }
 
@@ -2619,9 +1267,9 @@ void MainWindow::navigate_to_room(const std::string& room_id)
     {
         return;
     }
-    if (mainApp_)
+    if (main_app_)
     {
-        mainApp_->room_list_view()->set_selected_room(room_id);
+        main_app_->room_list_view()->set_selected_room(room_id);
     }
     tab_navigate_room(room_id);
     QString token = pending_wayland_token_;
@@ -2629,101 +1277,9 @@ void MainWindow::navigate_to_room(const std::string& room_id)
     activateWindowWithToken_(token);
 }
 
-void MainWindow::onSendClicked()
-{
-    if (mainApp_)
-    {
-        mainApp_->room_view()->compose_bar()->trigger_send();
-    }
-}
-
 void MainWindow::apply_window_title_ui_(const std::string& title)
 {
     setWindowTitle(QString::fromStdString(title));
-}
-
-void MainWindow::hide_compose_popups_()
-{
-    if (slash_controller_)
-        slash_controller_->hide();
-    if (shortcode_controller_)
-        shortcode_controller_->hide();
-    if (mention_controller_)
-        mention_controller_->hide();
-}
-
-void MainWindow::restart_mark_read_timer_(int delay_ms)
-{
-    if (!markReadTimer_)
-    {
-        markReadTimer_ = new QTimer(this);
-        markReadTimer_->setSingleShot(true);
-        connect(markReadTimer_, &QTimer::timeout, this,
-                [this]
-                {
-                    mark_room_read_(current_room_id_);
-                });
-    }
-    markReadTimer_->start(delay_ms);
-}
-
-void MainWindow::requestMoreHistory(const std::string& room_id)
-{
-    if (room_id.empty())
-    {
-        return;
-    }
-    auto& state = pagination_[room_id];
-    if (state.in_flight || state.reached_start)
-    {
-        return;
-    }
-    state.in_flight = true;
-    if (room_view_)
-        room_view_->set_paginating(true);
-    start_anim_tick_();
-
-    // Run the blocking SDK call off the UI thread; bounce the result back
-    // via a queued connection. `client_` is thread-safe (Rust runtime
-    // serialises concurrent calls).
-    auto* c = client_; // snapshot: avoid account-switch race on client_
-    if (!c)
-    {
-        state.in_flight = false;
-        if (room_view_)
-            room_view_->set_paginating(false);
-        return;
-    }
-    run_async_(
-        [this, c, room_id]
-        {
-            auto res = c->paginate_back_with_status(room_id, kPaginationBatch);
-            bool reached = res.ok && res.reached_start;
-            QMetaObject::invokeMethod(
-                this, "onPaginateFinished", Qt::QueuedConnection,
-                Q_ARG(QString, QString::fromStdString(room_id)),
-                Q_ARG(bool, reached));
-        });
-}
-
-void MainWindow::onPaginateFinished(QString roomId, bool reached_start)
-{
-    const std::string rid = roomId.toStdString();
-    bool is_current = (rid == current_room_id_);
-    push_paginate_result_(rid, reached_start);
-    if (is_current && mainApp_)
-    {
-        mainApp_->room_view()->message_list()->reset_near_top_latch();
-    }
-}
-
-void MainWindow::clearMessages()
-{
-    if (mainApp_)
-    {
-        mainApp_->room_view()->clear_room();
-        mainApp_->room_view()->set_messages({});
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2738,6 +1294,12 @@ void MainWindow::post_to_ui_(std::function<void()> fn)
 void MainWindow::post_to_ui_after_(int ms, std::function<void()> fn)
 {
     QTimer::singleShot(ms, this, std::move(fn));
+}
+
+void MainWindow::repaint_pickers_native_()
+{
+    if (compose_popups_)
+        compose_popups_->on_image_loaded();
 }
 
 void MainWindow::request_relayout_()
@@ -2757,67 +1319,15 @@ void MainWindow::request_repaint_()
     }
 }
 
-void MainWindow::on_rooms_updated_()
-{
-    refreshRoomList();
-    if (!current_room_id_.empty())
-    {
-        for (const auto& r : rooms_)
-        {
-            if (r.id == current_room_id_)
-            {
-                if (mainApp_)
-                {
-                    mainApp_->room_view()->set_room(r);
-                }
-                break;
-            }
-        }
-    }
-    else if (!pending_restore_rooms_.empty())
-    {
-        if (try_restore_tab_session_(pending_restore_rooms_,
-                                     pending_restore_rooms_[0]))
-            pending_restore_rooms_.clear();
-    }
-    refresh_window_title_();
-
-    update_secondary_room_infos_();
-}
-
-void MainWindow::on_invites_updated_()
-{
-    if (mainApp_)
-    {
-        mainApp_->room_list_view()->set_invites(&invites_);
-    }
-    if (mainAppSurface_)
-    {
-        mainAppSurface_->relayout();
-    }
-}
-
-void MainWindow::on_my_knocks_updated_()
-{
-    if (mainApp_)
-    {
-        mainApp_->room_list_view()->set_my_knocks(&my_knocks_);
-    }
-    if (mainAppSurface_)
-    {
-        mainAppSurface_->relayout();
-    }
-}
-
 void MainWindow::on_space_children_cache_ready_ui_()
 {
-    refreshRoomList();
+    refresh_room_list_();
     refresh_pickers_packs_();
 }
 
 void MainWindow::on_space_unjoined_summaries_ready_ui_(const std::string&)
 {
-    refreshRoomList();
+    refresh_room_list_();
 }
 
 void MainWindow::on_tray_unread_changed_(bool has_unread, bool has_highlight)
@@ -2828,280 +1338,109 @@ void MainWindow::on_tray_unread_changed_(bool has_unread, bool has_highlight)
     }
 }
 
-void MainWindow::on_account_badges_changed_(bool other_accounts_unread)
+std::unique_ptr<tk::Image>
+MainWindow::decode_avatar_(const std::vector<std::uint8_t>& bytes)
 {
-    if (mainApp_)
+    // QImage/QImageReader are safe on a worker, and make_image wraps a QImage
+    // (not a QPixmap). First frame only, scaled to the avatar cache size.
+    QByteArray qb(reinterpret_cast<const char*>(bytes.data()),
+                  static_cast<int>(bytes.size()));
+    QBuffer buf(&qb);
+    buf.open(QIODevice::ReadOnly);
+    QImageReader reader(&buf);
+    reader.setAutoTransform(true);
+    const QSize native = reader.size();
+    if (native.isValid() &&
+        (native.width() > kAvatarCacheSize || native.height() > kAvatarCacheSize))
     {
-        mainApp_->user_info()->set_notification_dot(other_accounts_unread);
-        if (mainAppSurface_)
-        {
-            mainAppSurface_->update();
-        }
+        reader.setScaledSize(
+            native.scaled(kAvatarCacheSize, kAvatarCacheSize, Qt::KeepAspectRatio));
     }
+    QImage img = reader.read();
+    if (!img.isNull() &&
+        (img.width() > kAvatarCacheSize || img.height() > kAvatarCacheSize))
+    {
+        img = img.scaled(kAvatarCacheSize, kAvatarCacheSize, Qt::KeepAspectRatio,
+                         Qt::SmoothTransformation);
+    }
+    if (img.isNull())
+    {
+        return nullptr;
+    }
+    return tk::qt6::make_image(std::move(img));
 }
 
-void MainWindow::on_media_bytes_ready_(const tk::CacheKey& cache_key,
-                                       MediaKind kind,
-                                       std::vector<uint8_t> bytes)
+void MainWindow::ingest_tile_media_(const tk::CacheKey& cache_key,
+                                    std::vector<std::uint8_t> bytes)
 {
-    // Called on the UI thread (already posted via post_to_ui_ in ShellBase).
-    if (bytes.empty())
-    {
-        return;
-    }
-
-    if (kind == MediaKind::RoomAvatar || kind == MediaKind::UserAvatar)
-    {
-        if (account_manager_.thumbnail_cache().contains(cache_key))
-        {
-            return;
-        }
-        // Decode + scale off the UI thread — QImage/QImageReader are safe on a
-        // worker and make_image wraps a QImage (not a QPixmap), so only the
-        // cache store + repaint need to hop back. A burst of avatar fetches
-        // (e.g. after a room switch) would otherwise run synchronously here and
-        // block the UI event queue, delaying anything queued behind it — such
-        // as a just-sent message's local echo.
-        run_async_(
-            [this, cache_key, kind, bytes = std::move(bytes)]() mutable
-            {
-                QByteArray qb_av(reinterpret_cast<const char*>(bytes.data()),
-                                 static_cast<int>(bytes.size()));
-                QBuffer buf_av(&qb_av);
-                buf_av.open(QIODevice::ReadOnly);
-                QImageReader reader_av(&buf_av);
-                reader_av.setAutoTransform(true);
-                const QSize native_av = reader_av.size();
-                if (native_av.isValid() &&
-                    (native_av.width() > kAvatarCacheSize ||
-                     native_av.height() > kAvatarCacheSize))
-                {
-                    reader_av.setScaledSize(
-                        native_av.scaled(kAvatarCacheSize, kAvatarCacheSize,
-                                         Qt::KeepAspectRatio));
-                }
-                QImage img = reader_av.read();
-                if (!img.isNull() &&
-                    (img.width() > kAvatarCacheSize ||
-                     img.height() > kAvatarCacheSize))
-                {
-                    img = img.scaled(kAvatarCacheSize, kAvatarCacheSize,
-                                     Qt::KeepAspectRatio,
-                                     Qt::SmoothTransformation);
-                }
-                auto decoded = std::make_shared<QImage>(std::move(img));
-                post_to_ui_(
-                    [this, cache_key, kind, decoded]() mutable
-                    {
-                        if (account_manager_.thumbnail_cache().contains(
-                                cache_key))
-                        {
-                            return;
-                        }
-                        if (decoded->isNull())
-                        {
-                            media_decode_failed_.insert(cache_key.id);
-                            return;
-                        }
-                        account_manager_.thumbnail_cache().store(
-                            cache_key,
-                            tk::qt6::make_image(std::move(*decoded)));
-                        // Avatars are fixed-size — a repaint suffices, no
-                        // relayout needed. Still notify: this clears a
-                        // room-switch-gate pending entry waiting on this
-                        // avatar (see RoomSwitchGateKeeper).
-                        if (room_view_)
-                        {
-                            room_view_->notify_image_ready(cache_key.id);
-                        }
-                        if (mainAppSurface_)
-                        {
-                            mainAppSurface_->update();
-                        }
-                        if (mention_popup_visible_() && mention_popup_)
-                        {
-                            mention_popup_->request_repaint();
-                        }
-                        if (accountPickerPopover_ &&
-                            accountPickerPopover_->isVisible() &&
-                            accountPickerSurface_)
-                        {
-                            accountPickerSurface_->update();
-                        }
-                        notify_secondary_media_ready_(cache_key.id, kind);
-                    });
-            });
-        return;
-    }
-
-    if (kind == MediaKind::Tile)
-    {
-        if (account_manager_.image_cache().contains(cache_key))
-        {
-            return;
-        }
-        // Decode off the UI thread (as above); store + repaint on the UI
-        // thread. A map tile fills a fixed-size map card and is NOT a tracked
-        // row media source, so it needs only a repaint — not a re-measure. The
-        // old invalidate_data() + relayout() did a full O(timeline) re-measure
-        // just to repaint a fixed card; notify_image_ready() would miss it
-        // entirely (it matches row sources). LocationMapPanner::paint re-reads
-        // the tile from the cache, so update() is sufficient.
-        run_async_(
-            [this, cache_key, kind, bytes = std::move(bytes)]() mutable
-            {
-                QImage img;
-                if (!img.loadFromData(
-                        reinterpret_cast<const uchar*>(bytes.data()),
-                        static_cast<int>(bytes.size())))
-                {
-                    return;
-                }
-                auto decoded = std::make_shared<QImage>(std::move(img));
-                post_to_ui_(
-                    [this, cache_key, kind, decoded]() mutable
-                    {
-                        if (account_manager_.image_cache().contains(cache_key))
-                        {
-                            return;
-                        }
-                        account_manager_.image_cache().store(
-                            cache_key,
-                            tk::qt6::make_image(std::move(*decoded)));
-                        if (mainAppSurface_)
-                        {
-                            mainAppSurface_->update();
-                        }
-                        notify_secondary_media_ready_(cache_key.id, kind);
-                    });
-            });
-        return;
-    }
-
-    // MediaImage / MediaThumbnail / Sticker / Reaction — decode off the UI
-    // thread (QImageReader is thread-safe), then store + repaint on the UI
-    // thread. Mirrors GTK4 and ensure_picker_image_; pickers already use this
-    // pattern so all paths are now consistent.
-    const bool is_thumb = (kind == MediaKind::MediaThumbnail);
-    if ((is_thumb ? account_manager_.thumbnail_cache() : account_manager_.image_cache()).contains(cache_key) ||
-        account_manager_.anim_cache().has(cache_key))
-    {
-        return;
-    }
-    const auto [max_w, max_h] = media_decode_clamp_(kind, cache_key);
-    // finish_first_frame runs once per asset (frame 0, or a decoded still
-    // image) — repaint/relayout/notify hooks that shouldn't re-run per frame.
-    auto finish_first_frame = [this, cache_key, kind]()
-    {
-        if (mainApp_)
-            mainApp_->room_view()->notify_image_ready(cache_key.id);
-        // Coalesced: a burst of image completions folds into one arrange
-        // per drain instead of a full relayout each.
-        schedule_relayout_();
-        if (shortcode_popup_visible_() && shortcode_popup_)
-            shortcode_popup_->request_repaint();
-        if (settingsWidget_ && settingsWidget_->isVisible())
-            settingsWidget_->request_repaint();
-        notify_secondary_media_ready_(cache_key.id, kind);
-    };
-    // Read on the UI thread — PowerPolicy has no internal synchronization, so
-    // low_power_active() must not be read from the worker lambda below.
-    const bool low_power_now = low_power_active();
+    // Map tiles are small; decode off the UI thread anyway.
     run_async_(
-        [this, cache_key, kind, is_thumb, max_w, max_h, finish_first_frame,
-         low_power_now, bytes = std::move(bytes)]() mutable
+        [this, cache_key, bytes = std::move(bytes)]() mutable
         {
-            // Low power mode: skip the windowed/streaming decode session
-            // (which does small recurring top-up decodes for as long as the
-            // sticker plays) and fall straight to the whole-batch decode
-            // below, which already handles the animated case. Only gates a
-            // freshly-decoded sticker — an already-resident AnimImageCache
-            // entry/session is untouched by this.
-            if (!low_power_now)
+            QImage img;
+            if (!img.loadFromData(reinterpret_cast<const uchar*>(bytes.data()),
+                                  static_cast<int>(bytes.size())))
             {
-                auto cb = make_streamed_decode_callbacks_windowed_(
-                    cache_key, is_thumb, finish_first_frame);
-                if (decode_image_streamed_windowed_(bytes, max_w, max_h,
-                                                    cb.on_first, cb.on_extra))
-                {
-                    return;
-                }
+                return;
             }
-
-            // Not a (successfully) streamed multi-frame image — fall back to
-            // the whole-batch decode, which also handles the still-image
-            // case decode_image_streamed_windowed_ doesn't.
-            auto d = std::make_shared<DecodedImage>(
-                decode_image_(bytes, max_w, max_h));
-            post_to_ui_(
-                [this, cache_key, is_thumb, d, finish_first_frame]() mutable
+            auto decoded = std::make_shared<QImage>(std::move(img));
+            post_to_ui_alive_(
+                [this, cache_key, decoded]() mutable
                 {
-                    auto& still_cache =
-                        is_thumb ? account_manager_.thumbnail_cache()
-                                 : account_manager_.image_cache();
-                    if (still_cache.contains(cache_key) ||
-                        account_manager_.anim_cache().has(cache_key))
-                        return;
-                    if (!d->frames.empty())
+                    if (account_manager_.image_cache().contains(cache_key))
                     {
-                        account_manager_.anim_cache().store(
-                                          cache_key, std::move(d->frames),
-                                          std::move(d->delays_ms),
-                                          QDateTime::currentMSecsSinceEpoch());
-                        if (tk_anim_timer_ && !tk_anim_timer_->isActive())
-                            tk_anim_timer_->start();
-                    }
-                    else if (d->still)
-                    {
-                        still_cache.store(cache_key, std::move(d->still));
-                    }
-                    else
-                    {
-                        media_decode_failed_.insert(cache_key.id);
                         return;
                     }
-                    finish_first_frame();
+                    account_manager_.image_cache().store(
+                        cache_key, tk::qt6::make_image(std::move(*decoded)));
+                    if (mainAppSurface_)
+                    {
+                        mainAppSurface_->update();
+                    }
+                    notify_secondary_media_ready_(cache_key.id, MediaKind::Tile);
                 });
         });
 }
 
-void MainWindow::bind_settings_controller_()
+void MainWindow::prompt_passphrase_(std::string title,
+                                    std::function<void(std::string)> cb)
 {
-    // settings_controller_ is freshly constructed by
-    // ShellBase::ensure_settings_controller_(); bind it to the native widget.
-    // The SettingsWidget installs its own key/file dialog hooks internally,
-    // so there is no separate wire_key_dialog_callbacks_ step on Qt.
-    if (settingsWidget_)
-    {
-        settingsWidget_->set_controller(settings_controller_.get());
-        wire_settings_controller_common_(
-            settingsWidget_->settings_view(), settings_controller_.get(),
-            [this] { settingsWidget_->relayout(); });
-        settingsWidget_->settings_view()->set_user_pack_image_provider(
-            make_static_image_provider_with_fetch_(96, 96));
-        settingsWidget_->settings_view()->on_user_pack_pending_image_added =
-            [this](std::uint64_t local_id, const std::vector<std::uint8_t>& bytes,
-                  const std::string& mime)
-        {
-            handle_user_pack_pending_image_added_(
-                local_id, bytes, mime,
-                settingsWidget_->settings_view()->user_pack_editor());
-        };
-    }
+    bool ok = false;
+    const QString pass = QInputDialog::getText(
+        this, QString::fromStdString(title),
+        QString::fromStdString(tk::tr("Passphrase")), QLineEdit::Password, "",
+        &ok);
+    if (ok && !pass.isEmpty())
+        cb(pass.toStdString());
 }
 
-void MainWindow::wire_history_export_dialog_callbacks_()
+void MainWindow::pick_open_file_(std::string title,
+                                 std::function<void(std::string)> cb)
 {
-    if (!history_export_controller_)
-        return;
-    history_export_controller_->show_save_folder_dialog =
-        [this](std::string /*suggested_name*/, std::function<void(std::string)> cb)
-    {
-        const QString dir = QFileDialog::getExistingDirectory(
-            this, QString::fromStdString(tk::tr("Choose a folder for the exported history")));
-        if (!dir.isEmpty())
-            cb(dir.toStdString());
-    };
+    const QString path =
+        QFileDialog::getOpenFileName(this, QString::fromStdString(title));
+    if (!path.isEmpty())
+        cb(path.toStdString());
+}
+
+void MainWindow::pick_folder_(std::string title,
+                              std::function<void(std::string)> cb)
+{
+    const QString dir =
+        QFileDialog::getExistingDirectory(this, QString::fromStdString(title));
+    if (!dir.isEmpty())
+        cb(dir.toStdString());
+}
+
+void MainWindow::show_message_dialog_(std::string title, std::string text,
+                                      bool is_error)
+{
+    const QString t = QString::fromStdString(title);
+    const QString m = QString::fromStdString(text);
+    if (is_error)
+        QMessageBox::warning(this, t, m);
+    else
+        QMessageBox::information(this, t, m);
 }
 
 void MainWindow::pick_save_file_(std::string title, std::string suggested_name,
@@ -3109,6 +1448,16 @@ void MainWindow::pick_save_file_(std::string title, std::string suggested_name,
 {
     const QString path = QFileDialog::getSaveFileName(
         this, QString::fromStdString(title), QString::fromStdString(suggested_name));
+    if (!path.isEmpty())
+        cb(path.toStdString());
+}
+
+void MainWindow::pick_media_save_path_(const tesseract::views::MediaSaveSpec& spec,
+                                       std::function<void(std::string)> cb)
+{
+    const QString path = QFileDialog::getSaveFileName(
+        this, QString::fromStdString(spec.title),
+        QString::fromStdString(spec.suggested_name), save_filter_for(spec));
     if (!path.isEmpty())
         cb(path.toStdString());
 }
@@ -3509,74 +1858,14 @@ void MainWindow::start_anim_tick_()
     }
 }
 
-void MainWindow::repaint_pickers_()
-{
-    if (auto* rv = mainApp_ ? mainApp_->room_view() : nullptr)
-    {
-        if (auto* ep = rv->emoji_picker())
-            ep->invalidate_image_cache();
-        if (auto* sp = rv->sticker_picker())
-            sp->invalidate_image_cache();
-    }
-    if (mainAppSurface_)
-    {
-        mainAppSurface_->relayout();
-        mainAppSurface_->update();
-    }
-    if (shortcode_popup_visible_() && shortcode_popup_)
-    {
-        shortcode_popup_->request_repaint();
-    }
-}
-
-void MainWindow::extract_drop_media_(std::uint32_t pending_gen,
-                                     std::vector<std::uint8_t> bytes,
-                                     std::string mime,
-                                     tesseract::views::ComposeBar* target,
-                                     std::shared_ptr<bool> target_alive)
-{
-    if (mime == "image/gif" || mime == "image/webp")
-    {
-        // Detect animation on a bg thread, then post back to the UI thread.
-        run_async_([this, pending_gen, target, target_alive,
-                    bytes = std::move(bytes)]() mutable
-        {
-            QByteArray ba(reinterpret_cast<const char*>(bytes.data()),
-                          static_cast<qsizetype>(bytes.size()));
-            QBuffer buf;
-            buf.setData(ba);
-            buf.open(QIODevice::ReadOnly);
-            QImageReader reader(&buf);
-            tesseract::views::MediaInfo info;
-            info.is_animated = reader.imageCount() > 1;
-            info.pending_gen = pending_gen;
-            QMetaObject::invokeMethod(
-                this,
-                [this, info, target, target_alive]() mutable
-                { post_pending_attachment_(info, target, target_alive); },
-                Qt::QueuedConnection);
-        });
-    }
-    else if (mime.starts_with("video/"))
-    {
-        extract_drop_video_(pending_gen, std::move(bytes), target,
-                            std::move(target_alive));
-    }
-    else if (mime.starts_with("audio/"))
-    {
-        extract_drop_audio_(pending_gen, std::move(bytes), target,
-                            std::move(target_alive));
-    }
-}
-
 // A backend can parse a file and then never report a frame, a loaded status or an
 // error (audio-only data in a video container, a stalled pipeline). Without a limit
 // the player and its copy of the file would live until the window closed.
 constexpr int kMediaProbeTimeoutMs = 10000;
 
-void MainWindow::extract_drop_video_(std::uint32_t pending_gen,
-                                     std::vector<std::uint8_t> bytes,
-                                     tesseract::views::ComposeBar* target,
+void MainWindow::probe_drop_video_(std::uint32_t pending_gen,
+                                   std::vector<std::uint8_t> bytes,
+                                   tesseract::views::ComposeBar* target,
                                      std::shared_ptr<bool> target_alive)
 {
     auto* player = new QMediaPlayer(this);
@@ -3651,9 +1940,9 @@ void MainWindow::extract_drop_video_(std::uint32_t pending_gen,
     player->play();
 }
 
-void MainWindow::extract_drop_audio_(std::uint32_t pending_gen,
-                                     std::vector<std::uint8_t> bytes,
-                                     tesseract::views::ComposeBar* target,
+void MainWindow::probe_drop_audio_(std::uint32_t pending_gen,
+                                   std::vector<std::uint8_t> bytes,
+                                   tesseract::views::ComposeBar* target,
                                      std::shared_ptr<bool> target_alive)
 {
     auto* player = new QMediaPlayer(this);
@@ -3843,11 +2132,6 @@ void MainWindow::refreshLowPowerIcon_()
     lowPowerLabel_->setPixmap(pm);
 }
 
-std::uint64_t MainWindow::shell_extra_memory_bytes_() const
-{
-    return sum_image_map_bytes_(gif_previews_);
-}
-
 void MainWindow::on_low_power_mode_ui_(bool active)
 {
     if (lowPowerLabel_)
@@ -3863,30 +2147,11 @@ void MainWindow::repaint_inflight_spinner_()
     }
 }
 
-void MainWindow::repaint_anim_frame_()
+void MainWindow::update_main_anim_regions_()
 {
     if (mainAppSurface_)
     {
         mainAppSurface_->update_anim_regions();
-    }
-    if (gif_popup_ && gif_popup_->visible())
-    {
-        gif_popup_->update_anim_regions();
-    }
-    if (auto* rv = mainApp_ ? mainApp_->room_view() : nullptr)
-    {
-        if (rv->emoji_picker_visible() && rv->emoji_picker())
-            rv->emoji_picker()->invalidate_image_cache();
-        if (rv->sticker_picker_visible() && rv->sticker_picker())
-            rv->sticker_picker()->invalidate_image_cache();
-    }
-    if (settingsWidget_ && settingsWidget_->isVisible())
-    {
-        // Settings' "Emojis & Stickers" tab hosts its own top-level surface,
-        // separate from mainAppSurface_, so it needs its own animation-tick
-        // invalidation or animated stickers there only advance on
-        // mouse-move-driven repaints.
-        settingsWidget_->update_anim_regions();
     }
 }
 
@@ -3906,166 +2171,31 @@ void MainWindow::cache_rgba_image_(const tk::CacheKey& key, int w, int h,
     }
 }
 
-void MainWindow::showRooms(const std::vector<tesseract::RoomInfo>& rooms)
-{
-    // Sort: regular rooms first, spaces at the bottom.
-    std::vector<tesseract::RoomInfo> sorted;
-    sorted.reserve(rooms.size());
-    for (const auto& r : rooms)
-    {
-        if (!r.is_space)
-        {
-            sorted.push_back(r);
-        }
-    }
-    for (const auto& r : rooms)
-    {
-        if (r.is_space)
-        {
-            sorted.push_back(r);
-        }
-    }
-
-    if (!mainApp_)
-    {
-        return;
-    }
-    // Avatars are fetched lazily as rows are painted (RoomListView's
-    // on_room_avatar_needed), so collapsed / off-screen rooms aren't requested.
-    mainApp_->room_list_view()->set_rooms(std::move(sorted));
-    if (!current_room_id_.empty())
-    {
-        mainApp_->room_list_view()->set_selected_room(current_room_id_);
-    }
-    mainAppSurface_->relayout();
-}
-
-void MainWindow::refreshRoomList()
-{
-    refresh_room_list_();
-}
-
-void MainWindow::onSpaceBack()
-{
-    space_back_command_();
-}
-
 // ---------------------------------------------------------------------------
 
 
-void MainWindow::refreshSyncStatus()
+void MainWindow::show_sync_status_text_(const std::string& text)
 {
-    // A hyperlinked status message (statusLinkLabel_) is superseded by any
-    // sync-status update; hide it so it can't reappear when a temporary
-    // showMessage() clears.
+    // Plain text replaces whatever the link label was showing.
     if (statusLinkLabel_)
     {
         statusLinkLabel_->hide();
     }
-    // Compose progress text for the status bar. Priority order:
-    //   1. Init / SettingUp        → "Syncing rooms…" (debounced 300 ms)
-    //   2. Recovering              → "Reconnecting…"
-    //   3. backup Downloading      → "Downloading encryption keys (N)…"
-    //   4. else                    → clear (restores prior "Connected" copy)
-    //
-    // Error / Terminated leave whatever the sync_error path already wrote.
-    using RLS = tesseract::RoomListState;
-    using BS = tesseract::BackupState;
+    statusBar()->showMessage(QString::fromStdString(text));
+}
 
-    const bool room_busy = (last_room_list_state_ == RLS::Init ||
-                            last_room_list_state_ == RLS::SettingUp);
-    const bool reconnecting = (last_room_list_state_ == RLS::Recovering);
-    const bool keys_busy = (last_backup_state_ == BS::Downloading);
-
-    if (room_busy)
+void MainWindow::on_sync_status_override_kept_()
+{
+    if (statusLinkLabel_ && !statusLinkLabel_->text().isEmpty())
     {
-        // Debounce: only show "Syncing rooms…" after 300 ms of being
-        // non-Running, so already-cached sessions that flash through
-        // Init→Running in a single tick don't churn the bar.
-        if (!syncStatusDebounce_)
-        {
-            syncStatusDebounce_ = new QTimer(this);
-            syncStatusDebounce_->setSingleShot(true);
-            connect(syncStatusDebounce_, &QTimer::timeout, this,
-                    [this]
-                    {
-                        using RLS2 = tesseract::RoomListState;
-                        if (last_room_list_state_ == RLS2::Init ||
-                            last_room_list_state_ == RLS2::SettingUp)
-                        {
-                            sync_progress_shown_ = true;
-                            statusBar()->showMessage(QString::fromStdString(tk::tr("Syncing rooms…")));
-                        }
-                    });
-        }
-        if (!syncStatusDebounce_->isActive() && !sync_progress_shown_)
-        {
-            syncStatusDebounce_->start(300);
-        }
-        else if (sync_progress_shown_)
-        {
-            statusBar()->showMessage(QString::fromStdString(tk::tr("Syncing rooms…")));
-        }
-        return;
+        statusBar()->clearMessage();
+        statusLinkLabel_->show();
     }
-
-    if (syncStatusDebounce_)
-    {
-        syncStatusDebounce_->stop();
-    }
-
-    if (reconnecting)
-    {
-        sync_progress_shown_ = true;
-        statusBar()->showMessage(QString::fromStdString(tk::tr("Reconnecting…")));
-        return;
-    }
-    if (keys_busy)
-    {
-        sync_progress_shown_ = true;
-        statusBar()->showMessage(
-            QString::fromStdString(tk::trf(tk::tr("Downloading message keys ({0})…"),
-                                           {std::to_string(last_imported_keys_)})));
-        return;
-    }
-    // Steady state: settle to "Connected" unless a persistent status override
-    // (e.g. "Fetching older messages…" from in-room search, or an
-    // update-available link) is still active.
-    if (has_status_override_())
-    {
-        // A hyperlinked override lives in statusLinkLabel_ (hidden at the top
-        // of this function), not in showMessage(); restore it. Plain-text
-        // overrides remain in the message area and need nothing here.
-        if (statusLinkLabel_ && !statusLinkLabel_->text().isEmpty())
-        {
-            statusBar()->clearMessage();
-            statusLinkLabel_->show();
-        }
-        return;
-    }
-    sync_progress_shown_ = false;
-    statusBar()->showMessage(QString::fromStdString(tk::tr("Connected")));
 }
 
 // ---------------------------------------------------------------------------
 // User identity strip + logout
 // ---------------------------------------------------------------------------
-
-void MainWindow::populateUserStrip()
-{
-    if (!mainApp_)
-    {
-        return;
-    }
-    mainApp_->user_info()->set_display_name(my_display_name_);
-    mainApp_->user_info()->set_user_id(my_user_id_);
-    mainApp_->user_info()->set_avatar_url(my_avatar_url_);
-    ensure_user_avatar_(my_avatar_url_);
-    if (mainAppSurface_)
-    {
-        mainAppSurface_->update();
-    }
-}
 
 void MainWindow::onUserStripContextMenu(const QPoint& global_pos)
 {
@@ -4074,9 +2204,9 @@ void MainWindow::onUserStripContextMenu(const QPoint& global_pos)
     menu->setStyleSheet(tk::qt6::build_menu_qss(current_theme_));
     const auto items = build_user_menu_items_(
         [this] { openSettings(); },
-        [this] { beginAddAccount(); },
+        [this] { begin_add_account(); },
         [this] { start_qr_grant_overlay(); },
-        [this] { logoutActiveAccount(); },
+        [this] { logout_active_account_ui_(); },
         [this] { do_quit_(); },
         verify_session_menu_callback_());
     for (const auto& item : items)
@@ -4093,112 +2223,51 @@ void MainWindow::onUserStripContextMenu(const QPoint& global_pos)
     menu->popup(global_pos);
 }
 
+std::unique_ptr<tk::SurfaceBase> MainWindow::create_login_surface_ui_()
+{
+    auto* surface = new tk::qt6::Surface(current_theme_, contentStack_);
+    contentStack_->addWidget(surface);
+    return std::unique_ptr<tk::SurfaceBase>(surface);
+}
+
+void MainWindow::show_login_page_ui_()
+{
+    contentStack_->setCurrentWidget(login_native_());
+}
+
+bool MainWindow::open_login_url_ui_(const std::string& url)
+{
+    if (!tesseract::Client::is_launchable_url(url))
+        return true; // nothing to open, nothing to report
+    if (QDesktopServices::openUrl(QUrl(QString::fromStdString(url))))
+        return true;
+    return tesseract::Client::open_in_browser(url);
+}
+
+std::unique_ptr<tk::SurfaceBase> MainWindow::create_settings_surface_ui_()
+{
+    auto* surface = new tk::qt6::Surface(current_theme_, contentStack_);
+    contentStack_->addWidget(surface);
+    return std::unique_ptr<tk::SurfaceBase>(surface);
+}
+
+void MainWindow::grab_main_surface_focus_()
+{
+    if (mainAppSurface_)
+        mainAppSurface_->setFocus();
+}
+
+tk::SurfaceBase* MainWindow::main_surface_()
+{
+    return mainAppSurface_;
+}
+
 void MainWindow::openSettings()
 {
-    if (!settingsWidget_)
-    {
-        settingsWidget_ = new SettingsWidget(this);
-        settingsWidget_->set_theme(current_theme_);
-        contentStack_->addWidget(settingsWidget_);
-        stats_settings_view_ = settingsWidget_->settings_view();
-        if (stats_settings_view_)
-            stats_settings_view_->set_low_power_available(low_power_available());
+    if (!prepare_settings_view_())
+        return;
 
-        wire_settings_view_(settingsWidget_->settings_view());
-        connect(settingsWidget_, &SettingsWidget::settingsClosed, this,
-                [this]
-                {
-                    stop_search_index_stats_poll_();
-                    leaveSettings_();
-                });
-        connect(settingsWidget_, &SettingsWidget::logoutRequested, this,
-                [this]
-                {
-                    showMainContent_();
-                    set_app_settings_open_(false);
-                    teardownSettingsView_();
-                    logoutActiveAccount();
-                });
-        connect(settingsWidget_, &SettingsWidget::resetIdentityRequested, this,
-                [this]
-                {
-                    // The reset overlay lives on the main window — leave
-                    // settings first, then start the reset flow.
-                    showMainContent_();
-                    set_app_settings_open_(false);
-                    teardownSettingsView_();
-                    begin_crypto_identity_reset_();
-                });
-
-        // Populate capture-device combos in the Media section.
-        {
-            auto& host = mainAppSurface_->host();
-            auto* sv   = settingsWidget_->settings_view();
-            sv->set_audio_input_devices(host.enumerate_audio_inputs());
-            sv->set_audio_output_devices(host.enumerate_audio_outputs());
-            sv->set_camera_devices(host.enumerate_cameras());
-            sv->set_selected_audio_input(
-                tesseract::Settings::instance().audio_input_device_id);
-            sv->set_selected_audio_output(
-                tesseract::Settings::instance().audio_output_device_id);
-            sv->set_selected_camera(
-                tesseract::Settings::instance().camera_device_id);
-        }
-
-        // server_info_ may have already arrived before this lazy widget was
-        // created — apply it now so capability gating is correct on first open.
-        settingsWidget_->set_server_info(server_info_);
-    }
-
-    settingsWidget_->populate(
-        my_display_name_, my_user_id_, my_avatar_url_,
-        [this](const std::string& mxc) -> const tk::Image*
-        { return avatar_image_(mxc); });
-    if (settingsWidget_->settings_view())
-        settingsWidget_->settings_view()->set_signed_out_mode(
-            settings_from_login_());
-
-    // load_persisted_settings() (inside populate()) seeded the checkbox from
-    // the cached Settings::launch_at_login; refresh_launch_at_login_pref_()
-    // re-queries the real OS state off the UI thread and pushes it in when it
-    // returns, so the query never stalls the Settings-view open.
-    refresh_launch_at_login_pref_();
-    // Tray availability is local state, so it can be pushed synchronously.
-    // Needed before the user can pick "hide to tray" — without a QSystemTrayIcon
-    // that option would hide the window with no way to bring it back.
-    push_tray_available_ui_();
-
-    // Route through bind_settings_controller_() rather than calling
-    // set_controller() directly: that's the only place that also wires
-    // settings_view()->set_user_pack_image_provider() (and
-    // on_user_pack_pending_image_added). ensure_settings_controller_()
-    // already calls bind_settings_controller_() on login/account-switch,
-    // but at that point settingsWidget_ is still null (created lazily,
-    // right here, on first open) so its `if (settingsWidget_)` guard is a
-    // no-op — the provider never got wired until this call closes that gap,
-    // which is why every pack tile rendered as an empty box despite the
-    // list itself loading correctly.
-    if (settings_controller_)
-        bind_settings_controller_();
-
-    if (!own_extended_profile_.pronouns.empty() ||
-        !own_extended_profile_.tz.empty() ||
-        !own_extended_profile_.biography.empty() ||
-        !own_extended_profile_.status_emoji.empty() ||
-        !own_extended_profile_.status_text.empty())
-        settingsWidget_->set_extended_profile(own_extended_profile_);
-
-    // Refresh storage sizes each time settings opens.
-    compute_cache_sizes_([this](uint64_t local, uint64_t sdk, uint64_t memory,
-                                uint64_t mh, uint64_t mm,
-                                uint64_t dh, uint64_t dm)
-    {
-        if (settingsWidget_)
-            settingsWidget_->set_cache_sizes(local, sdk, memory, mh, mm, dh,
-                                             dm);
-    });
-
-    contentStack_->setCurrentWidget(settingsWidget_);
+    contentStack_->setCurrentWidget(settings_native_());
     set_app_settings_open_(true);
     start_search_index_stats_poll_();
 }
@@ -4224,111 +2293,12 @@ void MainWindow::handle_sync_error_ui_(std::string context, std::string user_id,
 {
     // Agnostic state machine lives in ShellBase; this shell only supplies the
     // native restart timer (post_to_ui_after_), status bar, user strip
-    // (refresh_user_strip_) and relogin (request_relogin_).
+    // (refresh_user_strip_).
     handle_sync_error_impl_(std::move(context), std::move(user_id),
                             std::move(description), soft_logout);
 }
 
-void MainWindow::refresh_user_strip_()
-{
-    populateUserStrip();
-}
-
-void MainWindow::request_relogin_(const std::string& /*user_id*/)
-{
-    doLogin();
-}
-
-void MainWindow::handle_backup_progress_ui_(tesseract::BackupProgress progress)
-{
-    // Only the active account's backup state drives the status bar — but we
-    // can't filter by user_id here since BackupProgress doesn't carry one. We
-    // rely on EventHandlerBase's post_to_ui_ being per-instance: the active
-    // client_ pointer check gates the update. Key-download progress is surfaced
-    // by refreshSyncStatus() ("Downloading encryption keys (N)…").
-    if (!client_)
-    {
-        return;
-    }
-
-    last_backup_state_ = progress.state;
-    last_imported_keys_ = progress.imported_keys;
-    refreshSyncStatus();
-}
-
-void MainWindow::refresh_pickers_packs_()
-{
-    auto* rv = mainApp_ ? mainApp_->room_view() : nullptr;
-    if (!rv)
-        return;
-    rv->set_current_room_parent_spaces(parent_spaces_for_room_(current_room_id_));
-    rv->refresh_stickers();
-    rv->refresh_emoticon_packs();
-}
-
-void MainWindow::handle_notification_ui_(
-    std::string user_id, std::string room_id, std::string room_name,
-    std::string sender, std::string body, bool is_mention,
-    std::vector<uint8_t> avatar_bytes, std::vector<uint8_t> image_bytes,
-    std::string event_id)
-{
-    if (!tesseract::Settings::instance().notifications_enabled)
-    {
-        return;
-    }
-    apply_notification_redaction_(sender, room_name, body, avatar_bytes,
-                                  image_bytes);
-
-    bool win_focused = isActiveWindow();
-
-    auto sess = account_manager_.find(user_id);
-    if (sess)
-    {
-        // Suppress only when the user is actively focused on this exact room.
-        if (win_focused && active_account_ &&
-            active_account_->user_id == user_id &&
-            current_room_id_ == room_id)
-        {
-            return;
-        }
-        // Send a system notification regardless of window state unless already
-        // watching the exact room above.
-        if (sess->notifier)
-        {
-            tesseract::Notification n;
-            n.room_id = room_id;
-            n.room_name = room_name;
-            n.sender = sender;
-            n.body = body;
-            n.is_mention = is_mention;
-            n.avatar_bytes = std::move(avatar_bytes);
-            n.image_bytes = std::move(image_bytes);
-            n.event_id = std::move(event_id);
-            sess->notifier->notify(n);
-        }
-        return;
-    }
-}
-
 // ── Tab management (ShellBase virtual hooks) ──────────────────────────────────
-
-float MainWindow::get_message_scroll_fraction_()
-{
-    if (!mainApp_ || !mainApp_->room_view()->message_list())
-    {
-        return 0.f;
-    }
-    return mainApp_->room_view()->message_list()->scroll_fraction();
-}
-
-void MainWindow::set_message_scroll_fraction_(float t)
-{
-    if (!mainApp_ || !mainApp_->room_view()->message_list())
-    {
-        return;
-    }
-    mainApp_->room_view()->message_list()->scroll_to_offset(t);
-}
 
 
 
@@ -4336,14 +2306,8 @@ void MainWindow::set_message_scroll_fraction_(float t)
 
 void MainWindow::on_room_list_state_ui_()
 {
-    refreshSyncStatus();
+    refresh_sync_status_();
     on_inflight_ui_();
-}
-
-void MainWindow::on_launch_at_login_pref_ui_(bool enabled)
-{
-    if (settingsWidget_)
-        settingsWidget_->set_launch_at_login_pref(enabled);
 }
 
 bool MainWindow::tray_available_() const
@@ -4351,85 +2315,15 @@ bool MainWindow::tray_available_() const
     return tray_ && tray_->is_available();
 }
 
-void MainWindow::on_tray_available_ui_(bool available)
-{
-    if (settingsWidget_)
-        settingsWidget_->set_tray_available(available);
-}
-
 void MainWindow::on_inflight_ui_()
 {
     const auto c  = inflight_dot_color_();
-    const auto n  = inflight_total_();
-    const auto fp = pool_pending_count_();
-    const auto sp = mut_pool_pending_count_();
-    const auto mp = pending_media_count_();
-    inflightDot_->update_state(n, c);
-    QString tip = QString::fromStdString(
-        tk::trf(tk::trn("{0} request in flight", "{0} requests in flight",
-                        static_cast<long>(n)),
-                {std::to_string(n)}) +
-        "\n" +
-        tk::trf(tk::tr("media: {0} loading · fetch: {1} queued · send: {2} queued"),
-                {std::to_string(mp), std::to_string(fp), std::to_string(sp)}));
-#ifndef NDEBUG
-    if (!last_inflight_urls_.empty()) {
-        tip += QString("\n── requests ──\n");
-        tip += QString::fromStdString(last_inflight_urls_);
-    }
-#endif
+    inflightDot_->update_state(inflight_total_(), c);
+    const QString tip = QString::fromStdString(inflight_tooltip_text_());
     inflightDot_->setToolTip(tip);
     // Force-refresh the tooltip window if it is currently shown over this widget.
     if (inflightDot_->underMouse())
         QToolTip::showText(QCursor::pos(), tip, inflightDot_);
-}
-
-void MainWindow::on_server_info_ready_ui_()
-{
-    if (settingsWidget_)
-        settingsWidget_->set_server_info(server_info_);
-    if (mainApp_ && mainApp_->room_view())
-        mainApp_->room_view()->header()->set_jump_to_date_enabled(
-            server_info_.supports_msc3030);
-    if (mainAppSurface_)
-        mainAppSurface_->relayout();
-}
-
-void MainWindow::on_own_extended_profile_ready_ui_()
-{
-    if (settingsWidget_)
-        settingsWidget_->set_extended_profile(own_extended_profile_);
-}
-
-void MainWindow::on_profile_field_result_ui_(const std::string& key,
-                                              bool ok,
-                                              const std::string& error)
-{
-    if (!settingsWidget_) return;
-    settingsWidget_->set_profile_field_busy(key, false);
-    if (!ok)
-        settingsWidget_->set_profile_field_error(key, error);
-}
-
-void MainWindow::update_typing_bar_(const std::string& text, bool /*visible*/)
-{
-    if (mainApp_)
-    {
-        mainApp_->room_view()->set_typing_text(text);
-    }
-}
-
-void MainWindow::on_active_room_bot_commands_changed_ui_()
-{
-    // Only meaningful while the popup is actually showing an active-room
-    // autocomplete/hint — re-run the same text-changed path it already
-    // drives on every keystroke, so a bot posting/editing/retracting a
-    // command description mid-typing (or mid-argument-entry) is reflected
-    // without the user needing to type another character.
-    if (!slash_controller_ || !slash_controller_->visible() || !roomTextArea_)
-        return;
-    slash_controller_->on_text_changed(roomTextArea_->text(),
-                                       roomTextArea_->cursor_byte_pos());
 }
 
 void MainWindow::on_show_status_message_ui_(const std::string& msg)
@@ -4440,7 +2334,7 @@ void MainWindow::on_show_status_message_ui_(const std::string& msg)
         if (statusLinkLabel_)
         {
             // clear() as well as hide() so a stale link text can't be mistaken
-            // for an active hyperlinked override in refreshSyncStatus().
+            // for an active hyperlinked override in refresh_sync_status_().
             statusLinkLabel_->clear();
             statusLinkLabel_->hide();
         }
@@ -4484,7 +2378,7 @@ void MainWindow::on_show_status_message_ui_(const std::string& msg)
 
 void MainWindow::on_restore_status_ui_()
 {
-    refreshSyncStatus();
+    refresh_sync_status_();
 }
 
 void MainWindow::on_startup_restore_progress_ui_(const std::string& status)
@@ -4499,229 +2393,29 @@ void MainWindow::on_startup_restore_progress_ui_(const std::string& status)
 // Multi-account orchestration
 // ---------------------------------------------------------------------------
 
-void MainWindow::switchActiveAccount(const std::string& user_id)
+void MainWindow::start_platform_services_ui_()
 {
-    // All platform-agnostic bookkeeping (unsubscribe previous room, clear
-    // per-account state, swap active_account_ / aliases / identity, compute
-    // pending restores, swap rooms_/invites_ snapshots, persist the index)
-    // lives in ShellBase. Returns false (no-op) when the account isn't found
-    // or is already active with a bound client.
-    if (!switch_active_account_impl_(user_id))
+    if (!tray_ && account_manager_.claim_tray_owner(this))
     {
-        return;
-    }
-    refresh_account_ui_after_switch_();
-}
-
-void MainWindow::refresh_account_ui_after_switch_()
-{
-    clearMessages();
-
-    populateUserStrip();
-    if (mainApp_ && mainApp_->room_view())
-    {
-        mainApp_->room_view()->set_client(client_);
-    }
-    refreshRoomList();
-    // Rooms already in cache — try to restore the tab session immediately.
-    // on_rooms_updated_ handles the async case (no cache, rooms_ empty).
-    if (!rooms_.empty() && !pending_restore_rooms_.empty())
-    {
-        if (try_restore_tab_session_(pending_restore_rooms_,
-                                     pending_restore_rooms_[0]))
-            pending_restore_rooms_.clear();
-    }
-
-    if (main_app_)
-        main_app_->show_room();
-
-    if (mainApp_)
-    {
-        mainApp_->show_encryption_reminder(false);
-        mainAppSurface_->relayout();
-    }
-
-    rebuildAccountPicker();
-    handle_verification_state_ui_(active_account_ && !active_account_->unverified);
-}
-
-void MainWindow::beginAddAccount()
-{
-    // Record the current active account's position in the accounts list so
-    // Cancel can return to it. -1 means no active account.
-    const auto& accs = account_manager_.accounts();
-    add_account_return_idx_ = -1;
-    if (active_account_)
-    {
-        for (int i = 0; i < static_cast<int>(accs.size()); ++i)
+        tray_ = std::make_unique<LinuxQtTrayIcon>(
+            [this] { tray_activate_(); }, [this] { tray_toggle_(); },
+            [this] { do_quit_(); }, this);
+        if (tray_->is_available())
         {
-            if (accs[i]->user_id == active_account_->user_id)
-            {
-                add_account_return_idx_ = i;
-                break;
-            }
+            qApp->setQuitOnLastWindowClosed(false);
+            tray_->set_unread(last_tray_unread_, last_tray_highlight_);
         }
     }
-    pending_login_is_add_account_ = true;
-
-    // Create a fresh client for the OAuth round-trip. The user_id won't
-    // be known until await_oauth completes, so we point the SDK at a
-    // per-attempt "pending-<ts>" directory; onLoginSucceeded renames
-    // it to accounts/<sanitized-uid>/ once the round-trip completes.
-    pending_login_temp_dir_.clear();
-    ensureLoginView_();
-    pending_login_client_ = std::make_unique<tesseract::Client>();
-    loginView_->set_client(pending_login_client_.get());
-    loginView_->set_on_begin_oauth([this] { arm_pending_login_(); });
-    loginView_->set_mode(tesseract::views::LoginView::Mode::AddAccount);
-    loginView_->reset();
-    contentStack_->setCurrentWidget(loginView_);
-    statusBar()->showMessage(QString::fromStdString(tk::tr("Add Account")));
-}
-
-void MainWindow::logoutActiveAccount()
-{
-    // Shared sequence lives in ShellBase (unsaved-key intercept, teardown,
-    // last-account main-UI clear); the lambda holds the native follow-up.
-    sign_out_active_account_([this] { logoutActiveAccount(); },
-                             [this](const LogoutResult& result)
-    {
-        if (!result.has_remaining)
-        {
-            refreshRoomList();
-            mainAppSurface_->relayout();
-
-            // No accounts left → back to initial login.
-            ensureLoginView_();
-            loginView_->set_mode(tesseract::views::LoginView::Mode::Initial);
-            pending_login_is_add_account_ = false;
-            add_account_return_idx_ = -1;
-            loginView_->set_client(reset_pending_login_client_());
-            loginView_->set_on_begin_oauth([this] { arm_pending_login_(); });
-            loginView_->reset();
-            contentStack_->setCurrentWidget(loginView_);
-            statusBar()->showMessage(QString::fromStdString(tk::tr("Signed out")), 3000);
-            rebuildAccountPicker();
-            return;
-        }
-
-        statusBar()->showMessage(
-            QString::fromStdString(tk::tr("Signed out of %1")).arg(QString::fromStdString(result.logged_out_uid)),
-            3000);
-    });
-}
-
-void MainWindow::rebuildAccountPicker()
-{
-    if (!accountPicker_)
-    {
-        return;
-    }
-    std::vector<tesseract::views::AccountEntry> entries;
-    const auto& accs = account_manager_.accounts();
-    entries.reserve(accs.size());
-    for (const auto& sp : accs)
-    {
-        const auto& a = *sp;
-        const bool is_active = active_account_ && a.user_id == active_account_->user_id;
-        entries.push_back({
-            a.user_id,
-            a.display_name,
-            a.avatar_url,
-            is_active,
-            account_has_unread_for(a.user_id),
-        });
-        if (!a.avatar_url.empty())
-        {
-            ensure_user_avatar_(a.avatar_url);
-        }
-    }
-    accountPicker_->set_entries(std::move(entries));
-    // A changed account count rebuilds the rows with empty bounds; arrange
-    // them now rather than relying on a later resizeEvent.
-    accountPickerSurface_->relayout();
-}
-
-void MainWindow::openAccountPicker(const QPoint& global_anchor)
-{
-    if (!accountPickerPopover_)
-    {
-        // Chrome-free host: the shared AccountPicker paints its own rounded
-        // card, so the QFrame is transparent and borderless and the tk
-        // Surface clears to transparent.
-        accountPickerPopover_ = new QFrame(this);
-        accountPickerPopover_->setWindowFlags(Qt::Popup |
-                                              Qt::FramelessWindowHint);
-        accountPickerPopover_->setAttribute(Qt::WA_TranslucentBackground);
-        accountPickerPopover_->setStyleSheet(
-            QStringLiteral("QFrame { background: transparent; border: none; }"));
-        auto* lay = new QVBoxLayout(accountPickerPopover_);
-        lay->setContentsMargins(0, 0, 0, 0);
-        lay->setSpacing(0);
-
-        accountPickerSurface_ = new tk::qt6::Surface(
-            current_theme_, accountPickerPopover_, /*transparent=*/true);
-        auto picker_owner = std::make_unique<tesseract::views::AccountPicker>();
-        accountPicker_ = picker_owner.get();
-        accountPicker_->set_image_provider(make_avatar_image_provider_());
-        accountPicker_->on_select = [this](const std::string& uid)
-        {
-            if (accountPickerPopover_)
-            {
-                accountPickerPopover_->hide();
-            }
-            on_account_picker_select_(uid);
-        };
-        accountPicker_->on_avatar_needed =
-            [this](const std::string& mxc) { ensure_user_avatar_(mxc); };
-        accountPickerSurface_->set_root(std::move(picker_owner));
-        lay->addWidget(accountPickerSurface_);
-    }
-    rebuildAccountPicker();
-
-    // Size from the shared widget's own measure() so the popup always fits its
-    // rows exactly (they follow UserInfo::measure(), not a magic constant).
-    constexpr int kPickerWidth = 260;
-    tk::LayoutCtx lc{accountPickerSurface_->factory(),
-                     accountPickerSurface_->theme()};
-    const int height = static_cast<int>(std::ceil(
-        accountPicker_
-            ->measure(lc, {static_cast<float>(kPickerWidth), 0.0f})
-            .h));
-    accountPickerPopover_->resize(kPickerWidth, height);
-    // Apply the popover's layout now so the Surface has its final size, then
-    // arrange at that size: a hidden popup only resizes the Surface on show,
-    // and not at all if its geometry is unchanged.
-    accountPickerPopover_->layout()->activate();
-    accountPickerSurface_->relayout();
-
-    // Anchor above the strip (popover hangs down from the user-strip top
-    // edge on most desktops; if it would clip the screen bottom Qt::Popup
-    // reflows automatically).
-    QPoint anchor = global_anchor;
-    anchor.setY(anchor.y() - height);
-    accountPickerPopover_->move(anchor);
-    accountPickerPopover_->show();
-}
-
-void MainWindow::onAccountSelected(const std::string& user_id)
-{
-    if (accountPickerPopover_)
-    {
-        accountPickerPopover_->hide();
-    }
-    if (account_manager_.find(user_id))
-    {
-        switchActiveAccount(user_id);
-        showMainContent_();
-    }
+    broadcast_rebuild_tray_();
+    start_search_provider_if_needed_();
+    start_mpris_if_needed_();
 }
 
 void MainWindow::doLogout()
 {
     // Legacy shim that the tray / external code may still call. Routes to
     // the active-account logout path.
-    logoutActiveAccount();
+    logout_active_account_ui_();
 }
 
 // ── Cross-signing / SAS verification hooks ────────────────────────────────────
@@ -4808,58 +2502,75 @@ std::optional<tk::Color> parse_portal_accent_(const QVariant& v)
 }
 } // namespace
 
-// A portal that is still starting can hold a call for D-Bus's default 25 s, which
-// would stall window creation. A timed-out read keeps the defaults, and the
-// portal's own change signal corrects them later.
-static constexpr int kPortalReadTimeoutMs = 1000;
+// Reads one org.freedesktop.appearance key without blocking: a portal that is
+// still starting can hold the call for seconds, and the change signal only
+// fires on a later change, so a bounded sync read could never be corrected.
+// The watcher is a child of this window, so a reply after it is gone is dropped.
+// ReadOne (portal interface v2+), not the deprecated Read: Read double-wraps its
+// return value in an extra D-Bus variant layer, which makes QVariant::toInt()
+// silently yield 0 instead of the real setting.
+void MainWindow::read_portal_setting_async_(
+    const QString& key, std::function<void(const QVariant&)> apply)
+{
+    QDBusMessage msg = QDBusMessage::createMethodCall(
+        QStringLiteral("org.freedesktop.portal.Desktop"),
+        QStringLiteral("/org/freedesktop/portal/desktop"),
+        QStringLiteral("org.freedesktop.portal.Settings"),
+        QStringLiteral("ReadOne"));
+    msg << QStringLiteral("org.freedesktop.appearance") << key;
+    auto* watcher = new QDBusPendingCallWatcher(
+        QDBusConnection::sessionBus().asyncCall(msg), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this,
+            [watcher, apply = std::move(apply)]
+            {
+                watcher->deleteLater();
+                QDBusPendingReply<QDBusVariant> reply = *watcher;
+                if (!reply.isError())
+                {
+                    apply(reply.value().variant());
+                }
+            });
+}
 
 void MainWindow::read_portal_accent_color_()
 {
-    QDBusInterface iface(QStringLiteral("org.freedesktop.portal.Desktop"),
-                         QStringLiteral("/org/freedesktop/portal/desktop"),
-                         QStringLiteral("org.freedesktop.portal.Settings"),
-                         QDBusConnection::sessionBus());
-    if (!iface.isValid())
-    {
-        return;
-    }
-    iface.setTimeout(kPortalReadTimeoutMs);
-    QDBusReply<QDBusVariant> reply = iface.call(
-        QStringLiteral("ReadOne"), QStringLiteral("org.freedesktop.appearance"),
-        QStringLiteral("accent-color"));
-    if (!reply.isValid())
-    {
-        return;
-    }
-    if (auto c = parse_portal_accent_(reply.value().variant()))
-    {
-        portal_accent_ = *c;
-        portal_accent_valid_ = true;
-    }
+    read_portal_setting_async_(QStringLiteral("accent-color"),
+                               [this](const QVariant& v)
+                               { apply_portal_accent_(v); });
 }
 
 void MainWindow::read_portal_color_scheme_()
 {
-    QDBusInterface iface(QStringLiteral("org.freedesktop.portal.Desktop"),
-                         QStringLiteral("/org/freedesktop/portal/desktop"),
-                         QStringLiteral("org.freedesktop.portal.Settings"),
-                         QDBusConnection::sessionBus());
-    if (!iface.isValid())
-    {
-        return;
-    }
+    read_portal_setting_async_(QStringLiteral("color-scheme"),
+                               [this](const QVariant& v)
+                               { apply_portal_color_scheme_(v.toInt()); });
+}
 
-    iface.setTimeout(kPortalReadTimeoutMs);
-    // ReadOne (portal interface v2+), not the deprecated Read: Read
-    // double-wraps its return value in an extra D-Bus variant layer, which
-    // makes QVariant::toInt() silently yield 0 instead of the real setting.
-    QDBusReply<QDBusVariant> reply = iface.call(
-        QStringLiteral("ReadOne"), QStringLiteral("org.freedesktop.appearance"),
-        QStringLiteral("color-scheme"));
-    if (reply.isValid())
+// Applies the new OS theme when it differs from the one on screen and the user
+// follows the OS.
+void MainWindow::apply_portal_color_scheme_(int scheme)
+{
+    portal_color_scheme_ = scheme;
+    if (tesseract::Settings::instance().theme_pref ==
+            tesseract::Settings::ThemePreference::System &&
+        os_color_scheme_() != current_theme_.mode)
     {
-        portal_color_scheme_ = reply.value().variant().toInt();
+        apply_current_theme_();
     }
+}
+
+void MainWindow::apply_portal_accent_(const QVariant& value)
+{
+    if (auto c = parse_portal_accent_(value))
+    {
+        portal_accent_ = *c;
+        portal_accent_valid_ = true;
+    }
+    else
+    {
+        portal_accent_valid_ = false;
+    }
+    on_system_accent_changed_();
 }
 
 void MainWindow::on_portal_setting_changed_(const QString& ns,
@@ -4872,25 +2583,11 @@ void MainWindow::on_portal_setting_changed_(const QString& ns,
     }
     if (key == QLatin1String("color-scheme"))
     {
-        portal_color_scheme_ = value.variant().toInt();
-        if (tesseract::Settings::instance().theme_pref ==
-            tesseract::Settings::ThemePreference::System)
-        {
-            apply_current_theme_();
-        }
+        apply_portal_color_scheme_(value.variant().toInt());
     }
     else if (key == QLatin1String("accent-color"))
     {
-        if (auto c = parse_portal_accent_(value.variant()))
-        {
-            portal_accent_ = *c;
-            portal_accent_valid_ = true;
-        }
-        else
-        {
-            portal_accent_valid_ = false;
-        }
-        on_system_accent_changed_();
+        apply_portal_accent_(value.variant());
     }
 }
 
@@ -4900,130 +2597,26 @@ void MainWindow::on_portal_setting_changed_(const QString& ns,
 
 // ── Slash-command popup ─────────────────────────────────────────────────────
 
-void MainWindow::hide_slash_popup_()
+std::unique_ptr<tk::Image> MainWindow::make_image_from_bgra_(
+    int w, int h, const std::uint8_t* bgra)
 {
-    if (slash_popup_)
-    {
-        slash_popup_->set_visible(false);
-    }
-}
-
-void MainWindow::show_gif_popup_()
-{
-    if (!gif_popup_ || !gif_popup_widget_ || !roomTextArea_ || !mainAppSurface_)
-    {
-        return;
-    }
-    // Full-width strip spanning the compose bar, floating just above it (like
-    // the attachment preview band). content_size() drives only the height and
-    // the empty/status check; the width comes from the compose bar.
-    const tk::Rect cb = room_view_ ? room_view_->compose_bar_rect() : tk::Rect{};
-    const tk::Size sz = gif_popup_widget_->content_size(cb.w);
-    if (cb.w <= 0.0f || sz.h <= 0.0f)
-    {
-        hide_gif_popup_();
-        return;
-    }
-    gif_popup_->set_rect(cb, {cb.w, sz.h}, tk::PopupPlacement::PreferAbove);
-    gif_popup_->set_visible(true);
-}
-
-void MainWindow::hide_gif_popup_()
-{
-    if (gif_popup_)
-    {
-        gif_popup_->set_visible(false);
-    }
-}
-
-const tk::Image*
-MainWindow::gif_strip_image_(const tesseract::GifResult& result,
-                             const std::function<void()>& repaint)
-{
-    // Shared with every pop-out's GIF strip (RoomWindowBase::shell_gif_strip_image_
-    // → here). The pop-out passes a repaint that refreshes its own popup surface.
-    return gif_strip_provider_ ? gif_strip_provider_(result, repaint) : nullptr;
-}
-
-void MainWindow::handle_gif_results_ui_(std::uint64_t request_id,
-                                        std::vector<tesseract::GifResult> results)
-{
-    if (gif_controller_)
-    {
-        gif_controller_->on_results(request_id, std::move(results));
-    }
-}
-
-void MainWindow::handle_gif_search_failed_ui_(std::uint64_t request_id,
-                                              std::string message)
-{
-    if (gif_controller_)
-    {
-        gif_controller_->on_search_failed(request_id, std::move(message));
-    }
+    QImage qi(bgra, w, h, QImage::Format_ARGB32);
+    return tk::qt6::make_image(qi.copy());
 }
 
 // ── Shortcode popup ─────────────────────────────────────────────────────────
 
-void MainWindow::hide_shortcode_popup_()
-{
-    if (shortcode_popup_)
-    {
-        shortcode_popup_->set_visible(false);
-    }
-}
-
 // ── @mention popup ─────────────────────────────────────────────────────────
-
-void MainWindow::hide_mention_popup_()
-{
-    if (mention_popup_)
-    {
-        mention_popup_->set_visible(false);
-    }
-}
 
 // ---------------------------------------------------------------------------
 
-void MainWindow::apply_theme_ui_(const tk::Theme& t)
+void MainWindow::apply_native_theme_(const tk::Theme& t)
 {
     tk::qt6::set_link_color(t.palette.accent);
-    if (brandingSurface_)
-    {
-        brandingSurface_->set_theme(t);
-        brandingSurface_->root()->apply_theme(t);
-    }
-    if (mainAppSurface_)
-    {
-        mainAppSurface_->set_theme(t);
-        mainAppSurface_->root()->apply_theme(t);
-    }
-    if (accountPickerSurface_)
-    {
-        accountPickerSurface_->set_theme(t);
-        accountPickerSurface_->root()->apply_theme(t);
-    }
-    if (slash_popup_)
-    {
-        slash_popup_->set_theme(t);
-    }
-    if (shortcode_popup_)
-    {
-        shortcode_popup_->set_theme(t);
-    }
-    if (mention_popup_)
-    {
-        mention_popup_->set_theme(t);
-    }
-    if (settingsWidget_)
-    {
-        settingsWidget_->set_theme(t);
-    }
-    if (loginView_)
-    {
-        loginView_->set_theme(t);
-    }
-    apply_theme_to_secondary_windows_(t);
+}
+
+void MainWindow::after_theme_applied_(const tk::Theme& t)
+{
     {
         const auto& p = t.palette;
         QPalette pal = statusBar()->palette();
@@ -5045,6 +2638,15 @@ void MainWindow::apply_theme_ui_(const tk::Theme& t)
     {
         mainAppSurface_->relayout();
     }
+}
+
+void MainWindow::for_each_shell_surface_(
+    const std::function<void(tk::SurfaceBase&)>& fn)
+{
+    if (brandingSurface_)
+        fn(*brandingSurface_);
+    if (mainAppSurface_)
+        fn(*mainAppSurface_);
 }
 
 void MainWindow::raise_and_activate_()
@@ -5087,11 +2689,6 @@ void MainWindow::rebuild_tray_()
 bool MainWindow::is_ctrl_held_() const
 {
     return QGuiApplication::keyboardModifiers().testFlag(Qt::ControlModifier);
-}
-
-void MainWindow::switch_active_account_(const std::string& user_id)
-{
-    switchActiveAccount(user_id);
 }
 
 void MainWindow::spawn_main_window_(

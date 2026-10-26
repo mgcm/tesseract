@@ -88,7 +88,9 @@ struct PopupsRig
         Gif = 3
     };
 
-    PopupsRig()
+    PopupsRig() : PopupsRig(tesseract::ComposerPopups::Options()) {}
+
+    explicit PopupsRig(tesseract::ComposerPopups::Options options)
     {
         shell.client_ = &client;
         tk::LayoutCtx lc{surface->factory(), tk::Theme::light()};
@@ -100,7 +102,7 @@ struct PopupsRig
                 .shell = &shell, .repaint = [] {}, .relayout = [] {}},
             "!room:x");
         popups = std::make_unique<tesseract::ComposerPopups>(
-            host, area.get(), pane.get(), nullptr);
+            host, area.get(), pane.get(), nullptr, std::move(options));
         REQUIRE(host.popups_created.size() == 4);
     }
 
@@ -207,4 +209,91 @@ TEST_CASE("destroying ComposerPopups unhooks the composer", "[composer_popups]")
     // The text area's change / submit hooks and nav handler were removed.
     CHECK_FALSE(r.host.native->on_changed);
     CHECK_FALSE(r.host.native->on_submit);
+}
+
+TEST_CASE("the text-change option replaces the built-in typing notice",
+          "[composer_popups]")
+{
+    std::vector<std::string> seen;
+    bool slash_extended = false;
+    tesseract::ComposerPopups::Options o;
+    o.on_text_changed = [&](const std::string& t) { seen.push_back(t); };
+    o.extend_slash_hooks = [&](tesseract::views::SlashCommandController::Hooks&)
+    { slash_extended = true; };
+    PopupsRig r(std::move(o));
+    CHECK(slash_extended);
+    r.type("hello");
+    REQUIRE_FALSE(seen.empty());
+    CHECK(seen.back() == "hello");
+    // The popups still run: a slash command opens its popup.
+    r.type("/po");
+    CHECK(r.popup_visible(PopupsRig::Slash));
+    CHECK(seen.back() == "/po");
+}
+
+TEST_CASE("a bot-command change refreshes an open slash popup and is harmless otherwise",
+          "[composer_popups]")
+{
+    PopupsRig r;
+    CHECK_NOTHROW(r.popups->on_bot_commands_changed()); // nothing open
+    r.type("/po");
+    REQUIRE(r.popup_visible(PopupsRig::Slash));
+    CHECK_NOTHROW(r.popups->on_bot_commands_changed());
+    CHECK(r.popup_visible(PopupsRig::Slash));
+}
+
+TEST_CASE("a landed avatar or image redraws only visible popups",
+          "[composer_popups]")
+{
+    PopupsRig r;
+    auto* mention = r.host.popups_created[PopupsRig::Mention];
+    auto* shortcode = r.host.popups_created[PopupsRig::Shortcode];
+
+    // Hidden popups are left alone.
+    r.popups->on_avatar_loaded();
+    r.popups->on_image_loaded();
+    CHECK(mention->repaints == 0);
+    CHECK(shortcode->relayouts == 0);
+
+    // An avatar only repaints the @mention list; an image re-measures the
+    // :shortcode: list.
+    mention->set_visible(true);
+    r.popups->on_avatar_loaded();
+    CHECK(mention->repaints == 1);
+    r.popups->on_image_loaded();
+    CHECK(shortcode->relayouts == 0);
+
+    r.type(":smi");
+    REQUIRE(r.popup_visible(PopupsRig::Shortcode));
+    const int before = shortcode->relayouts;
+    r.popups->on_image_loaded();
+    CHECK(shortcode->relayouts == before + 1);
+    CHECK(r.popup_visible(PopupsRig::Shortcode));
+}
+
+TEST_CASE("the shortcode image provider option replaces the peek-only default",
+          "[composer_popups]")
+{
+    tesseract::ComposerPopups::Options o;
+    o.shortcode_image_provider = [](const std::string&) -> const tk::Image*
+    { return nullptr; };
+    PopupsRig r(std::move(o));
+    r.type(":smi");
+    CHECK(r.popup_visible(PopupsRig::Shortcode));
+    r.type("plain");
+    CHECK_FALSE(r.popup_visible(PopupsRig::Shortcode));
+}
+
+TEST_CASE("the strip repaints partially through the shell's animation cache",
+          "[composer_popups]")
+{
+    PopupsRig r;
+    auto* gif = static_cast<StubPopupSurface*>(r.host.popups_created[PopupsRig::Gif]);
+    CHECK(gif->anim_cache() != nullptr);
+    gif->set_visible(true);
+    r.popups->repaint_anim_frame();
+    CHECK(gif->anim_region_updates == 1);
+    gif->set_visible(false);
+    r.popups->repaint_anim_frame(); // hidden: nothing to redraw
+    CHECK(gif->anim_region_updates == 1);
 }

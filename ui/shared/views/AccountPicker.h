@@ -41,6 +41,8 @@ class AccountPicker : public tk::Widget
 {
 public:
     static constexpr std::size_t kMaxVisibleRows = 8;
+    /// Width every shell's popup gives the picker, in dips.
+    static constexpr float kPreferredWidth = 260.0f;
 
     AccountPicker();
     ~AccountPicker() override = default;
@@ -58,6 +60,9 @@ public:
     /// Fired when the user selects a row. The host typically dismisses the
     /// popover and calls `switch_active_account`.
     std::function<void(const std::string& user_id)> on_select;
+
+    /// Fired when Escape is pressed inside the picker; the host closes it.
+    std::function<void()> on_dismiss;
 
     /// Forwarded from every row's UserInfo::on_avatar_needed (see there) so
     /// the host can request a fetch on a cache miss, e.g. right after a
@@ -78,7 +83,7 @@ public:
     void arrange(tk::LayoutCtx&, tk::Rect bounds) override;
     void paint_before_children(tk::PaintCtx&) override;
     // Up/Down move between rows (Tab/Shift-Tab already do); Enter on a row
-    // selects it (UserInfo's own keyboard handling).
+    // selects it (UserInfo's own keyboard handling); Escape fires on_dismiss.
     bool on_key_down(const tk::KeyEvent& e) override;
 
 private:

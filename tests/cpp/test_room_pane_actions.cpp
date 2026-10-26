@@ -205,9 +205,10 @@ TEST_CASE("replying and editing clear the composer only for real content",
 TEST_CASE("edit prefill and cancel drive the composer text", "[roompane][compose]")
 {
     RpFx f;
-    f.view->on_edit_prefill("old text");
+    f.view->message_list()->on_edit_requested("$e", "old text", false);
     CHECK(f.view->compose_bar()->current_text() == "old text");
-    f.view->on_edit_cancelled();
+    CHECK(f.view->compose_bar()->has_editing());
+    f.view->compose_bar()->on_edit_cancelled();
     CHECK(f.view->compose_bar()->current_text().empty());
 }
 

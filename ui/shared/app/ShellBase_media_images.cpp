@@ -2,6 +2,8 @@
 #include "app/shell_helpers.h"
 #include "app/media_preview_policy.h"
 #include "tk/blurhash.h"
+#include "tk/video_decode.h"
+#include "views/GifPopup.h"
 #include "views/MainAppWidget.h"
 #include <algorithm>
 #ifndef _WIN32
@@ -763,6 +765,231 @@ void ShellBase::post_pending_attachment_(views::MediaInfo info,
         if (room_view_)
             room_view_->compose_bar()->update_pending_attachment(info);
     });
+}
+
+// ── Decoded media landing in the caches ────────────────────────────────────
+
+std::unique_ptr<tk::Image>
+ShellBase::decode_avatar_(const std::vector<std::uint8_t>& bytes)
+{
+    DecodedImage d = decode_image_(bytes, tesseract::visual::kAvatarCacheSize,
+                                   tesseract::visual::kAvatarCacheSize);
+    if (d.still)
+    {
+        return std::move(d.still);
+    }
+    if (!d.frames.empty())
+    {
+        return std::move(d.frames.front());
+    }
+    return nullptr;
+}
+
+void ShellBase::on_media_decode_failed_(const tk::CacheKey& key, MediaKind kind)
+{
+    media_decode_failed_.insert(key.id);
+    if (kind == MediaKind::MediaImage || kind == MediaKind::Sticker ||
+        kind == MediaKind::Reaction)
+    {
+        account_manager_.media_disk_cache().evict(key);
+    }
+}
+
+void ShellBase::repaint_after_media_(MediaKind kind, const tk::CacheKey&)
+{
+    switch (kind)
+    {
+    case MediaKind::RoomAvatar:
+        request_repaint_();
+        repaint_settings_ui_();
+        break;
+    case MediaKind::UserAvatar:
+        request_repaint_();
+        repaint_settings_ui_();
+        if (account_picker_popup_ && account_picker_popup_->visible())
+            account_picker_popup_->request_relayout();
+        if (compose_popups_)
+            compose_popups_->on_avatar_loaded();
+        break;
+    default:
+        schedule_relayout_();
+        if (compose_popups_)
+            compose_popups_->on_image_loaded();
+        repaint_settings_ui_();
+        break;
+    }
+}
+
+void ShellBase::on_media_bytes_ready_(const tk::CacheKey& cache_key,
+                                      MediaKind kind,
+                                      std::vector<uint8_t> bytes)
+{
+    // Called on the UI thread (already posted via post_to_ui_ in ShellBase).
+    if (bytes.empty() || !ui_ready_() ||
+        !accept_media_bytes_(cache_key, kind, bytes))
+    {
+        return;
+    }
+
+    switch (kind)
+    {
+    case MediaKind::RoomAvatar:
+    case MediaKind::UserAvatar:
+    {
+        if (account_manager_.thumbnail_cache().contains(cache_key))
+        {
+            return;
+        }
+        // Decode off the UI thread: a burst of avatar fetches (e.g. after a
+        // room switch) would otherwise block the event queue and delay
+        // anything queued behind it, such as a just-sent message's local echo.
+        run_async_(
+            [this, cache_key, kind, bytes = std::move(bytes)]() mutable
+            {
+                auto img = std::make_shared<std::unique_ptr<tk::Image>>(
+                    decode_avatar_(bytes));
+                post_to_ui_alive_(
+                    [this, cache_key, kind, img]() mutable
+                    {
+                        if (!ui_ready_() ||
+                            account_manager_.thumbnail_cache().contains(cache_key))
+                        {
+                            return;
+                        }
+                        if (!*img)
+                        {
+                            on_media_decode_failed_(cache_key, kind);
+                            return;
+                        }
+                        account_manager_.thumbnail_cache().store(cache_key,
+                                                                 std::move(*img));
+                        // Clears a room-switch-gate pending entry waiting on
+                        // this avatar (see RoomSwitchGateKeeper); avatars are
+                        // fixed-size so no re-measure is triggered by this.
+                        if (room_view_)
+                        {
+                            room_view_->notify_image_ready(cache_key.id);
+                        }
+                        // Patches mention pills whose avatar was pending.
+                        if (main_room_pane_)
+                        {
+                            main_room_pane_->notify_avatar_media_ready_(kind);
+                        }
+                        repaint_after_media_(kind, cache_key);
+                        notify_secondary_media_ready_(cache_key.id, kind);
+                    });
+            });
+        return;
+    }
+    case MediaKind::Tile:
+        if (account_manager_.image_cache().contains(cache_key))
+        {
+            return;
+        }
+        ingest_tile_media_(cache_key, std::move(bytes));
+        return;
+    case MediaKind::MediaImage:
+    case MediaKind::MediaThumbnail:
+    case MediaKind::Sticker:
+    case MediaKind::Reaction:
+        break;
+    }
+
+    // Inline media: a still goes to the thumbnail or image cache, an animation
+    // to the animation cache (decoded in a window when the source is long).
+    const bool is_thumb = (kind == MediaKind::MediaThumbnail);
+    tk::PixmapCache& still_cache = is_thumb ? account_manager_.thumbnail_cache()
+                                            : account_manager_.image_cache();
+    if (still_cache.contains(cache_key) || account_manager_.anim_cache().has(cache_key))
+    {
+        return;
+    }
+    const auto [max_w, max_h] = media_decode_clamp_(kind, cache_key);
+
+    // Runs once the first frame (or the still) is in a cache.
+    auto finish_first_frame = [this, cache_key, kind]()
+    {
+        if (!ui_ready_())
+        {
+            return;
+        }
+        if (room_view_)
+        {
+            room_view_->notify_image_ready(cache_key.id);
+        }
+        repaint_after_media_(kind, cache_key);
+        notify_secondary_media_ready_(cache_key.id, kind);
+    };
+
+    // Low power mode skips the windowed animation decode and stores the first
+    // frame only.
+    const bool low_power_now = low_power_active();
+    run_async_(
+        [this, cache_key, kind, is_thumb, max_w, max_h, finish_first_frame,
+         low_power_now, bytes = std::move(bytes)]() mutable
+        {
+            if (!low_power_now)
+            {
+                auto cb = make_streamed_decode_callbacks_windowed_(
+                    cache_key, is_thumb, finish_first_frame);
+                if (decode_image_streamed_windowed_(bytes, max_w, max_h,
+                                                    cb.on_first, cb.on_extra))
+                {
+                    return;
+                }
+            }
+            auto d = std::make_shared<DecodedImage>(
+                low_power_now ? decode_image_(bytes, max_w, max_h)
+                              : decode_inline_fallback_(bytes, max_w, max_h));
+            post_to_ui_alive_(
+                [this, cache_key, kind, is_thumb, d,
+                 finish_first_frame]() mutable
+                {
+                    auto& cache = is_thumb ? account_manager_.thumbnail_cache()
+                                           : account_manager_.image_cache();
+                    if (cache.contains(cache_key) ||
+                        account_manager_.anim_cache().has(cache_key))
+                    {
+                        return;
+                    }
+                    if (!d->frames.empty())
+                    {
+                        account_manager_.anim_cache().store(
+                            cache_key, std::move(d->frames),
+                            std::move(d->delays_ms), monotonic_ms_());
+                        start_anim_tick_();
+                        account_manager_.image_cache().evict(cache_key);
+                    }
+                    else if (d->still)
+                    {
+                        cache.store(cache_key, std::move(d->still));
+                    }
+                    else
+                    {
+                        on_media_decode_failed_(cache_key, kind);
+                        return;
+                    }
+                    finish_first_frame();
+                });
+        });
+}
+
+void ShellBase::extract_drop_media_(std::uint32_t pending_gen,
+                                    std::vector<std::uint8_t> bytes,
+                                    std::string mime,
+                                    views::ComposeBar* target,
+                                    std::shared_ptr<bool> alive)
+{
+    if (mime.starts_with("video/"))
+    {
+        probe_drop_video_(pending_gen, std::move(bytes), target,
+                          std::move(alive));
+    }
+    else if (mime.starts_with("audio/"))
+    {
+        probe_drop_audio_(pending_gen, std::move(bytes), target,
+                          std::move(alive));
+    }
 }
 
 void ShellBase::decode_and_cache_video_thumbnail_(std::string event_id,
@@ -2089,4 +2316,261 @@ void ShellBase::handle_url_preview_ready_ui_(std::uint64_t request_id,
     if (req.on_preview)
         req.on_preview(std::move(preview_json));
 }
+
+// ── GIF strip ──────────────────────────────────────────────────────────────
+
+void ShellBase::fetch_gif_source_(
+    const std::string& url,
+    std::function<void(std::vector<std::uint8_t>)> on_bytes)
+{
+    const tk::CacheKey disk_key = tk::CacheKey::gif_source(url);
+    const auto req_id = begin_media_req_(
+        0,
+        [on_bytes = std::move(on_bytes)](std::vector<std::uint8_t>&& bytes)
+        { on_bytes(std::move(bytes)); });
+    // The session, not a raw Client*: sign-out waits for its holders to drop.
+    auto sess = active_account_;
+    if (!sess || !sess->client)
+    {
+        handle_media_ready_ui_(req_id, {});
+        return;
+    }
+    run_async_(
+        [this, sess, req_id, url, disk_key]()
+        {
+            auto bytes = account_manager_.media_disk_cache().load(disk_key);
+            if (!bytes.empty())
+            {
+                post_to_ui_alive_(
+                    [this, req_id, bytes = std::move(bytes)]() mutable
+                    { handle_media_ready_ui_(req_id, std::move(bytes)); });
+                return;
+            }
+            sess->client->fetch_url_async(req_id, 0, url);
+        });
+}
+
+void ShellBase::reset_gif_failures_()
+{
+    gif_anim_unavailable_.clear();
+    gif_preview_unavailable_.clear();
+}
+
+void ShellBase::reset_gif_strip_state_()
+{
+    // A request still in flight lands harmlessly: its erase is a no-op and its
+    // result only fills the by-URL cache or re-marks the URL unavailable.
+    gif_preview_inflight_.clear();
+    gif_anim_inflight_.clear();
+    reset_gif_failures_();
+}
+
+const tk::Image*
+ShellBase::gif_strip_image_(const GifResult& result,
+                            const std::function<void()>& repaint)
+{
+    using Cell = views::GifPopup;
+    const int decode_w = static_cast<int>(Cell::kCellW) * 2;
+    const int decode_h = static_cast<int>(Cell::kCellH) * 2;
+
+    const tk::CacheKey strip_key = tk::CacheKey::media(result.strip_url);
+    if (const tk::Image* f = account_manager_.anim_cache().current_frame(strip_key))
+    {
+        start_anim_tick_();
+        return f;
+    }
+
+    // Stage 1: the static preview, shown as soon as it lands.
+    if (!gif_previews_.count(tk::CacheKey::gif_preview(result.preview_url)) &&
+        !gif_preview_unavailable_.count(result.preview_url) &&
+        gif_preview_inflight_.insert(result.preview_url).second)
+    {
+        const std::string url = result.preview_url;
+        fetch_gif_source_(
+            url,
+            [this, url, repaint, decode_w,
+             decode_h](std::vector<std::uint8_t> bytes)
+            {
+                if (bytes.empty())
+                {
+                    // Dead URL or offline: remember it, or every repaint
+                    // would start the same failing fetch again.
+                    gif_preview_inflight_.erase(url);
+                    gif_preview_unavailable_.insert(url);
+                    return;
+                }
+                // The in-flight flag stays set until the decode lands, so a
+                // repaint in between does not start another fetch.
+                run_async_(
+                    [this, url, repaint, decode_w, decode_h,
+                     bytes = std::move(bytes)]() mutable
+                    {
+                        account_manager_.media_disk_cache().store(
+                            tk::CacheKey::gif_source(url), bytes);
+                        auto d = std::make_shared<DecodedImage>(
+                            decode_image_(bytes, decode_w, decode_h));
+                        post_to_ui_alive_(
+                            [this, url, d, repaint]() mutable
+                            {
+                                gif_preview_inflight_.erase(url);
+                                if (d->still)
+                                {
+                                    gif_previews_[tk::CacheKey::gif_preview(url)] =
+                                        std::move(d->still);
+                                }
+                                else
+                                {
+                                    gif_preview_unavailable_.insert(url);
+                                }
+                                repaint();
+                            });
+                    });
+            });
+    }
+
+    // Stage 2: the animation (MP4 or an animated image) replaces the preview.
+    if (!gif_anim_unavailable_.count(result.strip_url) &&
+        gif_anim_inflight_.insert(result.strip_url).second)
+    {
+        const std::string anim_url = result.strip_url;
+        const std::string anim_mime = result.strip_mime;
+        const std::string preview_url = result.preview_url;
+        auto store_frames = [this, anim_url, repaint](
+                                std::vector<std::unique_ptr<tk::Image>> frames,
+                                std::vector<int> delays) mutable
+        {
+            gif_anim_inflight_.erase(anim_url);
+            if (!frames.empty())
+            {
+                account_manager_.anim_cache().store(
+                    tk::CacheKey::media(anim_url), std::move(frames),
+                    std::move(delays), monotonic_ms_());
+                start_anim_tick_();
+            }
+            else
+            {
+                gif_anim_unavailable_.insert(anim_url);
+            }
+            repaint();
+        };
+        fetch_gif_source_(
+            anim_url,
+            [this, anim_url, anim_mime, preview_url, repaint, decode_w, decode_h,
+             store_frames](std::vector<std::uint8_t> bytes) mutable
+            {
+                if (bytes.empty())
+                {
+                    gif_anim_inflight_.erase(anim_url);
+                    gif_anim_unavailable_.insert(anim_url);
+                    return;
+                }
+                run_async_(
+                    [this, anim_url, anim_mime, preview_url, decode_w, decode_h,
+                     store_frames, bytes = std::move(bytes)]() mutable
+                    {
+                        account_manager_.media_disk_cache().store(
+                            tk::CacheKey::gif_source(anim_url), bytes);
+                        if (anim_mime == "video/mp4")
+                        {
+                            auto dvf = std::make_shared<tk::DecodedVideoFrames>(
+                                tk::decode_video_frames(bytes.data(), bytes.size(),
+                                                        decode_w, decode_h));
+                            // Wrap each frame as a backend image: on this
+                            // worker when the backend allows it (a burst of
+                            // results would otherwise copy every frame on the
+                            // UI thread), otherwise on the UI thread.
+                            struct Wrapped
+                            {
+                                std::vector<std::unique_ptr<tk::Image>> imgs;
+                                std::vector<int> delays;
+                            };
+                            auto wrap = [this](const tk::DecodedVideoFrames& v)
+                            {
+                                auto w = std::make_shared<Wrapped>();
+                                for (const auto& f : v.frames)
+                                {
+                                    if (auto img = make_image_from_bgra_(
+                                            f.w, f.h, f.bgra.data()))
+                                    {
+                                        w->imgs.push_back(std::move(img));
+                                        w->delays.push_back(f.delay_ms);
+                                    }
+                                }
+                                return w;
+                            };
+                            if (make_image_from_bgra_on_worker_())
+                            {
+                                auto w = wrap(*dvf);
+                                post_to_ui_alive_(
+                                    [w, store_frames]() mutable
+                                    {
+                                        store_frames(std::move(w->imgs),
+                                                     std::move(w->delays));
+                                    });
+                                return;
+                            }
+                            post_to_ui_alive_(
+                                [dvf, wrap, store_frames]() mutable
+                                {
+                                    auto w = wrap(*dvf);
+                                    store_frames(std::move(w->imgs),
+                                                 std::move(w->delays));
+                                });
+                            return;
+                        }
+                        auto d = std::make_shared<DecodedImage>(
+                            decode_image_(bytes, decode_w, decode_h));
+                        post_to_ui_alive_(
+                            [this, preview_url, d, store_frames]() mutable
+                            {
+                                if (d->frames.empty() && d->still)
+                                {
+                                    // Not animated: keep it as the preview
+                                    // when the preview fetch has not landed.
+                                    gif_previews_.try_emplace(
+                                        tk::CacheKey::gif_preview(preview_url),
+                                        std::move(d->still));
+                                }
+                                store_frames(std::move(d->frames),
+                                             std::move(d->delays_ms));
+                            });
+                    });
+            });
+    }
+
+    if (auto it = gif_previews_.find(tk::CacheKey::gif_preview(result.preview_url));
+        it != gif_previews_.end())
+    {
+        return it->second.get();
+    }
+    return nullptr;
+}
+
+void ShellBase::refresh_pickers_packs_()
+{
+    if (!room_view_)
+        return;
+    room_view_->set_current_room_parent_spaces(
+        parent_spaces_for_room_(current_room_id_));
+    room_view_->refresh_stickers();
+    room_view_->refresh_emoticon_packs();
+    if (auto* ep = room_view_->emoji_picker())
+        ep->invalidate_image_cache();
+    if (auto* sp = room_view_->sticker_picker())
+        sp->invalidate_image_cache();
+}
+
+void ShellBase::repaint_pickers_()
+{
+    if (room_view_)
+    {
+        if (auto* ep = room_view_->emoji_picker())
+            ep->invalidate_image_cache();
+        if (auto* sp = room_view_->sticker_picker())
+            sp->invalidate_image_cache();
+    }
+    request_relayout_();
+    repaint_pickers_native_();
+}
+
 } // namespace tesseract

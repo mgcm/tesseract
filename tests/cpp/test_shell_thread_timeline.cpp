@@ -57,12 +57,16 @@ struct TtShell : tesseract::test::TestShellBase
     void repaint_anim_frame_() override { ++anim_repaints; }
     void stop_anim_tick_() override { ++anim_stops; }
     std::int64_t monotonic_ms_() override { return now_ms; }
+    // Runs the queued posts, including the ones a debounce re-arms while firing.
     void fire_delayed()
     {
-        auto d = std::move(delayed);
-        delayed.clear();
-        for (auto& [ms, fn] : d)
-            fn();
+        while (!delayed.empty())
+        {
+            auto d = std::move(delayed);
+            delayed.clear();
+            for (auto& [ms, fn] : d)
+                fn();
+        }
     }
 
     std::vector<std::pair<int, std::function<void()>>> delayed;

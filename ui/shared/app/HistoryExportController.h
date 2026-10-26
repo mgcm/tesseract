@@ -62,10 +62,9 @@ public:
     /// events are ignored.
     void set_client(tesseract::Client* client, std::shared_ptr<void> client_owner = {});
 
-    // Native folder-picker, wired by each shell exactly like
-    // `SettingsController::show_save_file_dialog`. Invoked with a
-    // suggested folder name; the callback receives the chosen path, or
-    // empty on cancel.
+    // Native folder-picker, installed by ShellBase::ensure_history_export_controller_
+    // (via pick_folder_). Invoked with a suggested folder name; the callback
+    // receives the chosen path, or empty on cancel.
     std::function<void(std::string suggested_name,
                        std::function<void(std::string)> cb)>
         show_save_folder_dialog;
@@ -74,7 +73,7 @@ public:
     // `tk::tr`/`tk::trf`, built in `build_labels_()` — the only place this
     // controller composes prose) → `run_async_` → `Client::start_room_export_async`.
     // No-op if an export is already active (for this room or another) or
-    // `show_save_folder_dialog` isn't wired yet.
+    // `show_save_folder_dialog` is unset.
     void begin(Request req);
 
     // Cooperatively cancels the active export, if any. Discards the

@@ -1,4 +1,5 @@
 #include "app/font_prefs.h"
+#include "app/DeferredTeardown.h"
 #include "app/Launch.h"
 #include "app/ShellBase.h"
 #include <tesseract/crash_handler.h>
@@ -350,12 +351,8 @@ void ShellBase::handle_image_packs_updated_ui_()
 }
 
 // Fired via IEventHandler::on_bot_commands_updated when the cached set
-// of MSC4391 bot commands for `room_id` changes. Concrete: no-op unless
-// `room_id` is the active room, in which case it calls
-// `on_active_room_bot_commands_changed_ui_()` — each shell overrides
-// that no-op to refresh its own SlashCommandController's popup, since
-// (unlike ComposeBar/RoomView) that controller is shell-owned, not
-// shared — see SlashCommandController.h's doc comment.
+// of MSC4391 bot commands for `room_id` changes. No-op unless `room_id` is the
+// active room, in which case the open slash popup is refreshed.
 void ShellBase::handle_bot_commands_updated_ui_(std::string room_id)
 {
     if (!main_window_shows_(room_id))
@@ -902,6 +899,23 @@ void ShellBase::on_system_accent_changed_()
     apply_current_theme_(); // re-reads + stores last_system_accent_
 }
 
+void ShellBase::apply_theme_ui_(const tk::Theme& t)
+{
+    current_theme_ = t;
+    // Backends keep a pointer to the theme they are given, so hand out the
+    // member, not the parameter (callers may pass a temporary).
+    const tk::Theme& theme = current_theme_;
+    apply_native_theme_(theme);
+    for_each_shell_surface_([&theme](tk::SurfaceBase& surface)
+                            { surface.apply_theme(theme); });
+    if (settings_surface_)
+        settings_surface_->apply_theme(theme);
+    if (login_surface_)
+        login_surface_->apply_theme(theme);
+    apply_theme_to_secondary_windows_(theme);
+    after_theme_applied_(theme);
+}
+
 void ShellBase::apply_theme_to_secondary_windows_(const tk::Theme& t)
 {
     if (activity_window_)
@@ -914,6 +928,18 @@ void ShellBase::apply_theme_to_secondary_windows_(const tk::Theme& t)
         {
             w->apply_theme(t);
         }
+    }
+    if (call_window_)
+    {
+        call_window_->apply_theme(t);
+    }
+    if (compose_popups_)
+    {
+        compose_popups_->apply_theme(t);
+    }
+    if (account_picker_popup_)
+    {
+        account_picker_popup_->set_theme(t);
     }
 }
 
@@ -981,9 +1007,9 @@ void ShellBase::schedule_account_data_save_()
 // (Re)construct settings_controller_ with the three standard callbacks
 // (forwarding to post_to_ui_ / run_async_ / pick_image_file_) and wire its
 // UnifiedPush up-connector from the active account (nullptr on platforms
-// without UnifiedPush — a no-op there). Then calls bind_settings_controller_
-// for the native widget + dialog-hook binding. Rebuilds on every call to
-// match the per-login / per-account-switch behavior of the old inline sites.
+// without UnifiedPush — a no-op there), install the key export/import dialog
+// hooks, then call bind_settings_controller_ to bind it to the settings view.
+// Rebuilds on every call (per login / per account switch).
 void ShellBase::ensure_settings_controller_()
 {
     settings_controller_ = std::make_unique<tesseract::SettingsController>(
@@ -1005,15 +1031,43 @@ void ShellBase::ensure_settings_controller_()
     // UnifiedPush up-connector (Linux only); nullptr elsewhere — a no-op.
     settings_controller_->set_up_connector(
         active_account_ ? active_account_->up_connector.get() : nullptr);
+
+    // Message-key export/import dialogs and their result messages.
+    settings_controller_->show_passphrase_prompt =
+        [this](std::string title, std::function<void(std::string)> cb)
+    { prompt_passphrase_(std::move(title), std::move(cb)); };
+    settings_controller_->show_save_file_dialog =
+        [this](std::string suggested_name, std::function<void(std::string)> cb)
+    {
+        pick_save_file_(tk::tr("Export message keys"),
+                        std::move(suggested_name), std::move(cb));
+    };
+    settings_controller_->show_open_file_dialog =
+        [this](std::function<void(std::string)> cb)
+    { pick_open_file_(tk::tr("Import message keys"), std::move(cb)); };
+    settings_controller_->on_export_keys_result =
+        [this](bool ok, std::string error)
+    {
+        show_message_dialog_(
+            ok ? tk::tr("Export complete") : tk::tr("Export failed"),
+            ok ? tk::tr("Message keys exported successfully.")
+               : std::move(error),
+            !ok);
+    };
+    settings_controller_->on_import_keys_result =
+        [this](bool ok, std::string error)
+    {
+        show_message_dialog_(
+            ok ? tk::tr("Import complete") : tk::tr("Import failed"),
+            ok ? tk::tr("Message keys imported successfully.")
+               : std::move(error),
+            !ok);
+    };
     bind_settings_controller_();
 }
 
 // (Re)construct history_export_controller_ with the two standard
-// callbacks (post_to_ui_ / run_async_). Unlike
-// ensure_settings_controller_, there is no matching bind_*_ pure
-// virtual: show_save_folder_dialog stays unset (begin() is then a
-// no-op) until a shell explicitly wires it, so all four shells compile
-// untouched until they add the "Export History" trigger.
+// callbacks (post_to_ui_ / run_async_) and the folder picker (pick_folder_).
 void ShellBase::ensure_history_export_controller_()
 {
     history_export_controller_ = std::make_unique<tesseract::HistoryExportController>(
@@ -1021,6 +1075,13 @@ void ShellBase::ensure_history_export_controller_()
         [this](std::function<void()> fn) { post_to_ui_(std::move(fn)); },
         [this](std::function<void()> fn) { run_async_(std::move(fn)); },
         active_account_);
+    history_export_controller_->show_save_folder_dialog =
+        [this](std::string /*suggested_name*/,
+               std::function<void(std::string)> cb)
+    {
+        pick_folder_(tk::tr("Choose a folder for the exported history"),
+                     std::move(cb));
+    };
 
     // Wire the shared ExportHistoryDialog's request callbacks to the
     // controller, and the controller's results back into the dialog.
@@ -1401,4 +1462,184 @@ ShellBase::RoomSettingsCommitOutcome ShellBase::apply_room_settings_(
     }
     return out;
 }
+
+void ShellBase::on_server_info_ready_ui_()
+{
+    if (stats_settings_view_)
+        stats_settings_view_->set_server_info(server_info_);
+    if (main_app_ && main_app_->room_view())
+        main_app_->room_view()->header()->set_jump_to_date_enabled(
+            server_info_.supports_msc3030);
+    request_relayout_();
+}
+
+void ShellBase::on_own_extended_profile_ready_ui_()
+{
+    if (!stats_settings_view_)
+        return;
+    stats_settings_view_->set_extended_profile(own_extended_profile_);
+    stats_settings_view_->request_relayout();
+}
+
+void ShellBase::on_profile_field_result_ui_(const std::string& key, bool ok,
+                                            const std::string& error)
+{
+    if (!stats_settings_view_)
+        return;
+    stats_settings_view_->set_profile_field_busy(key, false);
+    if (!ok)
+        stats_settings_view_->set_profile_field_error(key, error);
+    stats_settings_view_->request_relayout();
+}
+
+void ShellBase::configure_new_settings_view_(views::SettingsView& view)
+{
+    stats_settings_view_ = &view;
+    view.set_low_power_available(low_power_available());
+    wire_settings_view_(&view);
+    view.on_close = [this] { close_app_settings_ui_(); };
+    view.on_logout = [this]
+    {
+        close_app_settings_ui_();
+        logout_active_account_ui_();
+    };
+    view.on_reset_identity = [this]
+    {
+        close_app_settings_ui_();
+        begin_crypto_identity_reset_();
+    };
+    view.on_tab_changed = [this]
+    {
+        if (stats_settings_view_)
+            stats_settings_view_->request_relayout();
+    };
+    view.load_device_lists();
+    view.set_server_info(server_info_);
+}
+
+void ShellBase::populate_settings_view_(views::SettingsView& view)
+{
+    view.set_account_info(my_display_name_, my_user_id_, my_avatar_url_);
+    view.set_image_provider(make_avatar_image_provider_());
+    view.load_persisted_settings();
+    view.set_signed_out_mode(settings_from_login_());
+    refresh_launch_at_login_pref_();
+    push_tray_available_ui_();
+    const auto& p = own_extended_profile_;
+    if (!p.pronouns.empty() || !p.tz.empty() || !p.biography.empty() ||
+        !p.status_emoji.empty() || !p.status_text.empty())
+        view.set_extended_profile(p);
+    view.request_relayout();
+    compute_cache_sizes_(
+        [this](uint64_t local, uint64_t sdk, uint64_t memory, uint64_t mh,
+               uint64_t mm, uint64_t dh, uint64_t dm)
+        {
+            if (stats_settings_view_)
+                stats_settings_view_->set_cache_sizes(local, sdk, memory, mh,
+                                                      mm, dh, dm);
+        });
+}
+
+
+void ShellBase::ensure_settings_view_()
+{
+    if (stats_settings_view_)
+        return;
+    // A teardown is still pending for the previous surface: finish it now so
+    // the old page is unmounted before the new one replaces it.
+    if (settings_surface_)
+    {
+        unmount_settings_surface_ui_();
+        settings_surface_.reset();
+    }
+    ++settings_gen_;
+    settings_surface_ = create_settings_surface_ui_();
+    if (!settings_surface_)
+        return;
+    auto view = tk::create_root_widget<views::SettingsView>(
+        &settings_surface_->host());
+    views::SettingsView* v = view.get();
+    settings_surface_->set_root(std::move(view));
+    settings_surface_->apply_theme(current_theme_);
+    configure_new_settings_view_(*v);
+    settings_view_created_ui_(*v);
+}
+
+bool ShellBase::prepare_settings_view_()
+{
+    ensure_settings_view_();
+    if (!stats_settings_view_)
+        return false;
+    populate_settings_view_(*stats_settings_view_);
+    // Only now does the controller have a view to bind to: it was created at
+    // login, before this lazily built view existed.
+    if (settings_controller_)
+        bind_settings_controller_();
+    return true;
+}
+
+void ShellBase::teardown_settings_view_()
+{
+    if (!settings_surface_)
+        return;
+    stats_settings_view_ = nullptr;
+    const std::uint64_t gen = ++settings_gen_;
+    std::weak_ptr<bool> alive = weak_flag();
+    auto destroy = [this, alive]
+    {
+        if (alive.expired())
+            return;
+        unmount_settings_surface_ui_();
+        settings_surface_.reset();
+    };
+    auto is_current = [this, alive, gen]
+    { return !alive.expired() && settings_gen_ == gen; };
+    if (tk::Host* host = main_host_())
+        schedule_deferred_teardown(*host, std::move(is_current), std::move(destroy));
+    else
+        destroy();
+}
+
+void ShellBase::bind_settings_controller_()
+{
+    if (!stats_settings_view_ || !settings_controller_)
+        return;
+    wire_settings_controller_common_(stats_settings_view_,
+                                     settings_controller_.get());
+    stats_settings_view_->set_user_pack_image_provider(
+        make_static_image_provider_with_fetch_(96, 96));
+    stats_settings_view_->on_user_pack_pending_image_added =
+        [this](std::uint64_t local_id, const std::vector<std::uint8_t>& bytes,
+               const std::string& mime)
+    {
+        if (stats_settings_view_)
+            handle_user_pack_pending_image_added_(
+                local_id, bytes, mime, stats_settings_view_->user_pack_editor());
+    };
+}
+
+void ShellBase::update_settings_anim_regions_()
+{
+    if (app_settings_open_ && settings_surface_)
+        settings_surface_->update_anim_regions();
+}
+
+void ShellBase::repaint_settings_ui_()
+{
+    if (app_settings_open_ && settings_surface_)
+        settings_surface_->host().request_repaint();
+}
+
+void ShellBase::on_launch_at_login_pref_ui_(bool enabled)
+{
+    if (stats_settings_view_)
+        stats_settings_view_->set_launch_at_login_pref(enabled);
+}
+
+void ShellBase::on_tray_available_ui_(bool available)
+{
+    if (stats_settings_view_)
+        stats_settings_view_->set_tray_available(available);
+}
+
 } // namespace tesseract

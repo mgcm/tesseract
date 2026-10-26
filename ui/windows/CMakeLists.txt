@@ -70,7 +70,6 @@ add_executable(tesseract_win32 WIN32
     src/RoomWindow.cpp
     src/CustomTitleBar.h
     src/CustomTitleBar.cpp
-    src/LoginView.cpp
     src/Theme.cpp
     src/Win32Notifier.cpp
     src/Win32ScreenLock.cpp

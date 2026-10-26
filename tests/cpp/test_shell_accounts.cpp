@@ -25,6 +25,8 @@ namespace
 
 struct AccountsShell : tesseract::test::TestShellBase
 {
+    AccountsShell() = default;
+    explicit AccountsShell(tesseract::AccountManager& am) : TestShellBase(am) {}
     ~AccountsShell() override
     {
         pool_.drain();
@@ -289,6 +291,31 @@ TEST_CASE("the account picker raises a window that already shows the account",
     CHECK(owner.raised == 1);
     CHECK(s.switched.empty());
     s.account_manager_.clear_dedicated("@a:x");
+}
+
+TEST_CASE("the account picker raises a window showing the account, else switches",
+          "[shell][accounts][picker]")
+{
+    tesseract::AccountManager am;
+    AccountsShell s(am), other(am);
+    am.register_window(&s);
+    am.register_window(&other);
+    auto a = acct("@a:x", false);
+    auto b = acct("@b:x", false);
+    am.add_account(a);
+    am.add_account(b);
+    other.active_account_ = a; // shown there, no dedicated mapping
+
+    s.on_account_picker_select_("@a:x");
+    CHECK(other.raised == 1);
+    CHECK(s.switched.empty());
+
+    // Signed in but shown nowhere: this window takes it.
+    s.on_account_picker_select_("@b:x");
+    CHECK(other.raised == 1);
+    CHECK(s.switched == std::vector<std::string>{"@b:x"});
+    am.unregister_window(&s);
+    am.unregister_window(&other);
 }
 
 TEST_CASE("the account picker does not raise itself", "[shell][accounts][picker]")

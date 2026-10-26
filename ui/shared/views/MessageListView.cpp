@@ -9660,6 +9660,22 @@ chip_hit_at(const MessageListView::RowChipGeom& g, tk::Rect widget_bounds,
     return MessageListView::HoverTarget::None;
 }
 
+// Index of the action-pill cell under the pointer (-1 for none). Paint
+// highlights the cell under last_pointer_local_, so a move between cells (or
+// onto/off the pill) is a visual change even when no other hover state moves.
+static int pill_cell_at(const MessageListView::RowChipGeom& g, tk::Point world)
+{
+    const tk::Rect* cells[] = {&g.react_button, &g.reply_button,
+                               &g.thread_button, &g.edit_button,
+                               &g.more_button};
+    for (int i = 0; i < 5; ++i)
+    {
+        if (cells[i]->w > 0.0f && rect_contains(*cells[i], world))
+            return i;
+    }
+    return -1;
+}
+
 bool MessageListView::on_pointer_move(tk::Point local)
 {
     if (gate_blocks_input_())
@@ -9668,6 +9684,18 @@ bool MessageListView::on_pointer_move(tk::Point local)
     }
     if (nav_loading_)
         return false;
+
+    // Snapshot everything paint derives from the pointer. A move that changes
+    // none of it needs no repaint; returning true on every move would starve
+    // the Win32 WM_TIMER that drives animation playback.
+    const int before_row = hovered_row_index();
+    const HoverTarget before_target = hover_target_;
+    const int before_chip = hover_chip_idx_;
+    const std::string before_media = hovered_media_event_id_;
+    const std::string before_link = hover_link_url_;
+    const int before_cell = pill_cell_at(
+        hovered_row_geom_, {last_pointer_local_.x + bounds().x,
+                            last_pointer_local_.y + bounds().y});
     last_pointer_local_ = local;
 
     // While the pointer is over the currently-hovered row's action pill —
@@ -10009,7 +10037,11 @@ bool MessageListView::on_pointer_move(tk::Point local)
             hover_status_tooltip_ = false;
         }
     }
-    return true;
+    const int after_cell = pill_cell_at(hovered_row_geom_, pill_probe);
+    return hovered_row_index() != before_row || hover_target_ != before_target ||
+           hover_chip_idx_ != before_chip ||
+           hovered_media_event_id_ != before_media ||
+           hover_link_url_ != before_link || after_cell != before_cell;
 }
 
 tk::Widget* MessageListView::dispatch_pointer_move(tk::Point world, bool* dirty)

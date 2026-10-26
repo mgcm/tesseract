@@ -92,7 +92,9 @@ void RoomWindowBase::repaint_anim_frame()
 
 void RoomWindowBase::schedule_self_close_()
 {
-    if (!shell_)
+    // ~ShellBase destroys the pop-outs after the derived shell is gone, when
+    // post_to_ui_ is pure virtual; the shell's own teardown closes them.
+    if (!shell_ || shell_->tearing_down_)
     {
         return;
     }

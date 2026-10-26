@@ -197,10 +197,6 @@ public:
     }
 
     void relayout();
-    void set_on_layout(std::function<void()> cb)
-    {
-        on_layout_ = std::move(cb);
-    }
     void add_layout_listener(std::function<void()> cb)
     {
         layout_listeners_.push_back(std::move(cb));
@@ -286,7 +282,6 @@ private:
     std::unique_ptr<CanvasFactory> factory_;
     bool transparent_ = false;
     std::unique_ptr<Widget> root_;
-    std::function<void()> on_layout_;
     std::vector<std::function<void()>> layout_listeners_;
     FileDropErrorHandler on_file_drop_error_;
     std::function<void(tk::Point)> on_right_click_;
@@ -3203,7 +3198,7 @@ bool Host::is_network_available() const
 //  never a descendant of the anchor Surface's own NSView. Generalizes the
 //  hand-rolled NSPanel-per-popup pattern that MentionPopup/SlashCommandPopup/
 //  ShortcodePopup/the Gif popup each built by hand in RoomWindowController.mm
-//  / MainWindowController.mm.
+//  / MainWindow.mm.
 // ─────────────────────────────────────────────────────────────────────────
 
 class MacosPopupSurfaceHandle : public tk::PopupSurfaceHandle
@@ -3237,6 +3232,21 @@ public:
     void set_root(std::unique_ptr<Widget> root) override
     {
         surface_->set_root(std::move(root));
+    }
+
+    // Round the panel's content and let the area behind the corners show
+    // through, for content that paints its own rounded card.
+    void set_corner_radius(float radius_dip) override
+    {
+        if (radius_dip <= 0.f || !panel_)
+            return;
+        panel_.opaque = NO;
+        panel_.backgroundColor = [NSColor clearColor];
+        panel_.hasShadow = YES;
+        NSView* view = (__bridge NSView*)surface_->view_handle();
+        view.wantsLayer = YES;
+        view.layer.cornerRadius = radius_dip;
+        view.layer.masksToBounds = YES;
     }
 
     void set_rect(Rect anchor_world_rect, Size size,
@@ -3303,6 +3313,8 @@ public:
     }
     bool visible() const override { return visible_; }
 
+    tk::Host* popup_host() override { return &surface_->host(); }
+
     void set_theme(const Theme& theme) override
     {
         surface_->set_theme(theme);
@@ -3330,7 +3342,7 @@ private:
     // QtPopupSurfaceHandle). Only installed while a caller actually wants
     // to know (on_dismiss_requested set) and the popup is visible, same
     // guard as Qt's filter_installed_. Local monitors are the standard
-    // idiom here — see MainWindowController.mm's _escapeMonitor for the
+    // idiom here — see MainWindow.mm's escape_monitor_ for the
     // same technique with a different event mask.
     void watch_clicks_()
     {
@@ -3741,10 +3753,6 @@ void Host::relayout()
     root_->measure(ctx, {bounds.w, bounds.h});
     root_->arrange(ctx, bounds);
     end_relayout_pass_();
-    if (on_layout_)
-    {
-        on_layout_();
-    }
     for (auto& cb : layout_listeners_)
     {
         cb();
@@ -3765,7 +3773,7 @@ void Host::on_draw(CGContextRef ctx)
     {
         return;
     }
-    // Explicit scale, not read back from ctx's own CTM: MainWindowController
+    // Explicit scale, not read back from ctx's own CTM: MainWindow
     // sets content.wantsLayer = YES on this view's ancestor for other chrome,
     // which forces this view into inherited layer-backing even though it
     // sets its own wantsLayer = NO — and the CGContext -drawRect: receives in
@@ -4155,11 +4163,6 @@ void Surface::apply_scale_change(float scale)
 void Surface::set_on_scale_changed(std::function<void(float)> cb)
 {
     on_scale_changed_ = std::move(cb);
-}
-
-void Surface::set_on_layout(std::function<void()> cb)
-{
-    host_->set_on_layout(std::move(cb));
 }
 
 void Surface::add_layout_listener(std::function<void()> cb)

@@ -1,5 +1,9 @@
 #include "app/ShellBase.h"
+#include "views/ForwardRoomPicker.h"
 #include "views/MainAppWidget.h"
+#include "views/MessageSearchView.h"
+#include "views/QuickSwitcher.h"
+#include "views/RoomView.h"
 #include <tesseract/prefs.h>
 #include <algorithm>
 #ifndef _WIN32
@@ -998,6 +1002,34 @@ void ShellBase::open_room_version_(const std::string& room_id,
         });
 }
 
+void ShellBase::tray_activate_(const std::string& token)
+{
+    // If the unread room is popped out, raise that window instead.
+    if (focus_tray_unread_popout_())
+        return;
+    show_main_window_for_tray_(token);
+    navigate_tray_unread_();
+}
+
+void ShellBase::tray_toggle_(const std::string& token)
+{
+    if (focus_tray_unread_popout_())
+        return;
+    if (main_window_foreground_for_tray_() && !last_tray_unread_)
+    {
+        hide_main_window_for_tray_();
+        return;
+    }
+    show_main_window_for_tray_(token);
+    navigate_tray_unread_();
+}
+
+void ShellBase::restart_mark_read_timer_(int delay_ms)
+{
+    debounce_(DebounceSlot::MarkRead, delay_ms,
+              [this] { mark_room_read_(current_room_id_); });
+}
+
 void ShellBase::on_room_selected_(const std::string& room_id)
 {
     if (room_id.empty())
@@ -1039,8 +1071,6 @@ void ShellBase::on_room_selected_(const std::string& room_id)
         room_view_->clear_compose_text();
     }
     // Focus is handled by RoomView::set_room()'s own default-focus policy.
-    before_room_set_();
-
     if (room_view_)
     {
         if (const auto* r = room_by_id_(current_room_id_))
@@ -1329,4 +1359,90 @@ void ShellBase::sweep_idle_timelines_()
             });
     }
 }
+
+// ── Window-level overlays ──────────────────────────────────────────────────
+
+void ShellBase::open_quick_switch_ui_()
+{
+    open_quick_switch_();
+}
+
+void ShellBase::open_message_search_ui_()
+{
+    open_message_search_();
+}
+
+void ShellBase::open_quick_switch_()
+{
+    if (!main_app_ || !main_app_->quick_switcher())
+    {
+        return;
+    }
+    bring_main_window_forward_for_overlay_();
+    main_app_->show_quick_switch(true);
+    request_relayout_();
+}
+
+void ShellBase::close_quick_switch_()
+{
+    if (main_app_)
+    {
+        main_app_->show_quick_switch(false);
+    }
+    request_relayout_();
+    restore_focus_after_overlay_();
+}
+
+void ShellBase::open_message_search_()
+{
+    if (!main_app_ || !main_app_->message_search())
+    {
+        return;
+    }
+    bring_main_window_forward_for_overlay_();
+    main_app_->show_message_search(true);
+    request_relayout_();
+}
+
+void ShellBase::close_message_search_()
+{
+    if (main_app_)
+    {
+        main_app_->show_message_search(false);
+    }
+    request_relayout_();
+    restore_focus_after_overlay_();
+}
+
+void ShellBase::close_forward_picker_()
+{
+    if (main_app_ && main_app_->forward_picker())
+    {
+        main_app_->forward_picker()->close();
+    }
+}
+
+void ShellBase::open_find_in_room_()
+{
+    auto* rv = main_app_ ? main_app_->room_view() : nullptr;
+    if (!rv || !rv->has_room() || current_room_id_.empty())
+    {
+        return;
+    }
+    bring_main_window_forward_for_overlay_();
+    rv->open_room_search();
+    request_relayout_();
+}
+
+void ShellBase::close_find_in_room_()
+{
+    auto* rv = main_app_ ? main_app_->room_view() : nullptr;
+    if (rv)
+    {
+        rv->close_room_search();
+    }
+    request_relayout_();
+    restore_focus_after_overlay_();
+}
+
 } // namespace tesseract

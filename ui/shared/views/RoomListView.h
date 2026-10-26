@@ -195,6 +195,16 @@ public:
     // it, or an empty vector if it's closed.
     const std::vector<PopupMenu::Item>& context_menu_items_for_test() const;
 
+    // Test-only: the data sources last passed to set_invites / set_my_knocks.
+    const std::vector<tesseract::InviteInfo>* invites_for_test() const
+    {
+        return invites_;
+    }
+    const std::vector<tesseract::KnockedRoomInfo>* my_knocks_for_test() const
+    {
+        return my_knocks_;
+    }
+
     // Section indices (matches array positions throughout the class).
     // kSecInvites is fed from invites_; all others are fed from rooms_.
     // kSecSpaceUnjoined is fed from space_unjoined_rooms_ (not section_rooms_).

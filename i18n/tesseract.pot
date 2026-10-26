@@ -139,14 +139,6 @@ msgstr ""
 msgid "Passphrase"
 msgstr ""
 
-#: ui/linux-gtk/src/MainWindow.cpp:3205
-msgid "Save message keys"
-msgstr ""
-
-#: ui/linux-gtk/src/MainWindow.cpp:3234
-msgid "Open message keys"
-msgstr ""
-
 #: ui/linux-gtk/src/MainWindow.cpp:3265 ui/linux-qt/src/SettingsWidget.cpp:176
 #: ui/macos/src/MainWindowController.mm:6796 ui/windows/src/MainWindow.cpp:6442
 msgid "Message keys exported successfully."
@@ -228,18 +220,6 @@ msgstr ""
 msgid "Already in Saved Stickers"
 msgstr ""
 
-#: ui/linux-qt/src/MainWindow.cpp:2229
-msgid "Restoring sessions…"
-msgstr ""
-
-#: ui/linux-qt/src/MainWindow.cpp:2466
-msgid "Already signed in as %1"
-msgstr ""
-
-#: ui/linux-qt/src/MainWindow.cpp:2485
-msgid "Sign-in failed: %1"
-msgstr ""
-
 #: ui/linux-qt/src/MainWindow.cpp:3118
 msgid "Images (*.png *.jpg *.jpeg *.gif *.webp)"
 msgstr ""
@@ -248,8 +228,8 @@ msgstr ""
 msgid "Add Account"
 msgstr ""
 
-#: ui/linux-qt/src/MainWindow.cpp:4606
-msgid "Signed out of %1"
+#: ui/shared/app/ShellBase_accounts.cpp:1479
+msgid "Signed out of {0}"
 msgstr ""
 
 #: ui/linux-qt/src/MainWindow.h:65 ui/windows/src/MainWindow.cpp:6416

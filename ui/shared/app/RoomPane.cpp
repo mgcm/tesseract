@@ -397,9 +397,9 @@ void RoomPane::wire_room_view_()
     // Pop-out windows share the shell's singleton capture_ but don't wire
     // voice recording — the main window owns that interaction. Hide the mic
     // button so pop-outs present a clean compose bar. The main window's own
-    // wire_voice_capture_ call (each platform's MainWindow constructor, run
-    // after main_room_pane_->attach()) re-enables it there when a capture
-    // device is available.
+    // wire_voice_capture_ call (ShellBase::wire_room_view_services_, run after
+    // main_room_pane_->attach()) re-enables it there when a capture device is
+    // available.
     rv->compose_bar()->set_mic_available(false);
 
     // Failed-send hover actions and the identity-change banner: wired here
@@ -1031,25 +1031,6 @@ void RoomPane::wire_room_view_()
             ta->set_text("");
         }
         room_view_->set_current_text({});
-    };
-    rv->on_edit_cancelled = [this]
-    {
-        if (auto* ta = compose_text_area_())
-        {
-            ta->set_text("");
-        }
-        room_view_->set_current_text({});
-    };
-    rv->on_edit_prefill = [this](const std::string& body)
-    {
-        if (auto* ta = compose_text_area_())
-        {
-            ta->set_text(body);
-        }
-        else
-        {
-            room_view_->set_current_text(body);
-        }
     };
     rv->on_delete_requested = [this](const std::string& event_id)
     {
@@ -3062,6 +3043,11 @@ void RoomPane::send_receipt_(const std::string& event_id)
     shell_->maybe_send_read_receipt_(room_id_, event_id, session_());
 }
 
+const tk::AnimImageCache* RoomPane::shell_anim_cache_() const
+{
+    return shell_ ? &shell_->account_manager_.anim_cache() : nullptr;
+}
+
 void RoomPane::send_typing_notice_(bool typing)
 {
     // Also reached from ~ComposerPopups during window teardown: skip once the
@@ -4026,6 +4012,7 @@ void RoomPane::wire_mention_hooks_(
     // Live client getter (robust against account switches while this pane is
     // open) and avatar prefetch into the shared cache.
     hooks.client = [this] { return shell_client_(); };
+    hooks.client_owner = [this]() -> std::shared_ptr<void> { return session_(); };
     hooks.fetch_avatar =
         [this](const std::string& mxc) { shell_->ensure_user_avatar_(mxc); };
     hooks.resolve_avatar =

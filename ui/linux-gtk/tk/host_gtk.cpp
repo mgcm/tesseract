@@ -2546,6 +2546,13 @@ public:
     ~GtkPopupSurfaceHandle() override
     {
         uninstall_click_watch_();
+        if (round_css_)
+        {
+            if (GdkDisplay* dpy = gdk_display_get_default())
+                gtk_style_context_remove_provider_for_display(
+                    dpy, GTK_STYLE_PROVIDER(round_css_));
+            g_object_unref(round_css_);
+        }
         if (popover_)
         {
             gtk_widget_unparent(popover_);
@@ -2556,6 +2563,35 @@ public:
     {
         surface_->set_root(std::move(root));
         gtk_popover_set_child(GTK_POPOVER(popover_), surface_->widget());
+    }
+
+    // Strip the GtkPopover's own frame and padding and clip it to a rounded
+    // rect, for content that paints its own rounded card; keep a drop shadow.
+    void set_corner_radius(float radius_dip) override
+    {
+        if (radius_dip <= 0.f)
+            return;
+        char cls[48];
+        std::snprintf(cls, sizeof(cls), "tk-rounded-popup-%p",
+                      static_cast<void*>(this));
+        for (char* c = cls; *c; ++c)
+            if (*c == 'x' || *c == '.')
+                *c = '-';
+        if (!round_css_)
+        {
+            round_css_ = gtk_css_provider_new();
+            if (GdkDisplay* dpy = gdk_display_get_default())
+                gtk_style_context_add_provider_for_display(
+                    dpy, GTK_STYLE_PROVIDER(round_css_),
+                    GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        }
+        const std::string rule =
+            std::string("popover.") + cls + " > contents { background: none; "
+            "border: none; padding: 0; border-radius: " +
+            std::to_string(static_cast<int>(radius_dip + 0.5f)) +
+            "px; overflow: hidden; box-shadow: 0 1px 8px rgba(0, 0, 0, 0.25); }";
+        gtk_css_provider_load_from_string(round_css_, rule.c_str());
+        gtk_widget_add_css_class(popover_, cls);
     }
 
     void set_rect(Rect anchor_world_rect, Size size,
@@ -2620,6 +2656,8 @@ public:
         return visible_;
     }
 
+    tk::Host* popup_host() override { return &surface_->host(); }
+
     void set_theme(const Theme& theme) override
     {
         surface_->set_theme(theme);
@@ -2679,6 +2717,7 @@ private:
 
     GtkWidget* parent_overlay_ = nullptr;
     GtkWidget* popover_ = nullptr;
+    GtkCssProvider* round_css_ = nullptr;
     std::unique_ptr<Surface> surface_;
     bool visible_ = false;
     GtkEventController* click_controller_ = nullptr;
@@ -3159,20 +3198,11 @@ public:
         root_->measure(ctx, {bounds.w, bounds.h});
         root_->arrange(ctx, bounds);
         end_relayout_pass_();
-        if (on_layout_)
-        {
-            on_layout_();
-        }
         for (auto& cb : layout_listeners_)
         {
             cb();
         }
         gtk_widget_queue_draw(drawing_area_);
-    }
-
-    void set_on_layout(std::function<void()> cb)
-    {
-        on_layout_ = std::move(cb);
     }
 
     void add_layout_listener(std::function<void()> cb)
@@ -3520,7 +3550,6 @@ private:
     const Widget* shield_popup_ = nullptr; // identity only, never deref'd
     Rect shield_rect_{};
     std::unique_ptr<Widget> root_;
-    std::function<void()> on_layout_;
     std::vector<std::function<void()>> layout_listeners_;
     double last_pointer_x_ = -1;
     double last_pointer_y_ = -1;
@@ -4202,11 +4231,6 @@ void Surface::set_anim_cache(const AnimImageCache* cache)
 void Surface::update_anim_regions()
 {
     host_->invalidate_anim_damage();
-}
-
-void Surface::set_on_layout(std::function<void()> cb)
-{
-    host_->set_on_layout(std::move(cb));
 }
 
 void Surface::add_layout_listener(std::function<void()> cb)

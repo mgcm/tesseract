@@ -92,14 +92,6 @@ msgstr "Passfrase"
 msgid "Recovery passphrase"
 msgstr "Gjenopprettingsfrase"
 
-#: ui/linux-gtk/src/MainWindow.cpp:3171
-msgid "Save message keys"
-msgstr "Lagre meldingsnøkler"
-
-#: ui/linux-gtk/src/MainWindow.cpp:3200
-msgid "Open message keys"
-msgstr "Åpne meldingsnøkler"
-
 #: ui/linux-gtk/src/MainWindow.cpp:3231 ui/linux-qt/src/SettingsWidget.cpp:176
 #: ui/macos/src/MainWindowController.mm:6748 ui/windows/src/MainWindow.cpp:6440
 msgid "Message keys exported successfully."
@@ -154,23 +146,14 @@ msgstr "Videoer (*.mp4 *.webm *.mkv);;Alle filer (*.*)"
 msgid "Already in Saved Stickers"
 msgstr "Allerede i lagrede klistremerker"
 
-msgid "Restoring sessions…"
-msgstr "Gjenoppretter økter…"
-
-msgid "Already signed in as %1"
-msgstr "Du er allerede logget inn som %1"
-
-msgid "Sign-in failed: %1"
-msgstr "Innlogging mislyktes: %1"
-
 msgid "Images (*.png *.jpg *.jpeg *.gif *.webp)"
 msgstr "Bilder (*.png *.jpg *.jpeg *.gif *.webp)"
 
 msgid "Add Account"
 msgstr "Legg til konto"
 
-msgid "Signed out of %1"
-msgstr "Logget ut av %1"
+msgid "Signed out of {0}"
+msgstr "Logget ut av {0}"
 
 #: ui/linux-qt/src/SettingsWidget.cpp:161
 #: ui/shared/app/SettingsController.cpp:795

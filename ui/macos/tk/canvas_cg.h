@@ -24,7 +24,7 @@ namespace tk::cg
 // `scale_override`, when > 0, is what Canvas::scale_factor() reports instead
 // of reading it back from the context's CTM. Needed for the live window
 // surface: when an ancestor NSView is layer-backed (content.wantsLayer =
-// YES, set for chrome elsewhere in MainWindowController.mm), every
+// YES, set for chrome elsewhere in MainWindow.mm), every
 // descendant view — including ours, even with its own wantsLayer left NO —
 // is forced into inherited layer-backing too, and the CGContext handed to
 // -drawRect: in that case has an unscaled, unflipped CTM (a=1, d=1)
@@ -90,7 +90,7 @@ struct DecodedFrames
 // the Timeline or the sticker-picker grid tile); going through ImageIO's
 // dedicated thumbnail generator instead avoids it.
 // Safe to call from any thread. This is the single implementation for both
-// MacShell::decode_image_ (Room List, Timeline, avatars) and ComposeBar's
+// macos::MainWindow::decode_image_ (Room List, Timeline, avatars) and ComposeBar's
 // attachment preview — do not reimplement this logic at a third call site.
 // `max_w`/`max_h` (0/0 = unbounded, the historical default) downscale each
 // *animated* frame (independent axis limits — NOT a single square bound) to
@@ -110,7 +110,7 @@ struct DecodedFrames
 // that to `on_extra_frame` (with a running delivery index) — and the
 // returned DecodedFrames' `frames` stays empty; checking `delays_ms`/still
 // emptiness is not a valid success signal in that mode, the boolean return
-// callers build on top of this (see MacShell::decode_image_streamed_) is.
+// callers build on top of this (see macos::MainWindow::decode_image_streamed_) is.
 DecodedFrames decode_image_bytes(
     std::span<const std::uint8_t> bytes, int max_w = 0, int max_h = 0,
     const std::function<void(std::unique_ptr<Image>, int)>* on_first_frame =

@@ -470,6 +470,8 @@ public:
     std::shared_ptr<AccountSession> session_() const;
     tesseract::Client* pane_client_() const;
     tesseract::Client* shell_client_() const { return pane_client_(); }
+    // The shell's shared animated-image cache.
+    const tk::AnimImageCache* shell_anim_cache_() const;
     // That account's user id and room list.
     std::string pane_user_id_() const;
     const std::vector<tesseract::RoomInfo>& pane_rooms_() const;
@@ -799,9 +801,8 @@ private:
     std::vector<tesseract::RoomMember> cached_room_members_;
     std::string cached_members_room_;
     // Liveness token specifically for ShellBase::extract_drop_media_(), whose
-    // virtual signature (implemented per-platform-shell) expects a
-    // std::shared_ptr<bool> that stays safely dereferenceable even after this
-    // RoomPane is destroyed — unlike EnableWeakSelf's weak_flag(), which
+    // signature expects a std::shared_ptr<bool> that stays safely
+    // dereferenceable even after this RoomPane is destroyed — unlike EnableWeakSelf's weak_flag(), which
     // aliases this object's own memory and must be re-locked after every
     // deferred hop. Kept as its own independently-heap-allocated flag (the
     // old pattern) rather than migrating extract_drop_media_'s cross-shell

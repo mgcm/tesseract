@@ -54,8 +54,11 @@ private:
 
 struct SpStage
 {
-    PopupCapableStubHost host;
+    // Declared before host so it outlives it: the host can still hold images
+    // the surface's backend made, and on Win32 releasing them after that
+    // backend's CoUninitialize() crashes.
     std::unique_ptr<TestSurface> surface = TestSurface::create(400, 300);
+    PopupCapableStubHost host;
     std::unique_ptr<SpFruitPicker> picker =
         create_root_widget<SpFruitPicker>(&host);
 

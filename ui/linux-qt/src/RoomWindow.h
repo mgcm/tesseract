@@ -57,7 +57,6 @@ private:
     tk::TextArea* roomTextArea_ = nullptr;
     tesseract::views::ForwardRoomPicker* forward_picker_widget_ = nullptr; // borrowed
     tesseract::views::RoomMediaView* room_media_view_widget_ = nullptr; // borrowed
-    tesseract::views::ConfirmDialog* confirm_dialog_widget_ = nullptr; // borrowed
 
     // Composer popups (@mention, /command, :shortcode:, /gif). The popups
     // are destroyed with the window, before Qt tears down the child surface_.

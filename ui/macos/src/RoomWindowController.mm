@@ -57,8 +57,23 @@ public:
         schedule_self_close_();
     }
 
-    // Expose protected RoomWindowBase members to ObjC++ callers.
-    using tesseract::RoomWindowBase::save_popout_geometry_;
+    // Called by -windowDidMove: / -windowDidEndLiveResize:. Saves this
+    // pop-out's frame to Settings in top-left-origin coords.
+    void save_geometry()
+    {
+        if (window_closed_ || !controller_ || !controller_.window) return;
+        NSRect f = controller_.window.frame;
+        NSArray<NSScreen*>* screens = [NSScreen screens];
+        if (!screens.count) return;
+        const CGFloat primaryTop =
+            [[screens firstObject] frame].origin.y +
+            [[screens firstObject] frame].size.height;
+        save_popout_geometry_(
+            static_cast<int>(f.origin.x),
+            static_cast<int>(primaryTop - f.origin.y - f.size.height),
+            static_cast<int>(f.size.width),
+            static_cast<int>(f.size.height));
+    }
 
     // Called by -windowDidResize: delegate method. A popup's screen position
     // is captured once when it opens and never recomputed, so leaving one
@@ -105,7 +120,6 @@ private:
     tk::TextArea* text_area_ = nullptr;
     tesseract::views::ForwardRoomPicker* forward_picker_widget_ = nullptr; // borrowed
     tesseract::views::RoomMediaView* room_media_view_widget_ = nullptr; // borrowed
-    tesseract::views::ConfirmDialog* confirm_dialog_widget_ = nullptr; // borrowed
 
     // Composer popups (@mention, /command, :shortcode:, /gif). Declared after
     // surface_ so the popups are destroyed before the Host they came from.
@@ -168,7 +182,6 @@ MacRoomWindow::MacRoomWindow(tesseract::ShellBase* shell,
     media_viewer_          = room_widget->media_viewer();
     forward_picker_widget_ = room_widget->forward_picker();
     room_media_view_widget_ = room_widget->room_media_view();
-    confirm_dialog_widget_ = room_widget->confirm_dialog();
     room_widget->on_layout_changed = [this]
     {
         if (surface_)
@@ -314,40 +327,6 @@ MacRoomWindow::MacRoomWindow(tesseract::ShellBase* shell,
     text_area_ = room_view_->compose_bar()->text_area();
     popups_ = std::make_unique<tesseract::ComposerPopups>(
         surface_->host(), text_area_, pane_.get(), room_view_);
-    surface_->set_on_layout(
-        [this]
-        {
-            // Native child controls always paint over canvas-drawn overlays,
-            // so hide them while the confirm dialog covers the window —
-            // otherwise the compose box/search fields would poke through on
-            // top of the modal backdrop. text_area_ self-positions via
-            // ComposeBar::arrange() otherwise (reached via the relayout this
-            // set_on_layout callback runs after), so only a force-hide is
-            // needed here — mirrors the search fields' own gating below.
-            const bool confirm_open =
-                confirm_dialog_widget_ && confirm_dialog_widget_->is_open();
-            if (confirm_open && text_area_)
-            {
-                text_area_->set_visible(false);
-            }
-            if (confirm_open && room_view_)
-            {
-                // Search field self-positions via RoomSearchBar::arrange(),
-                // but the ConfirmDialog covering this window is pop-out-local
-                // state the widget doesn't know about — force it off here.
-                if (auto* bar = room_view_->room_search_bar())
-                    if (auto* f = bar->search_field())
-                        f->set_visible(false);
-            }
-            if (confirm_open && forward_picker_widget_)
-            {
-                // Search field self-positions via ForwardRoomPicker::arrange(),
-                // but the ConfirmDialog covering this window is pop-out-local
-                // state the widget doesn't know about — force it off here.
-                if (auto* f = forward_picker_widget_->search_field())
-                    f->set_visible(false);
-            }
-        });
 
     // Per-room "find in conversation" — search field is self-owned; only the
     // shell-level Up/Down/Escape nav needs wiring here (on_close is already
@@ -571,26 +550,9 @@ void MacRoomWindow::surface_repaint_()
 
 @synthesize cppWindow = _cppWindow;
 
-// Helper: save this popout window's geometry (top-left coords) to Settings.
-- (void)_savePopoutGeometry
-{
-    if (!_cppWindow) return;
-    NSRect f = self.window.frame;
-    NSArray<NSScreen*>* screens = [NSScreen screens];
-    if (!screens.count) return;
-    const CGFloat primaryTop =
-        [[screens firstObject] frame].origin.y +
-        [[screens firstObject] frame].size.height;
-    _cppWindow->save_popout_geometry_(
-        static_cast<int>(f.origin.x),
-        static_cast<int>(primaryTop - f.origin.y - f.size.height),
-        static_cast<int>(f.size.width),
-        static_cast<int>(f.size.height));
-}
-
 - (void)windowDidEndLiveResize:(NSNotification*)notification
 {
-    [self _savePopoutGeometry];
+    if (_cppWindow) _cppWindow->save_geometry();
 }
 
 - (void)windowDidResize:(NSNotification*)notification
@@ -600,7 +562,7 @@ void MacRoomWindow::surface_repaint_()
 
 - (void)windowDidMove:(NSNotification*)notification
 {
-    [self _savePopoutGeometry];
+    if (_cppWindow) _cppWindow->save_geometry();
 }
 
 - (void)windowWillClose:(NSNotification*)notification
@@ -654,7 +616,7 @@ void MacRoomWindow::surface_repaint_()
 @end
 
 // ─────────────────────────────────────────────────────────────────────────────
-// C++ factory — called from MacShell::create_secondary_room_window_
+// C++ factory — called from macos::MainWindow::create_secondary_room_window_
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace tesseract

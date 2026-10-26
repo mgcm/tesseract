@@ -2354,6 +2354,14 @@ public:
         frame_->setGeometry(x, y, w, h);
         surface_->resize(w, h);
         surface_->relayout();
+        apply_mask_(w, h);
+    }
+
+    void set_corner_radius(float radius_dip) override
+    {
+        radius_ = radius_dip;
+        if (frame_)
+            apply_mask_(frame_->width(), frame_->height());
     }
 
     void set_visible(bool visible) override
@@ -2389,6 +2397,8 @@ public:
         return visible_;
     }
 
+    tk::Host* popup_host() override { return &surface_->host(); }
+
     void set_theme(const Theme& theme) override
     {
         surface_->set_theme(theme);
@@ -2417,6 +2427,23 @@ public:
     {
         surface_->update_anim_regions();
     }
+
+    // Hard-clip the frame to a rounded rect so a content card that paints its
+    // own rounded background doesn't show square corners of the surface behind.
+    void apply_mask_(int w, int h)
+    {
+        if (!frame_)
+            return;
+        if (radius_ <= 0.f)
+        {
+            frame_->clearMask();
+            return;
+        }
+        QPainterPath path;
+        path.addRoundedRect(QRectF(0, 0, w, h), radius_, radius_);
+        frame_->setMask(QRegion(path.toFillPolygon().toPolygon()));
+    }
+    float radius_ = 0.f;
 
 protected:
     bool eventFilter(QObject* obj, QEvent* event) override
@@ -2851,19 +2878,10 @@ public:
         root_->measure(ctx, {bounds.w, bounds.h});
         root_->arrange(ctx, bounds);
         end_relayout_pass_();
-        if (on_layout_)
-        {
-            on_layout_();
-        }
         for (auto& cb : layout_listeners_)
         {
             cb();
         }
-    }
-
-    void set_on_layout(std::function<void()> cb)
-    {
-        on_layout_ = std::move(cb);
     }
 
     void add_layout_listener(std::function<void()> cb)
@@ -3043,7 +3061,6 @@ private:
     const Widget* occlusion_popup_ = nullptr; // identity only, never deref'd
     Rect occlusion_popup_rect_{};
     std::unique_ptr<Widget> root_;
-    std::function<void()> on_layout_;
     std::vector<std::function<void()>> layout_listeners_;
     const AnimImageCache* anim_cache_ = nullptr;
     std::vector<Rect> anim_damage_;
@@ -3149,11 +3166,6 @@ void Surface::set_anim_cache(const AnimImageCache* cache)
 void Surface::update_anim_regions()
 {
     host_->invalidate_anim_damage();
-}
-
-void Surface::set_on_layout(std::function<void()> cb)
-{
-    host_->set_on_layout(std::move(cb));
 }
 
 void Surface::add_layout_listener(std::function<void()> cb)

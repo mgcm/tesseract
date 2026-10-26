@@ -236,11 +236,9 @@ QuickSwitcher::QuickSwitcher()
         auto reason = tk::create_widget<tk::TextField>(this, kReasonFieldH);
         reason->set_placeholder(tk::tr("Reason (optional)"));
         reason->set_on_submit([this] { activate_selected(); });
-        // Self-contained Up/Down/Escape — unlike search_field_, which relies
-        // on each platform's MainWindow to push this via
-        // quick_switcher()->search_field(). close() already fires on_close,
-        // which every platform hooks to its own closeQuickSwitch_(), so
-        // Escape here reaches the same place with no platform-file changes.
+        // Self-contained Up/Down/Escape — unlike search_field_, which gets its
+        // handler from ShellBase::wire_overlay_nav_. close() fires on_close,
+        // which wire_overlay_nav_ hooks to close_quick_switch_().
         reason->push_popup_nav(
             [this](tk::NavKey nk) -> bool
             {

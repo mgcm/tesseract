@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "app/SettingsController.h"
 #include "views/SettingsView.h"
 #include "views/settings/AppearanceSection.h"
 #include "views/settings/LanguageSection.h"
@@ -13,6 +14,7 @@
 #include "tk/controls.h"
 #include "tk/side_tab_view.h"
 #include "tk/widget.h"
+#include "tk_test_host.h"
 #include "tk_test_surface.h"
 
 using tesseract::views::SettingsView;
@@ -598,4 +600,48 @@ TEST_CASE("PrivacySection: the encryption checkboxes no longer ask for a restart
         }
     }
     CHECK(seen == 2);
+}
+
+TEST_CASE("SettingsView: controller results and pushed state relayout through the host",
+          "[settings-view]")
+{
+    // The controller must outlive the view: the view clears its callbacks on
+    // destruction.
+    auto post = [](std::function<void()> fn) { fn(); };
+    auto run = [](std::function<void()> fn) { fn(); };
+    auto picker =
+        [](std::function<void(std::vector<uint8_t>, std::string)>) {};
+    auto decode = [](const std::vector<uint8_t>&)
+    { return std::shared_ptr<tk::Image>(); };
+    tesseract::SettingsController ctrl(nullptr, post, run, picker, decode);
+
+    TestHost host(nullptr);
+    auto view_owner = tk::create_root_widget<SettingsView>(&host);
+    SettingsView& view = *view_owner;
+    view.set_controller(&ctrl);
+
+    auto fires_relayout = [&](const char* what, auto&& fn)
+    {
+        INFO(what);
+        const int before = host.relayout_count;
+        fn();
+        CHECK(host.relayout_count > before);
+    };
+    fires_relayout("on_devices_loaded", [&] { ctrl.on_devices_loaded({}); });
+    fires_relayout("on_name_changed", [&] { ctrl.on_name_changed("Alice"); });
+    fires_relayout("on_mentions_toggle_result",
+                   [&] { ctrl.on_mentions_toggle_result(true, true); });
+    fires_relayout("set_server_info",
+                   [&] { view.set_server_info(tesseract::ServerInfo{}); });
+    fires_relayout("set_cache_sizes",
+                   [&] { view.set_cache_sizes(1, 2, 3, 4, 5, 6, 7); });
+}
+
+TEST_CASE("SettingsView: without a host the state setters and load_device_lists are inert",
+          "[settings-view]")
+{
+    auto view_owner = tk::create_root_widget<SettingsView>(nullptr);
+    CHECK_NOTHROW(view_owner->request_relayout());
+    CHECK_NOTHROW(view_owner->load_device_lists()); // no host: early return
+    CHECK_NOTHROW(view_owner->set_server_info(tesseract::ServerInfo{}));
 }

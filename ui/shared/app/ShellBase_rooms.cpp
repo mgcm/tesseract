@@ -1694,6 +1694,9 @@ ShellBase* ShellBase::notification_target_window_(const std::string& user_id)
         if (w->active_account_ && w->active_account_->user_id == user_id)
             return w;
     }
+    // Pop-outs of the account in a window that has moved on to another one.
+    if (auto* w = account_owner_window_(user_id))
+        return w;
     return this;
 }
 
@@ -1807,5 +1810,80 @@ void ShellBase::on_directory_server_validated_(const std::string& server)
     schedule_account_data_save_();
     refresh_directory_server_choices_();
 }
+
+void ShellBase::on_invites_updated_()
+{
+    if (!ui_ready_())
+    {
+        return;
+    }
+    if (main_app_ && main_app_->room_list_view())
+    {
+        main_app_->room_list_view()->set_invites(&invites_);
+    }
+    request_relayout_();
+}
+
+void ShellBase::on_my_knocks_updated_()
+{
+    if (!ui_ready_())
+    {
+        return;
+    }
+    if (main_app_ && main_app_->room_list_view())
+    {
+        main_app_->room_list_view()->set_my_knocks(&my_knocks_);
+    }
+    request_relayout_();
+}
+
+void ShellBase::update_typing_bar_(const std::string& text, bool /*visible*/)
+{
+    if (!ui_ready_())
+    {
+        return;
+    }
+    if (room_view_)
+    {
+        room_view_->set_typing_text(text);
+    }
+}
+
+float ShellBase::get_message_scroll_fraction_()
+{
+    if (!room_view_ || !room_view_->message_list())
+    {
+        return 0.f;
+    }
+    return room_view_->message_list()->scroll_fraction();
+}
+
+void ShellBase::on_rooms_updated_()
+{
+    if (!ui_ready_())
+    {
+        return;
+    }
+    refresh_room_list_();
+    if (!current_room_id_.empty())
+    {
+        if (const auto* r = room_by_id_(current_room_id_); r && room_view_)
+        {
+            room_view_->set_room(*r);
+        }
+    }
+    else if (!pending_restore_rooms_.empty())
+    {
+        if (try_restore_tab_session_(pending_restore_rooms_,
+                                     pending_restore_rooms_[0]))
+        {
+            pending_restore_rooms_.clear();
+        }
+    }
+    refresh_window_title_();
+    update_secondary_room_infos_();
+    after_rooms_updated_ui_();
+}
+
 
 } // namespace tesseract

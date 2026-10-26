@@ -101,10 +101,9 @@ void ConfirmDialog::open(Options opts, std::function<void()> on_confirm)
             reason_field_->set_focused(true);
     }
 
-    // Tell the shell to re-query rect accessors — this is what makes the
-    // compose textarea + room-search NativeTextField overlays hide while
-    // the dialog is up. Skip the fire when we were already open so back-
-    // to-back open() calls don't churn the shell layout.
+    // Tell the shell to re-query rect accessors, so the compose text area
+    // hides while the dialog is up. Skip the fire when we were already open so
+    // back-to-back open() calls don't churn the shell layout.
     if (!was_open && on_layout_changed) on_layout_changed();
 }
 

@@ -69,6 +69,8 @@ struct ProfileShell : tesseract::test::TestShellBase
     int strip_refreshes = 0;
 
     using ShellBase::account_has_unread_for;
+    using ShellBase::account_manager_;
+    using ShellBase::build_account_picker_entries_;
     using ShellBase::active_account_;
     using ShellBase::best_unread_room_;
     using ShellBase::build_user_menu_items_;
@@ -143,6 +145,27 @@ TEST_CASE("per-account unread aggregation", "[shell][profile][unread]")
     s.per_account_rooms_["@other:x"] = {profile_room("!b", 2)};
     CHECK(s.other_accounts_have_unread());
     CHECK(s.compute_dock_notification_count_() == 5);
+}
+
+TEST_CASE("account picker entries carry the active flag and the unread dot",
+          "[shell][profile][unread]")
+{
+    ProfileShell s;
+    auto me = profile_account("@me:x");
+    auto other = profile_account("@other:x");
+    s.account_manager_.add_account(me);
+    s.account_manager_.add_account(other);
+    s.active_account_ = me;
+    s.per_account_rooms_["@me:x"] = {profile_room("!a", 0)};
+    s.per_account_rooms_["@other:x"] = {profile_room("!b", 2)};
+
+    auto entries = s.build_account_picker_entries_();
+    REQUIRE(entries.size() == 2);
+    CHECK(entries[0].user_id == "@me:x");
+    CHECK(entries[0].active);
+    CHECK_FALSE(entries[0].has_unread);
+    CHECK_FALSE(entries[1].active);
+    CHECK(entries[1].has_unread);
 }
 
 TEST_CASE("notify_tray_unread_ fires each hook only when its value changes",

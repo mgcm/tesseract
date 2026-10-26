@@ -710,6 +710,11 @@ bool Host::advance_focus_(bool forward)
 bool Host::dispatch_key_down(const KeyEvent& event)
 {
     fire_user_activity_();
+    if (key_prefilter_ && key_prefilter_(event))
+    {
+        request_repaint();
+        return true;
+    }
     wheel_latch_.reset(); // keyboard input starts a fresh gesture
     // Any key other than the Tab that may re-show one (advance_focus_)
     // dismisses a tooltip — e.g. Enter activating a Tab-focused icon

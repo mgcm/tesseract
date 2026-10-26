@@ -73,7 +73,7 @@ public:
 
     // Append one more frame + delay to an already-stored entry, for streamed
     // decode (see ShellBase::decode_image_streamed_ /
-    // make_streamed_decode_callbacks_): the caller store()s frame 0 as soon
+    // make_streamed_decode_callbacks_windowed_): the caller store()s frame 0 as soon
     // as it's decoded so something paints
     // immediately, then append_frame()s each subsequent frame as it arrives.
     // Safe no-op if `key` isn't present (the entry was evicted/cleared, e.g.

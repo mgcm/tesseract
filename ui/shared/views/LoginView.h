@@ -39,7 +39,13 @@ protected:
     TK_WIDGET_FACTORY_FRIEND(LoginView)
 
 public:
-    ~LoginView() override { invalidate_weak_self(); }
+    ~LoginView() override
+    {
+        // A joinable worker_ would std::terminate the process.
+        if (worker_.joinable())
+            shutdown();
+        invalidate_weak_self();
+    }
 
     // -----------------------------------------------------------------------
     // Visual state

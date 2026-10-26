@@ -56,10 +56,10 @@ add_executable(tesseract_macos MACOSX_BUNDLE
     src/main.mm
     src/AppDelegate.h
     src/AppDelegate.mm
+    src/MainWindow.h
+    src/MainWindow.mm
     src/MainWindowController.h
     src/MainWindowController.mm
-    src/LoginView.h
-    src/LoginView.mm
     src/MacOSTrayIcon.h
     src/MacOSTrayIcon.mm
     src/MacNowPlaying.h

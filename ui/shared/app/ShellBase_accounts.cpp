@@ -1,5 +1,7 @@
 #include "app/ShellBase.h"
+#include "app/DeferredTeardown.h"
 #include "app/EventHandlerBase.h"
+#include "tk/i18n.h"
 #include "views/MainAppWidget.h"
 #include <tesseract/session_store.h>
 #include <tesseract/prefs.h>
@@ -236,6 +238,7 @@ void ShellBase::restore_all_accounts_async_(
     std::function<void(RestoreResult)> done, bool network_available)
 {
     on_startup_restore_progress_ui_(tk::tr("Restoring session\xe2\x80\xa6"));
+    show_sync_status_text_(tk::tr("Restoring session\xe2\x80\xa6"));
     run_async_mut_(
         [this, done = std::move(done), network_available]() mutable
         {
@@ -251,6 +254,10 @@ void ShellBase::restore_all_accounts_async_(
                     auto result = finish_restore_accounts_ui_(std::move(*io));
                     on_startup_restore_progress_ui_(""); // clear
                     done(std::move(result));
+                    // Signed in by now (switch_active_account set "Connected")
+                    // or not; if not, the line goes back to "Not logged in".
+                    if (!active_account_ && my_user_id_.empty())
+                        refresh_sync_status_();
                 });
         });
 }
@@ -300,6 +307,10 @@ ShellBase::FinalizeLoginIO ShellBase::finalize_login_blocking_(
     const std::string session_json = pending_client->export_session();
     if (session_json.empty())
     {
+        // Close the client's store before deleting its directory.
+        pending_client.reset();
+        std::error_code ec;
+        std::filesystem::remove_all(pending_temp_dir, ec);
         out.error = tk::tr("empty session");
         return io;
     }
@@ -341,6 +352,8 @@ ShellBase::FinalizeLoginIO ShellBase::finalize_login_blocking_(
                 ec2);
             if (ec2)
             {
+                std::error_code ec3;
+                std::filesystem::remove_all(pending_temp_dir, ec3);
                 sign_out_abandoned_login(session_json, store_key);
                 out.error = tk::trf(tk::tr("couldn't persist matrix store: {0}"), {ec2.message()});
                 return io;
@@ -468,23 +481,369 @@ ShellBase::FinalizeLoginIO ShellBase::finalize_login_blocking_(
     return io;
 }
 
-// Async, platform-agnostic core of each shell's on_login_succeeded, run
-// after OAuth completes for a NEWLY added account on
-// pending_login_client_. On the UI thread: fetches the user_id and
-// rejects (rejected_duplicate) if account_manager_.find(uid) — resolving
-// `done` synchronously in both the empty-client and duplicate cases, no
-// worker hop needed. Otherwise moves pending_login_client_ /
-// pending_login_temp_dir_ out and dispatches finalize_login_blocking_()
-// onto mut_pool_; the post_to_ui_alive_-guarded continuation installs the
-// native notifier (install_account_notifier_) and Linux-only UnifiedPush
-// connector (install_account_up_connector_), adds the account, updates
-// the on-disk index (active = the new uid), and invokes `done`. Does NOT
-// touch native widgets (login-view dismiss, surface switch, status bar)
-// — the shell does the native finish using the result passed to `done`.
-// The shell must call set_client(nullptr) on its login view BEFORE
-// calling this when it owns a raw alias to pending_login_client_ (it is
-// moved out here). UI-thread only to call; `done` itself runs on the UI
-// thread.
+void ShellBase::switch_active_account_(const std::string& user_id)
+{
+    if (!switch_active_account_impl_(user_id))
+    {
+        return;
+    }
+    refresh_account_ui_after_switch_();
+}
+
+void ShellBase::finish_login_ui_(const std::string& uid)
+{
+    close_settings_if_open_();
+    if (!switch_and_show_main_(uid))
+        start_platform_services_ui_();
+}
+
+bool ShellBase::switch_and_show_main_(const std::string& uid)
+{
+    main_shown_by_switch_ = false;
+    switch_active_account_(uid);
+    ensure_settings_controller_();
+    ensure_history_export_controller_();
+    // A window that starts on an account it already has makes no switch, so the
+    // switch's own show step did not run; running it twice would undo whatever
+    // the first one replayed (a held --settings).
+    if (!main_shown_by_switch_)
+        show_main_content_();
+    return main_shown_by_switch_;
+}
+
+void ShellBase::close_settings_if_open_()
+{
+    if (app_settings_open_)
+        close_app_settings_ui_();
+}
+
+void ShellBase::clear_messages_()
+{
+    if (!room_view_)
+        return;
+    room_view_->clear_room();
+    room_view_->set_messages({});
+    request_relayout_();
+}
+
+// The native-widget-free part of switching accounts: every window shows the
+// same empty timeline, the new account's identity, rooms and tabs.
+void ShellBase::refresh_account_ui_after_switch_()
+{
+    clear_messages_();
+    if (room_view_)
+        room_view_->set_client(client_);
+    if (main_app_)
+    {
+        main_app_->show_room();
+        main_app_->show_encryption_reminder(false);
+    }
+    refresh_user_strip_();
+    refresh_room_list_();
+    // Cached rooms are already in rooms_, so the tab session can be restored now
+    // instead of waiting for the next rooms push.
+    if (!rooms_.empty() && !pending_restore_rooms_.empty() &&
+        try_restore_tab_session_(pending_restore_rooms_,
+                                 pending_restore_rooms_[0]))
+        pending_restore_rooms_.clear();
+    request_relayout_();
+    rebuild_account_picker_();
+    handle_verification_state_ui_(active_account_ && !active_account_->unverified);
+    // Settings stays open across a cache reset; a real switch comes from the
+    // main window, so show it.
+    if (!app_settings_open_)
+    {
+        show_main_content_();
+        main_shown_by_switch_ = true;
+    }
+    start_platform_services_ui_();
+}
+
+void ShellBase::begin_add_account()
+{
+    // The active account, so Cancel can return to it; empty means none.
+    add_account_return_uid_ = active_account_ ? active_account_->user_id
+                                              : std::string{};
+    pending_login_is_add_account_ = true;
+    reset_pending_login_client_();
+    show_login_ui_(views::LoginView::Mode::AddAccount);
+    show_status_message_(tk::tr("Add Account"));
+}
+
+std::shared_ptr<tesseract::AccountSession> ShellBase::take_add_account_return_()
+{
+    const std::string uid = std::move(add_account_return_uid_);
+    add_account_return_uid_.clear();
+    if (uid.empty())
+        return nullptr;
+    // Another window may have removed or taken the account meanwhile.
+    auto sess = account_manager_.find(uid);
+    return sess && !account_owned_elsewhere_(uid) ? sess : nullptr;
+}
+
+void ShellBase::on_login_succeeded_()
+{
+    if (!pending_login_client_)
+    {
+        return;
+    }
+    detach_login_view_client_ui_();
+    finalize_login_async_([this](FinalizeLoginResult fin)
+                          { on_login_finalized_(fin); });
+}
+
+void ShellBase::on_login_finalized_(const FinalizeLoginResult& fin)
+{
+    using Mode = views::LoginView::Mode;
+    if (fin.rejected_duplicate)
+    {
+        show_status_message_(tk::trf(tk::tr("Already signed in as {0}"), {fin.user_id}));
+        if (const auto back = take_add_account_return_())
+        {
+            pending_login_is_add_account_ = false;
+            switch_active_account_(back->user_id);
+            show_main_content_();
+            return;
+        }
+        // Nowhere to return to: finalize moved the client away, so the login
+        // view needs a fresh one to be usable again.
+        reset_pending_login_client_();
+        show_login_ui_(pending_login_is_add_account_ ? Mode::AddAccount
+                                                     : Mode::Initial);
+        return;
+    }
+
+    if (!fin.ok)
+    {
+        show_status_message_(tk::trf(tk::tr("Sign-in failed: {0}"), {fin.error}), 6000);
+        // finalize moved the client away; Sign In needs a fresh one.
+        reset_pending_login_client_();
+        // Cancel in the finalise window already sent an add-account attempt
+        // back to the main content: a plain sign-in page would have no Cancel.
+        if (!pending_login_is_add_account_ && active_account_)
+        {
+            show_main_content_();
+            return;
+        }
+        show_login_ui_(pending_login_is_add_account_ ? Mode::AddAccount
+                                                     : Mode::Initial);
+        return;
+    }
+
+    close_settings_if_open_();
+    const bool services_started = switch_and_show_main_(fin.user_id);
+    begin_gated_encryption_setup_if_needed_(fin);
+    pending_login_is_add_account_ = false;
+    add_account_return_uid_.clear();
+    if (!services_started)
+        start_platform_services_ui_();
+}
+
+void ShellBase::show_login_ui_(views::LoginView::Mode mode)
+{
+    // Settings opened from the login screen stays on top of it; any other
+    // Settings page belongs to the content this replaces.
+    if (!settings_from_login_())
+        close_settings_if_open_();
+    ensure_login_view_();
+    if (!login_view_)
+        return;
+    login_view_->set_client(pending_login_client_.get());
+    login_view_->set_mode(mode);
+    login_view_->reset();
+    show_login_page_ui_();
+}
+
+bool ShellBase::open_login_url_ui_(const std::string& url)
+{
+    return tesseract::Client::open_in_browser(url);
+}
+
+void ShellBase::open_login_url_or_show_(views::LoginView& view,
+                                        const std::string& url)
+{
+    if (!open_login_url_ui_(url))
+    {
+        view.set_status_message(tk::tr("Open this URL in your browser:") + "\n" +
+                                url);
+    }
+}
+
+void ShellBase::ensure_login_view_()
+{
+    if (login_view_)
+        return;
+    if (login_surface_)
+    {
+        // Its deferred teardown no longer matches the current surface and
+        // never runs: stop the old view's worker and take its page out now.
+        if (auto* old = dynamic_cast<views::LoginView*>(login_surface_->root()))
+            old->shutdown();
+        unmount_login_surface_ui_();
+        retired_login_surfaces_.push_back(std::move(login_surface_));
+    }
+    login_surface_ = create_login_surface_ui_();
+    if (!login_surface_)
+        return;
+    tk::SurfaceBase* surface = login_surface_.get();
+    auto view = tk::create_root_widget<views::LoginView>(&surface->host());
+    views::LoginView* v = view.get();
+    login_view_ = v;
+    // Pool tasks call this after blocking network calls: go through a gate
+    // that is closed before the surface is freed, never the raw surface.
+    auto gate = std::make_shared<std::atomic<tk::Host*>>(&surface->host());
+    login_host_gates_.push_back(gate);
+    v->set_post_to_ui(
+        [gate, alive = v->guarded([](std::function<void()> f) { f(); })](
+            std::function<void()> fn)
+        {
+            if (tk::Host* host = gate->load())
+                host->post_to_ui([alive, fn = std::move(fn)]() mutable
+                                 { alive(std::move(fn)); });
+        });
+    v->set_relayout([surface] { surface->relayout(); });
+    v->set_open_browser([this, v](const std::string& url)
+                        { open_login_url_or_show_(*v, url); });
+    v->set_on_success([this] { on_login_succeeded_(); });
+    v->set_on_cancel_done([this] { on_login_cancelled_(); });
+    v->set_on_open_settings([this] { open_settings_from_login_(); });
+    v->set_on_begin_oauth([this] { arm_pending_login_(); });
+    // Route the homeserver-discovery debounce through the shell's worker drain
+    // so a blocked discover_homeserver call can't outlive the view and corrupt
+    // the heap.
+    v->set_run_async([this](std::function<void()> fn) { run_async_(std::move(fn)); });
+    surface->set_root(std::move(view));
+    v->finish_init();
+#ifdef TESSERACT_LEGACY_LOGIN_ENABLED
+    v->finish_password_init();
+#endif
+    surface->apply_theme(current_theme_);
+}
+
+void ShellBase::teardown_login_view_()
+{
+    if (!login_view_)
+        return;
+    views::LoginView* view = login_view_;
+    view->set_client(nullptr);
+    login_view_ = nullptr;
+    if (main_host_())
+    {
+        destroy_login_page_when_idle_(login_surface_.get(), view, 0);
+        return;
+    }
+    // Cancels the sign-in and joins its worker.
+    view->shutdown();
+    unmount_login_surface_ui_();
+    destroy_login_surfaces_();
+}
+
+void ShellBase::destroy_login_page_when_idle_(tk::SurfaceBase* doomed,
+                                              views::LoginView* view,
+                                              int delay_ms)
+{
+    tk::Host* host = main_host_();
+    if (!host)
+        return;
+    std::weak_ptr<bool> alive = weak_flag();
+    auto destroy = [this, alive, doomed, view]
+    {
+        if (alive.expired())
+            return;
+        // Cancels the sign-in and joins its worker; also makes the pooled
+        // discovery tasks drop their results.
+        view->shutdown();
+        // Those tasks hold the view by raw pointer and may still be inside a
+        // network call, so free it only once they are done.
+        if (!pool_.idle() || !mut_pool_.idle())
+        {
+            destroy_login_page_when_idle_(doomed, view, 50);
+            return;
+        }
+        unmount_login_surface_ui_();
+        destroy_login_surfaces_();
+    };
+    auto is_current = [this, alive, doomed]
+    { return !alive.expired() && login_surface_.get() == doomed; };
+    schedule_deferred_teardown(*host, std::move(is_current), std::move(destroy),
+                               delay_ms);
+}
+
+void ShellBase::destroy_login_surfaces_()
+{
+    for (auto& gate : login_host_gates_)
+        gate->store(nullptr);
+    login_host_gates_.clear();
+    login_surface_.reset();
+    retired_login_surfaces_.clear();
+}
+
+void ShellBase::release_login_surface_()
+{
+    if (login_view_)
+        login_view_->shutdown();
+    login_view_ = nullptr;
+    destroy_login_surfaces_();
+}
+
+void ShellBase::apply_scale_to_login_surface_(float scale)
+{
+    if (login_surface_)
+        login_surface_->apply_scale_change(scale);
+}
+
+void ShellBase::show_login_after_restore_(const RestoreResult& restore,
+                                          std::function<void()> retry)
+{
+    pending_login_is_add_account_ = false;
+    pending_login_temp_dir_.clear();
+    reset_pending_login_client_();
+    show_login_ui_(views::LoginView::Mode::Initial);
+    if (restore.any_restore_failed && login_view_)
+    {
+        if (restore.network_unavailable)
+            login_view_->show_offline_error(std::move(retry));
+        else
+            login_view_->show_restore_error(restore.restore_error, std::move(retry));
+    }
+}
+
+void ShellBase::on_login_cancelled_()
+{
+    detach_login_view_client_ui_();
+    // Retired, not destroyed: the login view's workers may still be inside a call
+    // on it (see reset_pending_login_client_).
+    if (pending_login_client_)
+        retired_login_clients_.push_back(std::move(pending_login_client_));
+    // The dir is removed with the retired client, not now: its SQLite files may
+    // still be open (Windows cannot delete them).
+    retired_login_dirs_.add(std::move(pending_login_temp_dir_));
+    pending_login_temp_dir_.clear();
+    const auto back = take_add_account_return_();
+    pending_login_is_add_account_ = false;
+    if (back)
+    {
+        switch_active_account_(back->user_id);
+        show_main_content_();
+        return;
+    }
+    // Nothing to go back to: a fresh sign-in screen, so Sign In works again.
+    reset_pending_login_client_();
+    show_login_ui_(views::LoginView::Mode::Initial);
+}
+
+// Async core of on_login_succeeded_(), run after OAuth completes for a newly
+// added account on pending_login_client_. On the UI thread: fetches the
+// user_id and rejects (rejected_duplicate) if account_manager_.find(uid),
+// resolving `done` synchronously in the empty-client and duplicate cases.
+// Otherwise moves pending_login_client_ / pending_login_temp_dir_ out and
+// dispatches finalize_login_blocking_() onto mut_pool_; the
+// post_to_ui_alive_-guarded continuation installs the native notifier and the
+// Linux-only UnifiedPush connector, adds the account, updates the on-disk
+// index (active = the new uid) and invokes `done`. Touches no native widgets.
+// The login view's alias to pending_login_client_ must be cleared first
+// (detach_login_view_client_ui_) since the client is moved out here.
+// UI-thread only; `done` runs on the UI thread.
 void ShellBase::finalize_login_async_(std::function<void(FinalizeLoginResult)> done)
 {
     if (!pending_login_client_)
@@ -589,9 +948,8 @@ void ShellBase::finalize_login_async_(std::function<void(FinalizeLoginResult)> d
         });
 }
 
-// Called by each shell right after it activates the newly-added account
-// (switchActiveAccount / equivalent) inside its finalize_login_async_
-// `done` callback. A no-op unless `fin.needs_encryption_setup` is set, in
+// Called by on_login_finalized_() right after it activates the newly-added
+// account. A no-op unless `fin.needs_encryption_setup` is set, in
 // which case it raises the encryption-setup overlay in the right mode and
 // remembers the session so release_pending_sync_gate_() can start its
 // sync once the user is done with the overlay.
@@ -644,9 +1002,8 @@ void ShellBase::release_pending_sync_gate_()
     });
 }
 
-// Platform-agnostic account-switch bookkeeping, shared by every shell's
-// switchActiveAccount / switch_active_account / _switchActiveAccount:. Looks
-// up the target AccountSession; returns false (no-op) if it isn't found or is
+// Platform-agnostic account-switch bookkeeping behind switch_active_account_().
+// Looks up the target AccountSession; returns false (no-op) if it isn't found or is
 // already active with a bound client. Otherwise it:
 //   - unsubscribes the previous account's open room when not pinned
 //     (room_subscription_refs_.count(current_room_id_) == 0) so the old
@@ -675,6 +1032,12 @@ bool ShellBase::switch_active_account_impl_(const std::string& user_id)
         return false;
     }
     if (new_session == active_account_ && client_)
+    {
+        return false;
+    }
+    // An account another window shows or keeps pop-outs of: taking its events
+    // would leave that window without them.
+    if (account_owned_elsewhere_(user_id))
     {
         return false;
     }
@@ -770,6 +1133,7 @@ bool ShellBase::switch_active_account_impl_(const std::string& user_id)
     member_gender_cache_.clear();
     member_gender_inflight_.clear();
     pending_member_gender_requests_.clear();
+    reset_gif_strip_state_();
     // In-flight searches belong to the outgoing account; their responses route
     // to that account's (possibly different) shell, so drop the pending map and
     // any debounced query here rather than leaking entries for them.
@@ -958,10 +1322,17 @@ bool ShellBase::switch_active_account_impl_(const std::string& user_id)
     // Multi-window: this window now owns the incoming account — register it so the
     // account picker raises this window instead of switching in place elsewhere.
     claim_dedicated_for_active_();
+    // ...and its events must reach this window (an account this window left, or
+    // one whose window is gone, may still be bridged elsewhere).
+    rebind_account_bridge_(sess, this);
 
     // This window's tray label (if it owns the tray) tracks active_account_,
     // which just changed — refresh every window's menu to pick it up.
     broadcast_rebuild_tray_();
+
+    // The status line now describes this account, not the sign-in state it
+    // replaced.
+    show_connected_status_();
 
     return true;
 }
@@ -1029,9 +1400,12 @@ void ShellBase::claim_dedicated_for_active_()
 
 void ShellBase::release_dedicated_for_active_()
 {
-    if (!active_account_)
-        return;
-    const std::string uid = active_account_->user_id;
+    if (active_account_)
+        release_dedicated_(active_account_->user_id);
+}
+
+void ShellBase::release_dedicated_(const std::string& uid)
+{
     if (account_manager_.dedicated_window(uid) != this)
         return;
     account_manager_.clear_dedicated(uid);
@@ -1055,6 +1429,55 @@ void ShellBase::release_dedicated_for_active_()
         account_manager_.set_dedicated(uid, fallback);
 }
 
+ShellBase* ShellBase::account_owner_window_(const std::string& uid) const
+{
+    if (auto* w = account_manager_.dedicated_window(uid); w && w != this)
+        return w;
+    ShellBase* popout_holder = nullptr;
+    for (ShellBase* w : account_manager_.all_windows())
+    {
+        if (w == this)
+            continue;
+        if (w->active_account_ && w->active_account_->user_id == uid)
+            return w;
+        if (!popout_holder && w->has_popout_for_account_(uid))
+            popout_holder = w;
+    }
+    return popout_holder;
+}
+
+bool ShellBase::account_owned_elsewhere_(const std::string& uid) const
+{
+    return account_owner_window_(uid) != nullptr;
+}
+
+bool ShellBase::open_room_in_holder_window_(const std::string& uid,
+                                            const std::string& room_id,
+                                            const std::string& event_id)
+{
+    ShellBase* owner = account_owner_window_(uid);
+    if (!owner)
+        return false;
+    owner->raise_and_activate_();
+    if (owner->active_account_ && owner->active_account_->user_id == uid)
+    {
+        owner->navigate_to_room_(room_id);
+        if (!event_id.empty())
+            owner->open_notification_thread_(room_id, event_id);
+    }
+    return true;
+}
+
+std::shared_ptr<tesseract::AccountSession> ShellBase::pick_unowned_survivor_() const
+{
+    for (const auto& sess : account_manager_.accounts())
+    {
+        if (!account_owned_elsewhere_(sess->user_id))
+            return sess;
+    }
+    return nullptr;
+}
+
 void ShellBase::on_window_closing_()
 {
     // Flush any pending room-layout save synchronously — but only when this
@@ -1075,15 +1498,155 @@ void ShellBase::on_window_closing_()
     // waits (bounded) for the PUT to actually land before returning.
     const bool is_last_window = account_manager_.window_count() <= 1;
     persist_room_layout_pref_(/*blocking=*/is_last_window);
-    // Hand this window's account's sole event bridge back to the primary window so
-    // its SDK callbacks keep reaching a live window after we're destroyed. The
-    // primary uses hide-to-tray and is never destroyed while secondaries live, so
-    // it is always a valid target.
-    ShellBase* primary = account_manager_.primary_window();
-    if (primary && primary != this && active_account_)
-        rebind_account_bridge_(*active_account_, primary);
-    release_dedicated_for_active_();
+    window_closing_handled_ = true;
+    hand_over_accounts_();
+}
+
+// Hands every account bridge that targets this window (not only the active
+// account's: an account this window left stays bridged here) to the primary
+// window so SDK callbacks keep reaching a live window after we're destroyed.
+// The primary uses hide-to-tray and is never destroyed while secondaries
+// live; if the primary itself is closing, any other window will do. Touches
+// only AccountManager and sessions, so ~ShellBase may call it.
+void ShellBase::hand_over_accounts_()
+{
+    ShellBase* heir = account_manager_.primary_window();
+    if (!heir || heir == this)
+    {
+        heir = nullptr;
+        for (ShellBase* w : account_manager_.all_windows())
+        {
+            if (w != this)
+            {
+                heir = w;
+                break;
+            }
+        }
+    }
+    for (const auto& sess : account_manager_.accounts())
+    {
+        if (heir && sess->bridge &&
+            static_cast<EventHandlerBase*>(sess->bridge.get())->shell() == this)
+        {
+            rebind_account_bridge_(*sess, heir);
+        }
+        release_dedicated_(sess->user_id);
+    }
     account_manager_.release_tray_owner(this);
+}
+
+bool ShellBase::is_account_bridge_target_() const
+{
+    for (const auto& sess : account_manager_.accounts())
+    {
+        if (sess->bridge &&
+            static_cast<EventHandlerBase*>(sess->bridge.get())->shell() == this)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Drops everything this window holds for a signed-out account: its room and
+// invite snapshots, window mapping, sync-restart and upload-draft state, and
+// its pop-outs (they act through the account's Client, so they must close
+// before it goes). The uid is flagged draining before it leaves AccountManager
+// so there is no window where it is neither findable nor flagged. UI thread.
+void ShellBase::forget_account_(const std::string& uid)
+{
+    per_account_rooms_.erase(uid);
+    per_account_invites_.erase(uid);
+    account_manager_.clear_dedicated(uid);
+    account_manager_.mark_draining(uid);
+    account_manager_.remove_account(uid);
+    sync_error_restarts_.erase(uid);
+    for (auto it = upload_drafts_.begin(); it != upload_drafts_.end();)
+        it = (it->second && it->second->user_id == uid) ? upload_drafts_.erase(it) : std::next(it);
+    close_popouts_for_account_(uid);
+    // Recompute the tray aggregate so the dot clears (or rolls over to the
+    // surviving accounts) immediately; without this the indicator can stick
+    // when the only account with unreads was the one just removed.
+    notify_tray_unread_();
+}
+
+// Waits for stale workers to release `sess`, then destroys it (and clears its
+// account dir) off the UI thread. UI thread.
+void ShellBase::drain_and_destroy_session_(const std::string& uid,
+                                           std::shared_ptr<AccountSession> draining_sess)
+{
+    // mut_pool_ is a strict single-thread FIFO (see run_async_mut_'s doc
+    // comment), so a barrier posted there is guaranteed to run only after
+    // every mut_pool_ task that could hold a stray reference to draining_sess
+    // has finished — no polling needed for that half.
+    //
+    // But plenty of run_async_(...) call sites elsewhere in this file also
+    // capture `sess` (a shared_ptr<AccountSession>) by value and run on
+    // pool_ (2 threads, shared across every account). mut_pool_ ordering
+    // says nothing about those: if one is still executing right now,
+    // draining_sess.reset() below just decrements a refcount that never
+    // reaches zero, the old Client (and its SQLite handles) never actually
+    // gets destroyed, and clear_account()'s fs::remove_all silently fails to
+    // delete anything — confirmed via Resource Monitor showing dozens of
+    // open handles on the account's -wal/-shm files that persisted past
+    // logout.
+    if (account_manager_.accounts().empty())
+    {
+        // No other account can be affected by pool_ going idle, so wait for
+        // it exactly like full app shutdown already does (see e.g.
+        // the platform shells' shutdown paths) — except
+        // wait_idle() doesn't stop the pool or join its threads, so a
+        // re-login within the same process still has a working pool_/
+        // mut_pool_ afterward.
+        pool_.wait_idle(kAccountDrainTimeout);
+        mut_pool_.wait_idle(kAccountDrainTimeout);
+        // media_prefetch_pool_ deliberately not waited on here: its tasks
+        // only ever capture `this` and a MediaPrefetchBatch, never an
+        // AccountSession, so there's nothing for this drain step to release.
+    }
+    else
+    {
+        // Other accounts remain logged in, so pool_ can't be waited on as a
+        // whole without stalling their unrelated in-flight work. There's no
+        // per-account tracking inside pool_ to wait on instead, so fall back
+        // to polling draining_sess's own refcount — the same bounded,
+        // proceed-anyway-on-timeout philosophy as everything else here, just
+        // without the ordering trick mut_pool_ gets for free.
+        const auto deadline =
+            std::chrono::steady_clock::now() + kAccountDrainTimeout;
+        while (draining_sess.use_count() > 1 &&
+               std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    // This is where the old Client (and its SQLite-backed store) actually
+    // gets destroyed, off the UI thread.
+    //
+    // clear_account() (fs::remove_all on the account dir) runs AFTER
+    // draining_sess.reset(), not before: it used to run synchronously up in
+    // this function while sess.client was still alive, so remove_all raced
+    // an open SQLite handle and silently failed to delete on Windows
+    // (its error code was discarded) — leaving stale store files that a
+    // later re-login's rename-then-copy-fallback would merge with a fresh
+    // store, corrupting it (SQLITE_CORRUPT: "database disk image is
+    // malformed"). clear_draining() only fires once the directory is
+    // actually gone, so wait_until_drained() callers (finalize_login_async_'s
+    // second-line-of-defense check included) never observe "drained" while
+    // the delete is still in flight.
+    run_async_mut_(
+        [this, uid, draining_sess = std::move(draining_sess)]() mutable
+        {
+            draining_sess.reset();
+            tesseract::SessionStore::clear_account(uid);
+            account_manager_.clear_draining(uid);
+        });
+    // Bounded: fires within microseconds in the common case (nothing was
+    // queued against this account). A genuinely stuck worker just means we
+    // proceed anyway — the flag stays set and a later wait_until_drained()
+    // call (this function's next invocation, or finalize_login_async_'s
+    // second-line-of-defense check) still observes the truth.
+    account_manager_.wait_until_drained(uid, kAccountDrainTimeout);
 }
 
 // Platform-agnostic teardown for each shell's logoutActiveAccount /
@@ -1121,11 +1684,12 @@ void ShellBase::on_window_closing_()
 //     chance to unblock it, before this function returns;
 //   - updates the on-disk index (removes the logged-out uid; clears
 //     active_user_id when none remain);
-//   - BRANCHES: if other accounts remain it switches to accounts().front()
-//     via switch_active_account_impl_ + refresh_account_ui_after_switch_ (the
-//     shared Task-3.3 path) and returns has_remaining=true / next_uid set;
-//     otherwise returns has_remaining=false and leaves the native login-view
-//     swap to the shell.
+//   - BRANCHES: if an account no other window holds remains it switches to the
+//     first such account via switch_active_account_impl_ +
+//     refresh_account_ui_after_switch_ (the shared Task-3.3 path) and returns
+//     has_remaining=true / next_uid set; otherwise (no accounts, or all held
+//     by other windows) returns has_remaining=false and leaves the native
+//     login-view swap to the shell.
 // Does NOT touch native widgets in the empty-accounts branch (login view,
 // surface visibility) — the shell does that using the returned result.
 // UI-thread only.
@@ -1222,30 +1786,7 @@ ShellBase::LogoutResult ShellBase::logout_active_account_impl_()
     }
     sess.sync_started = false;
 
-    per_account_rooms_.erase(uid);
-    per_account_invites_.erase(uid);
-
-    // Recompute the tray aggregate so the dot clears (or rolls over to the
-    // surviving accounts) immediately; without this the indicator can stick
-    // when the only account with unreads was the one we just signed out.
-    notify_tray_unread_();
-
-    // Drop any dedicated-window mapping for the now-removed account so the picker
-    // can't try to raise a window for it.
-    account_manager_.clear_dedicated(uid);
-    // Mark draining BEFORE removing so there is no window where uid is
-    // neither findable via AccountManager::find() nor flagged as draining.
-    account_manager_.mark_draining(uid);
-    account_manager_.remove_account(uid);
-    sync_error_restarts_.erase(uid);
-    for (auto it = upload_drafts_.begin(); it != upload_drafts_.end();)
-        it = (it->second && it->second->user_id == uid) ? upload_drafts_.erase(it) : std::next(it);
-    // Move (not reset) so the barrier task posted below — not this function
-    // — drops the session's last ShellBase-held reference, off the UI
-    // thread. `sess` is not referenced again after this point.
-    // Pop-outs act through their own account's Client, so this account's
-    // must close before that Client goes; other accounts' pop-outs stay.
-    close_popouts_for_account_(uid);
+    forget_account_(uid);
 
     // Cancel any export running on this account and drop the controller's
     // pointer before the Client is handed off for destruction; the
@@ -1256,6 +1797,8 @@ ShellBase::LogoutResult ShellBase::logout_active_account_impl_()
     // run, and the drain below waits for exactly those references.
     if (settings_controller_)
         settings_controller_->set_client(nullptr);
+    // Move (not reset) so the barrier task posted below — not this function
+    // — drops the session's last ShellBase-held reference, off the UI thread.
     auto draining_sess = std::move(active_account_);
     client_        = nullptr;
     event_handler_ = nullptr;
@@ -1294,81 +1837,11 @@ ShellBase::LogoutResult ShellBase::logout_active_account_impl_()
     member_gender_cache_.clear();
     member_gender_inflight_.clear();
     pending_member_gender_requests_.clear();
+    reset_gif_strip_state_();
     reset_server_info_();
     push_own_status_to_strip_(); // blank the strip status on logout
 
-    // mut_pool_ is a strict single-thread FIFO (see run_async_mut_'s doc
-    // comment), so a barrier posted there is guaranteed to run only after
-    // every mut_pool_ task that could hold a stray reference to draining_sess
-    // has finished — no polling needed for that half.
-    //
-    // But plenty of run_async_(...) call sites elsewhere in this file also
-    // capture `sess` (a shared_ptr<AccountSession>) by value and run on
-    // pool_ (2 threads, shared across every account). mut_pool_ ordering
-    // says nothing about those: if one is still executing right now,
-    // draining_sess.reset() below just decrements a refcount that never
-    // reaches zero, the old Client (and its SQLite handles) never actually
-    // gets destroyed, and clear_account()'s fs::remove_all silently fails to
-    // delete anything — confirmed via Resource Monitor showing dozens of
-    // open handles on the account's -wal/-shm files that persisted past
-    // logout.
-    if (account_manager_.accounts().empty())
-    {
-        // No other account can be affected by pool_ going idle, so wait for
-        // it exactly like full app shutdown already does (see e.g.
-        // MacShell::drain_pools / the Windows/Qt/GTK shutdown paths) — except
-        // wait_idle() doesn't stop the pool or join its threads, so a
-        // re-login within the same process still has a working pool_/
-        // mut_pool_ afterward.
-        pool_.wait_idle(kAccountDrainTimeout);
-        mut_pool_.wait_idle(kAccountDrainTimeout);
-        // media_prefetch_pool_ deliberately not waited on here: its tasks
-        // only ever capture `this` and a MediaPrefetchBatch, never an
-        // AccountSession, so there's nothing for this drain step to release.
-    }
-    else
-    {
-        // Other accounts remain logged in, so pool_ can't be waited on as a
-        // whole without stalling their unrelated in-flight work. There's no
-        // per-account tracking inside pool_ to wait on instead, so fall back
-        // to polling draining_sess's own refcount — the same bounded,
-        // proceed-anyway-on-timeout philosophy as everything else here, just
-        // without the ordering trick mut_pool_ gets for free.
-        const auto deadline =
-            std::chrono::steady_clock::now() + kAccountDrainTimeout;
-        while (draining_sess.use_count() > 1 &&
-               std::chrono::steady_clock::now() < deadline)
-        {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-    }
-    // This is where the old Client (and its SQLite-backed store) actually
-    // gets destroyed, off the UI thread.
-    //
-    // clear_account() (fs::remove_all on the account dir) runs AFTER
-    // draining_sess.reset(), not before: it used to run synchronously up in
-    // this function while sess.client was still alive, so remove_all raced
-    // an open SQLite handle and silently failed to delete on Windows
-    // (its error code was discarded) — leaving stale store files that a
-    // later re-login's rename-then-copy-fallback would merge with a fresh
-    // store, corrupting it (SQLITE_CORRUPT: "database disk image is
-    // malformed"). clear_draining() only fires once the directory is
-    // actually gone, so wait_until_drained() callers (finalize_login_async_'s
-    // second-line-of-defense check included) never observe "drained" while
-    // the delete is still in flight.
-    run_async_mut_(
-        [this, uid, draining_sess = std::move(draining_sess)]() mutable
-        {
-            draining_sess.reset();
-            tesseract::SessionStore::clear_account(uid);
-            account_manager_.clear_draining(uid);
-        });
-    // Bounded: fires within microseconds in the common case (nothing was
-    // queued against this account). A genuinely stuck worker just means we
-    // proceed anyway — the flag stays set and a later wait_until_drained()
-    // call (this function's next invocation, or finalize_login_async_'s
-    // second-line-of-defense check) still observes the truth.
-    account_manager_.wait_until_drained(uid, kAccountDrainTimeout);
+    drain_and_destroy_session_(uid, std::move(draining_sess));
 
     // Update the on-disk index: drop the logged-out uid.
     auto index = tesseract::SessionStore::load_index();
@@ -1376,9 +1849,15 @@ ShellBase::LogoutResult ShellBase::logout_active_account_impl_()
         std::remove(index.user_ids.begin(), index.user_ids.end(), uid),
         index.user_ids.end());
 
-    if (account_manager_.accounts().empty())
+    // The survivor must be an account no other window holds; with none, this
+    // window ends up like one with no accounts (the shell shows the login page).
+    const auto survivor = pick_unowned_survivor_();
+    if (!survivor)
     {
-        index.active_user_id.clear();
+        if (account_manager_.accounts().empty())
+            index.active_user_id.clear();
+        else if (index.active_user_id == uid)
+            index.active_user_id = account_manager_.accounts().front()->user_id;
         tesseract::SessionStore::save_index(index);
         // Unlike the has_remaining branch below, there's no incoming account
         // to re-point this at via switch_active_account_impl_, so it must be
@@ -1402,7 +1881,7 @@ ShellBase::LogoutResult ShellBase::logout_active_account_impl_()
     // Other accounts remain → switch to the first survivor via the shared
     // Task-3.3 path (it persists the index's active_user_id itself). The native
     // post-switch UI runs inside refresh_account_ui_after_switch_().
-    const std::string next_uid = account_manager_.accounts().front()->user_id;
+    const std::string next_uid = survivor->user_id;
     tesseract::SessionStore::save_index(index); // persist the uid removal first
     if (switch_active_account_impl_(next_uid))
     {
@@ -1420,8 +1899,7 @@ ShellBase::LogoutResult ShellBase::logout_active_account_impl_()
 // and — when no accounts remain — clear the native-widget-free main UI.
 // `on_signed_out` then runs only when an account was actually signed out and
 // carries the shell's native follow-up (room-list refresh, relayout, status
-// text, login-view swap). login_view_ is native per shell, so it is never
-// touched here. UI-thread only.
+// text, login-view swap). The login view is not touched here. UI-thread only.
 void ShellBase::sign_out_active_account_(std::function<void()> retry,
                                          const std::function<void(const LogoutResult&)>& on_signed_out)
 {
@@ -1453,6 +1931,75 @@ void ShellBase::sign_out_active_account_(std::function<void()> retry,
     }
 }
 
+void ShellBase::logout_active_account_ui_()
+{
+    close_settings_if_open_();
+    // `retry` re-enters once the user has dealt with the unsaved-key prompt,
+    // possibly after this window is gone.
+    sign_out_active_account_(
+        guarded([this] { logout_active_account_ui_(); }),
+        [this](const LogoutResult& result) { finish_sign_out_ui_(result); });
+}
+
+void ShellBase::finish_sign_out_ui_(const LogoutResult& result)
+{
+    rebuild_account_picker_();
+    on_signed_out_ui_(result);
+    if (!result.has_remaining)
+    {
+        refresh_room_list_();
+        request_relayout_();
+        pending_login_is_add_account_ = false;
+        add_account_return_uid_.clear();
+        show_sign_in_screen_ui_();
+        show_status_message_(tk::tr("Signed out"), 3000);
+        return;
+    }
+    show_status_message_(
+        tk::trf(tk::tr("Signed out of {0}"), {result.logged_out_uid}), 3000);
+}
+
+void ShellBase::request_relogin_(const std::string& user_id)
+{
+    if (active_account_ && active_account_->user_id == user_id)
+    {
+        // ShellBase has already shown "Session expired…" and cleared and stopped
+        // the account. Not the user's sign-out, so don't offer to save an
+        // unsaved recovery key first (it's kept for the next sign-in).
+        skip_unsaved_key_check_for_next_sign_out_();
+        logout_active_account_ui_();
+        // The sign-out's own "Signed out" message replaced this one.
+        show_status_message_(tk::tr("Session expired; please log in again."));
+        return;
+    }
+    // A non-active account expired: tear it down as a sign-out would (minus
+    // the network logout, the token is already dead) and drop it from the
+    // stored index so it doesn't come back on the next launch, without
+    // disturbing the foreground account.
+    if (auto sess = account_manager_.find(user_id))
+    {
+        const std::string uid = user_id; // may alias sess->user_id
+        if (sess->client)
+            sess->client->request_stop();
+        if (sess->up_connector)
+            sess->up_connector->logout();
+        sess->sync_started = false;
+        forget_account_(uid);
+        drain_and_destroy_session_(uid, std::move(sess));
+        rebuild_account_picker_();
+        broadcast_rebuild_tray_();
+    }
+    auto index = tesseract::SessionStore::load_index();
+    index.user_ids.erase(
+        std::remove(index.user_ids.begin(), index.user_ids.end(), user_id),
+        index.user_ids.end());
+    if (index.active_user_id == user_id && active_account_)
+    {
+        index.active_user_id = active_account_->user_id;
+    }
+    tesseract::SessionStore::save_index(index);
+}
+
 void ShellBase::clear_main_ui_after_last_logout_()
 {
     if (room_view_)
@@ -1474,14 +2021,19 @@ void ShellBase::clear_main_ui_after_last_logout_()
 
 Client* ShellBase::reset_pending_login_client_()
 {
-    pending_login_temp_dir_.clear();
     // LoginView's discovery/probe workers capture the old client by raw
     // pointer and may still be mid-call on it: retire it instead of
     // destroying it here.
     // idle(), not pending_count(): a worker that is already running (blocked
     // inside a discovery call) is no longer queued but still uses the client.
     if (pool_.idle() && mut_pool_.idle())
+    {
         retired_login_clients_.clear();
+        retired_login_dirs_.remove_all();
+    }
+    // An abandoned attempt's pending-* dir goes with its retired client.
+    retired_login_dirs_.add(std::move(pending_login_temp_dir_));
+    pending_login_temp_dir_.clear();
     if (pending_login_client_)
         retired_login_clients_.push_back(std::move(pending_login_client_));
     pending_login_client_ = std::make_unique<Client>();
@@ -1581,6 +2133,7 @@ void ShellBase::restart_sdk_begin_(
     member_gender_cache_.clear();
     member_gender_inflight_.clear();
     pending_member_gender_requests_.clear();
+    reset_gif_strip_state_();
     cancel_debounce_(DebounceSlot::MessageSearch);
     search_pending_queries_.clear();
 
@@ -1921,11 +2474,13 @@ bool ShellBase::is_secondary_window_startup_() const
 
 void ShellBase::on_account_picker_select_(const std::string& uid)
 {
-    if (auto* win = account_manager_.dedicated_window(uid))
+    if (account_manager_.dedicated_window(uid) == this)
+        return; // already shown here
+    // Held by another window (shown there, or kept alive by its pop-outs):
+    // raise it rather than take the account away from it.
+    if (auto* owner = account_owner_window_(uid))
     {
-        // Already shown in some window: raise it (unless that window is us).
-        if (win != this)
-            win->raise_and_activate_();
+        owner->raise_and_activate_();
         return;
     }
     // Switching accounts would send the call's frames to the new account's
@@ -2124,6 +2679,8 @@ void ShellBase::handle_sync_error_impl_(std::string context,
             affected->sync_started = false;
         }
         show_status_message_(tk::tr("Session expired; please log in again."));
+        // The sign-out drain waits for this to be the session's last holder.
+        affected.reset();
         request_relogin_(user_id);
         return;
     }

@@ -6,6 +6,55 @@ Tagged releases summarize all changes since the previous tag.
 ## Unreleased
 
 - fix(ui): the app no longer freezes for seconds when the connection drops while the thread list updates. Built and tested by the user
+- fix(ui): the account picker can be used from the keyboard (arrows, Tab, Enter, Esc) on every platform. Linux release build (Qt6 + GTK4), Windows cross-build compiles
+- fix(ui): closing a window hands over every account it owns, and no window shows an account that another window owns. Linux release build (Qt6 + GTK4), Windows cross-build compiles
+- fix(win32): Ctrl+click on an account in the picker now opens its window on Windows. Linux release build (Qt6 + GTK4), Windows cross-build compiles
+- fix(qt): the desktop theme and accent are read without blocking the window and correct themselves when the portal answers late. Linux release build (Qt6 + GTK4), Windows cross-build compiles
+- fix(ui): an @ mention lookup that is still running no longer outlives the account it belongs to. Linux release build (Qt6 + GTK4), Windows cross-build compiles
+- fix(ui): quitting with a pop-out window open no longer aborts the app on Windows and macOS. Linux release build (Qt6 + GTK4), Windows cross-build compiles
+- fix(login): closing a window during sign-in no longer aborts the app. Linux release build (Qt6 + GTK4), Windows cross-build compiles
+- fix(win32): a debounced action no longer stalls for good if its delayed post is dropped. Linux release build (Qt6 + GTK4), Windows cross-build compiles
+- fix(ui): the account picker opens above the user strip on every platform. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3624/3624
+- fix(ui): popup dropdowns get rounded corners on Linux and macOS. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3624/3624
+- fix(login): if the system browser cannot be opened, the login screen shows the sign-in URL on every platform. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3621/3621
+- fix(ui): the Qt composer now sends typing notices. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3618/3618
+- fix(ui): the macOS composer uses the same mention, command and emoji popups as every other window. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3618/3618
+- fix(ui): animations keep playing while the pointer moves over the timeline on Windows. Windows release build
+- fix(media): an image that fails to decode is no longer requested again and is dropped from the cache. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3607/3607
+- fix(media): an animated replacement of a still image now shows on every platform. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3607/3607
+- fix(ui): the account picker has the same width on every platform. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3605/3605
+- fix(ui): a tray click on macOS brings the window forward when something is unread. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3605/3605
+- fix(accounts): switching to an account with cached rooms reopens its tabs at once on every platform. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3603/3603
+- fix(settings): clearing caches no longer closes Settings on Windows and macOS. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3603/3603
+- fix(login): after a failed sign-in, GTK, Qt and macOS show the error and let you sign in again. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3599/3599
+- fix(login): cancelling Add Account no longer blanks the open room on macOS. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3599/3599
+- fix(ui): choosing Add Account shows an "Add Account" status message on every platform. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3580/3580
+- fix(ui): Windows repaints the unread-account dot at once. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3578/3578
+- fix(ui): custom emoji and sticker pickers refresh after a pack edit on every platform. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3578/3578
+- refactor(ui): the settings server-info, own-profile and profile-field updates are handled once for all shells. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3578/3578
+- fix(ui): the macOS account picker shows unread dots. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3578/3578
+- fix(ui): the call pop-out follows theme changes on Linux. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3578/3578
+- fix(ui): macOS shows key-download progress. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3578/3578
+- fix(ui): macOS hides the mention popup on room switch and refreshes the slash popup when bot commands change. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3578/3578
+- fix(ui): GTK no longer waits 25 s on a slow desktop portal. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3578/3578
+- refactor(ui): remove unused history-pagination code from the Windows, GTK and Qt shells. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3578/3578
+- refactor(ui): starting a message edit now focuses the composer on Windows and in pop-out windows, as on the other shells. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3576/3576
+- refactor(ui): macOS restores the previous tabs as soon as their rooms are known, like the other shells. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3576/3576
+- fix(ui): one notification policy on every shell, so a visible but unfocused window no longer drops notifications. Linux release build (Qt6 + GTK4), Windows cross-build compiles, ctest 3574/3574
+- fix(ui): GTK repaints the animated stickers in the settings tab. Linux release build (Qt6 + GTK4), ctest 3569/3569
+- perf(ui): on Windows only the animated parts of the chat repaint each frame, not the whole window. Linux release build (Qt6 + GTK4), ctest 3569/3569
+- refactor(ui): the status bar shows the same "Not logged in", "Restoring session…" and "Connected" messages on every platform. Linux release build (Qt6 + GTK4), ctest 3567/3567
+- fix(ui): on Windows a homeserver error shown in the status bar could become a clickable link; only the update notice carries links now. Linux release build, ctest unchanged
+- refactor(ui): the status-line sync progress is shared by all platforms, and macOS now waits 300 ms before showing "Syncing rooms…". Linux release build (Qt6 + GTK4), ctest 3563/3563
+- fix(ui): after a session expires, GTK and Qt sign the account out like Windows and macOS instead of re-running the startup restore. Linux release build (Qt6 + GTK4), ctest 3558/3558
+- fix(ui): signing out shows "Signed out" (or "Signed out of <account>") on every platform, including macOS. Linux release build (Qt6 + GTK4), ctest 3558/3558
+- refactor(ui): avatar, image and map-tile loading is one shared implementation instead of four per-shell copies. Linux release build (Qt6 + GTK4), ctest 3552/3552
+- refactor(ui): dropped video/audio probing is one shared dispatcher with per-platform probes instead of four copies. Linux release build (Qt6 + GTK4), ctest 3547/3547
+- refactor(ui): invite/knock lists, the typing bar, the timeline scroll position and the /gif popup are shared by all shells. Linux release build (Qt6 + GTK4), ctest 3545/3545
+- refactor(ui): the GIF strip's fetch, decode and animate provider is shared by all four shells, and macOS pop-outs now get the strip. Linux release build (Qt6 + GTK4), ctest 3543/3543
+- refactor(ui): shared view callbacks (room list, tab bar, space root, room view) are wired once for all shells. Linux release build (Qt6 + GTK4), ctest 3540/3540
+- refactor(ui): the quick switcher, message search, forward picker and find-in-room share one implementation across all shells. Linux release build (Qt6 + GTK4), ctest 3537/3537
+- refactor(macos): the main window shares the common window code like the other shells. macOS release build
 - fix(ui): numbered lists now start at the number the sender chose, and an empty list item still shows its number (MSC4313). macOS x86_64 release build, ctest 3515/3517
 - feat(settings): the encryption privacy options now apply when Settings closes, without a restart. Linux debug build, ctest 3534/3534
 - fix(ui): a message blocked by an unconfirmed device or changed identity now says why on hover and in a dialog with the options that can help. Linux release build, ctest 3529/3529
