@@ -1,8 +1,8 @@
 # Tesseract — Implemented Features
 
-Snapshot of every feature that has landed on `main`. Last updated **2026-10-21**. 3482 C++ + 1159 Rust tests.
+Snapshot of every feature that has landed on `main`. Last updated **2026-10-26**. 3742 C++ + 1182 Rust tests.
 
-> **Timeline content column (2026-10-21).**
+> **Timeline content column (2026-10-21, v0.9.5).**
 > Room timelines lay their rows out in a column that is a percentage of the
 > window (100% by default, so nothing changes until you narrow it; the column
 > then sits beside the room list), so join/leave lines, room events and

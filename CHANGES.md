@@ -5,6 +5,10 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+## v0.9.5 — 2026-10-26
+
+### Summary
+
 - fix(ui): the space picker sidebar scrolls when there are more spaces than fit, with a fade at the edge that has more. Qt6 ctest 3742/3742, tested by the user
 - fix(ui): editing a message now puts the cursor at the end of the text instead of the start. Linux release build (Qt6 + GTK4)
 - fix(ui): open room tabs are now saved and come back after switching accounts or restarting the app. Linux release build (Qt6 + GTK4), ctest 3739/3739, tested by the user
