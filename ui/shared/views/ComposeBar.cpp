@@ -531,6 +531,7 @@ void ComposeBar::set_text(std::string text)
     if (text_area_)
     {
         text_area_->set_text(text);
+        text_area_->set_cursor_byte_pos(static_cast<int>(text.size()));
     }
     set_current_text(std::move(text));
 }
