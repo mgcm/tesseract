@@ -278,3 +278,61 @@ TEST_CASE("picker: an open tab menu registers as the host popup so it can be dis
     s.picker->paint(ctx);
     CHECK(s.host.pending_popup_.lock() != nullptr);
 }
+
+TEST_CASE("picker: wheel scrolls tall tab lists and clamps at both ends",
+          "[spacepicker]")
+{
+    auto surface = TestSurface::create(SpacePickerView::kWidth, 200);
+    auto owner = tk::create_root_widget<SpacePickerView>(nullptr);
+    SpacePickerView& v = *owner;
+    std::vector<SpacePickerEntry> es;
+    for (int i = 0; i < 30; ++i)
+        es.push_back(entry("!s" + std::to_string(i), "Space " + std::to_string(i)));
+    v.set_entries(es);
+    tk::LayoutCtx lc{surface->factory(), tk::Theme::light()};
+    v.measure(lc, {SpacePickerView::kWidth, 200});
+    v.arrange(lc, {0, 0, SpacePickerView::kWidth, 200});
+
+    const float y0 = v.tab_rect_for_test(5).y;
+    CHECK(v.on_wheel({10, 10}, 0, 96.0f, false));
+    CHECK(v.tab_rect_for_test(5).y == y0 - 96.0f);
+
+    // Past the end: clamps so the last tab's bottom sits at the view bottom.
+    v.on_wheel({10, 10}, 0, 1e6f, false);
+    const tk::Rect last = v.tab_rect_for_test(v.tab_count() - 1);
+    CHECK(last.y + last.h == 200.0f);
+    CHECK_FALSE(v.on_wheel({10, 10}, 0, 60.0f, false));
+
+    // Back to the top.
+    v.on_wheel({10, 10}, 0, -1e6f, false);
+    CHECK(v.tab_rect_for_test(0).y == 8.0f);
+    CHECK(v.scroll_y() == 0.0f);
+}
+
+TEST_CASE("picker: clicks hit the right tab after scrolling", "[spacepicker]")
+{
+    auto surface = TestSurface::create(SpacePickerView::kWidth, 200);
+    auto owner = tk::create_root_widget<SpacePickerView>(nullptr);
+    SpacePickerView& v = *owner;
+    std::vector<SpacePickerEntry> es;
+    for (int i = 0; i < 30; ++i)
+        es.push_back(entry("!s" + std::to_string(i), "Space " + std::to_string(i)));
+    v.set_entries(es);
+    tk::LayoutCtx lc{surface->factory(), tk::Theme::light()};
+    v.measure(lc, {SpacePickerView::kWidth, 200});
+    v.arrange(lc, {0, 0, SpacePickerView::kWidth, 200});
+
+    std::string selected;
+    v.on_select = [&](const std::string& id) { selected = id; };
+    v.on_wheel({10, 10}, 0, 480.0f, false);
+
+    // Tab 12 is now on screen; a tab scrolled above the view is not hittable.
+    const tk::Point p = centre_of(v, 12);
+    REQUIRE(p.y >= 0.0f);
+    REQUIRE(p.y < 200.0f);
+    REQUIRE(v.on_pointer_down(p));
+    v.on_pointer_up(p, true);
+    CHECK(selected == "!s11");
+
+    CHECK_FALSE(v.on_pointer_down({10, v.tab_rect_for_test(0).y + 20.0f}));
+}

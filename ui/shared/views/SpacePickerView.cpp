@@ -59,6 +59,8 @@ void SpacePickerView::set_entries(std::vector<SpacePickerEntry> entries)
         rebuild_targets_();
     hover_ = pressed_ = -1;
     drag_tracker_.cancel();
+    clamp_scroll();
+    update_targets_();
     if (auto* h = host())
     {
         if (count_changed)
@@ -124,36 +126,104 @@ tk::Size SpacePickerView::measure(tk::LayoutCtx&, tk::Size constraints)
 
 tk::Rect SpacePickerView::tab_rect_(int tab) const
 {
-    return {bounds_.x, bounds_.y + kPadTop + kTabH * static_cast<float>(tab),
+    return {bounds_.x,
+            bounds_.y + kPadTop + kTabH * static_cast<float>(tab) - scroll_y_,
             bounds_.w, kTabH};
 }
 
 int SpacePickerView::tab_at_(tk::Point local) const
 {
     const tk::Point world{bounds_.x + local.x, bounds_.y + local.y};
+    if (!in_rect(world, bounds_))
+        return -1;
     for (int i = 0; i < tab_count(); ++i)
         if (in_rect(world, tab_rect_(i)))
             return i;
     return -1;
 }
 
-void SpacePickerView::arrange(tk::LayoutCtx& ctx, tk::Rect bounds)
+void SpacePickerView::update_targets_()
 {
-    bounds_ = bounds;
     for (std::size_t i = 0; i < targets_.size(); ++i)
     {
-        const int tab = static_cast<int>(i);
-        tk::Rect r = tab_rect_(tab);
+        tk::Rect r = tab_rect_(static_cast<int>(i));
         r.x += 6.0f;
         r.w -= 12.0f;
         r.y += 2.0f;
         r.h -= 4.0f;
-        targets_[i]->set_accessible_name(tab_name_(tab));
-        targets_[i]->arrange(ctx, r);
+        targets_[i]->set_target_rect(r);
     }
+}
+
+void SpacePickerView::arrange(tk::LayoutCtx& ctx, tk::Rect bounds)
+{
+    bounds_ = bounds;
+    clamp_scroll();
+    update_targets_();
+    for (std::size_t i = 0; i < targets_.size(); ++i)
+        targets_[i]->set_accessible_name(tab_name_(static_cast<int>(i)));
     // PopupMenu positions itself against its anchor, not these bounds.
     if (menu_)
         menu_->arrange(ctx, bounds_);
+}
+
+bool SpacePickerView::apply_scroll_delta(float dy)
+{
+    const bool moved = ScrollableBase::apply_scroll_delta(dy);
+    if (moved)
+    {
+        update_targets_();
+        if (auto* h = host())
+            h->hide_tooltip(this);
+        hover_ = -1;
+    }
+    return moved;
+}
+
+bool SpacePickerView::on_wheel(tk::Point, float, float dy, bool is_touchpad)
+{
+    if (content_height() <= bounds_.h)
+        return false;
+    return on_wheel_scroll(dy, is_touchpad);
+}
+
+void SpacePickerView::scroll_into_view(tk::Rect world_rect)
+{
+    const float prev = scroll_y_;
+    ScrollableBase::scroll_into_view(world_rect);
+    if (scroll_y_ != prev)
+        update_targets_();
+}
+
+void SpacePickerView::autoscroll_for_drag_(float local_y)
+{
+    constexpr float kEdge = 24.0f;
+    constexpr float kStep = 8.0f;
+    if (local_y < kEdge)
+        apply_scroll_delta(-kStep);
+    else if (local_y > bounds_.h - kEdge)
+        apply_scroll_delta(kStep);
+}
+
+void SpacePickerView::paint_edge_fades_(tk::PaintCtx& ctx)
+{
+    const auto bg = ctx.theme.palette.chrome_bg;
+    const float max_scroll = std::max(0.0f, content_height() - bounds_.h);
+    constexpr int kBands = 6;
+    constexpr float kBandH = 4.0f;
+    for (int i = 0; i < kBands; ++i)
+    {
+        const auto alpha = static_cast<std::uint8_t>(
+            230.0f * static_cast<float>(kBands - i) / static_cast<float>(kBands));
+        const float off = kBandH * static_cast<float>(i);
+        if (scroll_y_ > 0.0f)
+            ctx.canvas.fill_rect({bounds_.x, bounds_.y + off, bounds_.w - 1.0f, kBandH},
+                                 bg.with_alpha(alpha));
+        if (scroll_y_ < max_scroll)
+            ctx.canvas.fill_rect(
+                {bounds_.x, bounds_.y + bounds_.h - off - kBandH, bounds_.w - 1.0f, kBandH},
+                bg.with_alpha(alpha));
+    }
 }
 
 void SpacePickerView::paint_before_children(tk::PaintCtx& ctx)
@@ -168,16 +238,26 @@ void SpacePickerView::paint_before_children(tk::PaintCtx& ctx)
     theme_ = &ctx.theme;
     scale_factor_ = ctx.canvas.scale_factor();
 
-    for (int i = 0; i < tab_count(); ++i)
-        paint_tab_(ctx, i, tab_rect_(i));
-
-    // Insertion marker while one of our tabs is dragged over the column.
-    if (drop_slot_ >= 1 && drag_from_ >= 1 && drop_slot_ != drag_from_)
+    step_kinetic();
     {
-        const tk::Rect slot = tab_rect_(drop_slot_);
-        const float y = drop_slot_ < drag_from_ ? slot.y : slot.y + slot.h;
-        ctx.canvas.fill_rounded_rect({slot.x + 8.0f, y - 1.5f, slot.w - 16.0f, 3.0f},
-                                     1.5f, pal.accent);
+        tk::ClipScope clip(ctx.canvas, bounds_);
+        for (int i = 0; i < tab_count(); ++i)
+        {
+            const tk::Rect r = tab_rect_(i);
+            if (r.y + r.h < bounds_.y || r.y > bounds_.y + bounds_.h)
+                continue;
+            paint_tab_(ctx, i, r);
+        }
+
+        // Insertion marker while one of our tabs is dragged over the column.
+        if (drop_slot_ >= 1 && drag_from_ >= 1 && drop_slot_ != drag_from_)
+        {
+            const tk::Rect slot = tab_rect_(drop_slot_);
+            const float y = drop_slot_ < drag_from_ ? slot.y : slot.y + slot.h;
+            ctx.canvas.fill_rounded_rect(
+                {slot.x + 8.0f, y - 1.5f, slot.w - 16.0f, 3.0f}, 1.5f, pal.accent);
+        }
+        paint_edge_fades_(ctx);
     }
 }
 
@@ -291,7 +371,7 @@ void SpacePickerView::on_pointer_up(tk::Point local, bool inside_self)
 int SpacePickerView::slot_at_world_y_(float world_y) const
 {
     const int slot = static_cast<int>(
-        std::floor((world_y - bounds_.y - kPadTop) / kTabH));
+        std::floor((world_y - bounds_.y - kPadTop + scroll_y_) / kTabH));
     return std::clamp(slot, 1, std::max(1, tab_count() - 1));
 }
 
@@ -316,6 +396,7 @@ void SpacePickerView::on_drag_over(tk::Point local, const tk::DragPayload& paylo
 {
     if (const auto* id = payload.get_if<std::string>("pinned_space_id"))
         drag_from_ = tab_of_(*id);
+    autoscroll_for_drag_(local.y);
     const int slot = slot_at_world_y_(bounds_.y + local.y);
     if (slot != drop_slot_)
     {

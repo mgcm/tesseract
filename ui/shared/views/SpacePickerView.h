@@ -10,6 +10,7 @@
 #include "tk/canvas.h"
 #include "tk/drag_drop.h"
 #include "tk/drag_gesture.h"
+#include "tk/scrollable_base.h"
 #include "tk/svg.h"
 #include "tk/widget.h"
 
@@ -40,7 +41,7 @@ struct SpacePickerEntry
     bool operator==(const SpacePickerEntry&) const = default;
 };
 
-class SpacePickerView : public tk::Widget
+class SpacePickerView : public tk::ScrollableBase
 {
 public:
     static constexpr float kWidth = 56.0f;
@@ -77,6 +78,7 @@ public:
     // registers as the host's popup (click-outside/Escape dismissal) by being
     // painted — see PopupMenu.
     void paint_before_children(tk::PaintCtx&) override;
+    bool on_wheel(tk::Point local, float dx, float dy, bool is_touchpad) override;
     bool on_pointer_down(tk::Point local) override;
     void on_pointer_up(tk::Point local, bool inside_self) override;
     void on_pointer_drag(tk::Point local) override;
@@ -99,6 +101,16 @@ public:
         return menu_->items_for_test();
     }
 
+protected:
+    float content_height() const override
+    {
+        return kPadTop + kTabH * static_cast<float>(tab_count());
+    }
+    bool apply_scroll_delta(float dy) override;
+
+public:
+    void scroll_into_view(tk::Rect world_rect) override;
+
 private:
     static constexpr float kTabH = 48.0f;
     static constexpr float kPadTop = 8.0f;
@@ -113,6 +125,11 @@ private:
     int slot_at_world_y_(float world_y) const;
     int tab_of_(const std::string& space_id) const;
     void rebuild_targets_();
+    // Positions the keyboard targets from tab_rect_() (no LayoutCtx needed).
+    void update_targets_();
+    void paint_edge_fades_(tk::PaintCtx&);
+    // Auto-scroll while a reorder drag hovers near the top/bottom edge.
+    void autoscroll_for_drag_(float local_y);
     std::string tab_name_(int tab) const;
 
     std::vector<SpacePickerEntry> entries_;
