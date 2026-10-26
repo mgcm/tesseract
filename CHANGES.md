@@ -5,6 +5,7 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- fix(ui): the space picker no longer shows every space as empty after an account opens in another window. Linux release build (Qt6), ctest 3736/3736
 - fix(ui): the app no longer freezes for seconds when the connection drops while the thread list updates. Built and tested by the user
 - fix(ui): the account picker can be used from the keyboard (arrows, Tab, Enter, Esc) on every platform. Linux release build (Qt6 + GTK4), Windows cross-build compiles
 - fix(ui): closing a window hands over every account it owns, and no window shows an account that another window owns. Linux release build (Qt6 + GTK4), Windows cross-build compiles

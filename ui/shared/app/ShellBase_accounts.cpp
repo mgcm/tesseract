@@ -1280,6 +1280,14 @@ bool ShellBase::switch_active_account_impl_(const std::string& user_id)
     // A cached snapshot counts as a received list; otherwise wait for the push.
     room_list_received_ = it != per_account_rooms_.end();
     mark_room_index_dirty_();
+    // The space-children maps belong to the outgoing account (or are empty in a
+    // freshly spawned window). Drop them, and rebuild from the restored snapshot
+    // now: otherwise every space filters to empty until sync next pushes rooms.
+    space_children_cache_.clear();
+    unjoined_space_children_cache_.clear();
+    unjoined_summaries_cache_.clear();
+    if (room_list_received_)
+        update_space_children_cache_();
     // The known-user roster belongs to the previous account — drop it.
     invalidate_known_users_();
     // The unread-prefetch and bridge-check fingerprints are per-account; reset
