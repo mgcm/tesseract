@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace tesseract::views
 {
@@ -37,9 +38,11 @@ ScreenPickerWidget::ScreenPickerWidget(std::vector<tk::ScreenSource> sources)
     cancel_btn_ = add_child(std::move(btn));
     // Move the callback to a local before invoking — the callback will call
     // unmount_screen_picker() which destroys `this`, so on_cancelled must not
-    // be accessed after the call.
+    // be accessed after the call. std::exchange rather than std::move: a
+    // moved-from std::function isn't guaranteed empty (libc++ keeps small
+    // callables), and the callback must fire only once.
     cancel_btn_->set_on_click([this] {
-        auto cb = std::move(on_cancelled);
+        auto cb = std::exchange(on_cancelled, nullptr);
         if (cb) cb();
     });
     tile_rects_.resize(sources_.size());
@@ -63,7 +66,7 @@ ScreenPickerWidget::ScreenPickerWidget(std::vector<tk::ScreenSource> sources)
         t->on_activate = [this, i]
         {
             // Same as a tile click: the callback unmounts (destroys) us.
-            auto cb = std::move(on_source_selected);
+            auto cb = std::exchange(on_source_selected, nullptr);
             if (cb) cb(sources_[i].id);
         };
         tile_targets_.push_back(t);
@@ -285,7 +288,7 @@ void ScreenPickerWidget::on_pointer_up(tk::Point /*local*/, bool inside_self)
         return;
     // Move to a local before calling — unmount_screen_picker() will destroy
     // `this` (and on_source_selected with it) during the call.
-    auto cb = std::move(on_source_selected);
+    auto cb = std::exchange(on_source_selected, nullptr);
     if (cb) cb(sources_[static_cast<std::size_t>(idx)].id);
 }
 
