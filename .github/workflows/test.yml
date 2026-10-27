@@ -127,7 +127,7 @@ jobs:
         run: cmake --preset linux-debug -B ${{ matrix.build_dir }} -DTESSERACT_UI=qt6 "-DTESSERACT_GITHUB_REPO=${{ github.repository }}" ${{ matrix.cmake_args }}
 
       - name: Build test target
-        run: cmake --build ${{ matrix.build_dir }} --target tesseract_tests -j2
+        run: cmake --build ${{ matrix.build_dir }} --target tesseract_tests
 
       - name: Run tests
         env:
