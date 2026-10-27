@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 using tesseract::views::ComposeBar;
 using tesseract::views::MediaInfo;
@@ -347,9 +348,10 @@ TEST_CASE("AnimatedImage reports correct frame_count and dimensions",
           "[tk][anim]")
 {
     ComposeBarMediaStage st;
-    const std::uint8_t px[4] = {255, 0, 0, 255};
-    auto f0 = st.surface->factory().create_image_rgba(px, 3, 5);
-    auto f1 = st.surface->factory().create_image_rgba(px, 3, 5);
+    // create_image_rgba reads w * h * 4 bytes.
+    const std::vector<std::uint8_t> px(3 * 5 * 4, 255);
+    auto f0 = st.surface->factory().create_image_rgba(px.data(), 3, 5);
+    auto f1 = st.surface->factory().create_image_rgba(px.data(), 3, 5);
     if (!f0 || !f1)
         return; // skip: backend does not implement create_image_rgba
 
