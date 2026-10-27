@@ -69,6 +69,8 @@ jobs:
           # toolchain static library, uninstrumented). Leak detection is off:
           # Qt, fontconfig and GStreamer leak at exit by design and would fail
           # every run; heap/stack/global errors and use-after-free still trip.
+          # jemalloc is off: it exports an unprefixed malloc that replaces
+          # ASan's allocator and crashes the binary before main().
           - name: ASan
             build_dir: build/linux-asan
             cmake_args: >-
@@ -76,6 +78,7 @@ jobs:
               "-DCMAKE_C_FLAGS=-fsanitize=address -fno-omit-frame-pointer"
               "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address"
               "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
+              -DTESSERACT_ENABLE_JEMALLOC=OFF
 
     steps:
       - uses: actions/checkout@v4
