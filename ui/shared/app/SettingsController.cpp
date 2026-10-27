@@ -103,16 +103,20 @@ void SettingsController::upload_avatar()
 
     // Guard: if the picker callback is destroyed without being invoked (user
     // cancels the dialog), the RAII cleaner fires and clears the in-flight flag.
+    // The picker can outlive this controller, so both the cleaner and the
+    // callback check liveness before touching members.
     struct FlagCleaner {
         std::atomic<bool>& flag;
+        std::weak_ptr<bool> alive;
         bool armed = true;
-        explicit FlagCleaner(std::atomic<bool>& f) : flag(f) {}
-        ~FlagCleaner() { if (armed) flag.store(false); }
+        FlagCleaner(std::atomic<bool>& f, std::weak_ptr<bool> a)
+            : flag(f), alive(std::move(a)) {}
+        ~FlagCleaner() { if (armed && alive.lock()) flag.store(false); }
         void disarm() { armed = false; }
     };
-    auto cleaner = std::make_shared<FlagCleaner>(avatar_in_flight_);
+    auto cleaner = std::make_shared<FlagCleaner>(avatar_in_flight_, weak_flag());
 
-    open_file_picker_(
+    open_file_picker_(guarded(
         [this, client_snap = client_, cleaner](std::vector<uint8_t> bytes,
                                                 std::string mime) mutable
         {
@@ -177,7 +181,7 @@ void SettingsController::upload_avatar()
                                 on_avatar_changed(result.message);
                         });
                 });
-        });
+        }));
 }
 
 void SettingsController::remove_avatar()
