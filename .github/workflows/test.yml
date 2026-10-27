@@ -4,12 +4,13 @@
 #   - the C++ Catch2 suite under ctest, on Linux with the Qt6 shell (the only
 #     UI whose test surface compiles in CI today).
 #
-# Manual only (workflow_dispatch) for now. Packaging jobs in
+# Pull requests and manual runs (workflow_dispatch) run it. Packaging jobs in
 # package.yml and build-platform.yml build with TESSERACT_BUILD_TESTS=OFF.
 
 name: Tests
 
 on:
+  pull_request:
   workflow_dispatch:
 
 concurrency:
