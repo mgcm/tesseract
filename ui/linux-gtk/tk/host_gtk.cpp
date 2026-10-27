@@ -3170,7 +3170,7 @@ public:
     {
         return root_.get();
     }
-    const Theme& theme() const
+    const Theme& theme() const override
     {
         return *theme_;
     }

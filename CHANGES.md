@@ -5,6 +5,7 @@ Tagged releases summarize all changes since the previous tag.
 
 ## Unreleased
 
+- fix(ui): the thread list's "mark all as read" icon and the thread search bar now use the current theme's colours. macOS release build, ctest 3726/3729 (3 failures under review)
 - chore(ci): the manually-run test workflow adds an AddressSanitizer build and a keyring for the keychain tests. YAML parse only
 - feat(ui): right-clicking a message offers the same actions as its hover toolbar. Linux Qt6 build
 - chore(ci): the Flatpak job retries its source and runtime downloads, so a transient crates.io or Flathub error no longer cancels the release run. YAML parse only

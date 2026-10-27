@@ -72,6 +72,11 @@ RoomSearchBar::RoomSearchBar()
     cl->set_visible(false);
     close_btn_ = add_child(std::move(cl));
     close_btn_->set_icon(kCloseSvg, kIconPx);
+
+    // Created lazily (inside ThreadView) after the theme was applied, so
+    // on_theme_changed() won't fire for it: pick up the live colours now.
+    if (host())
+        on_theme_changed(host()->theme());
 }
 
 void RoomSearchBar::open(bool grab_focus)

@@ -17,6 +17,7 @@
 #include "canvas.h"
 #include "device_listing.h"
 #include "emoji_support.h"
+#include "theme.h"
 #include "toast.h"
 #include "tooltip.h"
 #include "video.h"
@@ -727,6 +728,11 @@ class Host : public EnableWeakSelf<Host>
 {
 public:
     virtual ~Host() { invalidate_weak_self(); }
+
+    // The theme the owning surface last received via Surface::set_theme. A
+    // widget created after a theme apply (lazily built views) reads it at
+    // construction, since on_theme_changed() only fires on later changes.
+    virtual const Theme& theme() const = 0;
 
     // RootWidget::queue_for_deletion() forwards straight to the protected
     // queue_for_deletion() below — it's the only external caller, so this

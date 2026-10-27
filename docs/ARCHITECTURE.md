@@ -123,6 +123,9 @@ flowchart TB
 ```
 
 Native `Host` implementations provide UI scheduling and platform integration.
+`Host::theme()` returns the current theme, so a view that is created lazily
+reads its colours at construction rather than waiting for the next
+`on_theme_changed()`.
 `Canvas` implementations draw shared widgets; native text controls support IME
 and selection while their rendered surfaces participate in toolkit compositing.
 Additional room and call windows use `RoomWindowBase` and `CallWindowBase`.

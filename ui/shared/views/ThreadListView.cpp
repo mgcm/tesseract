@@ -139,7 +139,6 @@ ThreadListView::ThreadListView()
     mark_all_btn_->set_on_click([this] {
         if (on_mark_all_read) on_mark_all_read();
     });
-    refresh_mark_all_enabled_(); // starts disabled (threads_ empty)
 
     auto filter = tk::create_widget<tk::ToggleButton>(this, std::string{});
     filter->set_icon(kBellSvg, 18.0f);
@@ -156,6 +155,14 @@ ThreadListView::ThreadListView()
         search->set_on_changed([this](const std::string& q) { set_search_text(q); });
         search_field_ = add_child(std::move(search));
     }
+
+    // This view is created lazily, after the theme was applied, so on_theme_changed()
+    // won't fire for it: pick up the live colours now. Also leaves the mark-all
+    // button disabled (threads_ empty).
+    if (host())
+        on_theme_changed(host()->theme());
+    else
+        refresh_mark_all_enabled_();
 }
 
 void ThreadListView::on_theme_changed(const tk::Theme& t)

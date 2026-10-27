@@ -25,6 +25,9 @@ public:
 
     void request_repaint() override { ++repaint_count; }
 
+    const tk::Theme& theme() const override { return theme_; }
+    tk::Theme theme_ = tk::Theme::light();
+
     // Records every cursor the shared hover logic hands to the backend.
     void apply_cursor_(tk::CursorShape shape) override
     {
