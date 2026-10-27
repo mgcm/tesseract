@@ -36,8 +36,7 @@ struct AsShell : tesseract::test::TestShellBase
     explicit AsShell(tesseract::AccountManager& am) : TestShellBase(am) {}
     ~AsShell() override
     {
-        pool_.wait_idle(std::chrono::seconds(5));
-        mut_pool_.wait_idle(std::chrono::seconds(5));
+        wait_pools_idle();
         pool_.drain();
         mut_pool_.drain();
         media_prefetch_pool_.drain();
@@ -944,7 +943,7 @@ TEST_CASE("the pending-sync gate starts sync once for the held account",
     auto a = as_acct("@a:x");
     s.pending_sync_session_ = a;
     s.release_pending_sync_gate_();
-    s.mut_pool_.wait_idle(std::chrono::seconds(5));
+    s.drain_workers();
     CHECK(s.pending_sync_session_ == nullptr);
     CHECK(a->sync_started);
 
@@ -1002,7 +1001,7 @@ TEST_CASE("a retired login client outlives a worker that is still running",
         release = true;
     }
     cv.notify_all();
-    REQUIRE(s.pool_.wait_idle(std::chrono::seconds(5)));
+    s.drain_workers();
     s.reset_pending_login_client_(); // idle: retired clients are freed
     CHECK(s.retired_login_clients_.size() == 1);
 }

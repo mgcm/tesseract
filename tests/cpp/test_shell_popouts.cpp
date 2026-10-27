@@ -78,8 +78,7 @@ struct PoShell : tesseract::test::TestShellBase
     explicit PoShell(tesseract::AccountManager& am) : TestShellBase(am) {}
     ~PoShell() override
     {
-        pool_.wait_idle(std::chrono::seconds(5));
-        mut_pool_.wait_idle(std::chrono::seconds(5));
+        wait_pools_idle();
         // Windows reference this shell: tear them down first.
         owned_secondary_windows_.clear();
         pool_.drain();

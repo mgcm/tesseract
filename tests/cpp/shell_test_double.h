@@ -4,8 +4,12 @@
 // default so a test only overrides what it cares about; adding a hook to
 // ShellBase means editing this one file instead of every test.
 //
-// Defaults: post_to_ui_* run inline, everything else is a no-op. A test that
-// wants queued UI work overrides post_to_ui_ in its own subclass.
+// Defaults: post_to_ui_* run inline when called on the constructing (test main)
+// thread; posts from worker threads (pools, SDK callbacks) are queued and run
+// on the main thread by drain_workers(), so "UI-thread" continuations never
+// race the test body. Everything else is a no-op. A test that wants manually
+// stepped UI work overrides post_to_ui_ in its own subclass (an override that
+// runs fn inline reintroduces the cross-thread race).
 
 #include "app/AccountManager.h"
 #include "app/ShellBase.h"
@@ -14,7 +18,9 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace tesseract::test
@@ -35,20 +41,39 @@ struct TestShellBase : AccountManagerHolder, tesseract::ShellBase
     explicit TestShellBase(tesseract::AccountManager& shared) : ShellBase(shared) {}
 
     // Workers post back into derived state; let them finish before it goes away.
-    ~TestShellBase() override { drain_workers(); }
+    // Anything still queued is discarded, not run: the derived parts of the
+    // shell are already destroyed by now, and the real app likewise drops posts
+    // once the shell is gone (post_to_ui_alive_).
+    ~TestShellBase() override { wait_pools_idle(); }
 
-    // Fixtures that own widgets the workers post into call this before those
-    // widgets are destroyed (their members go before the shell's destructor).
+    // Waits for the worker pools, then runs the UI continuations they queued on
+    // the calling (UI) thread, repeating until both are quiet (a continuation
+    // may start more work). Fixtures that own widgets the workers post into call
+    // this before those widgets are destroyed (their members go before the
+    // shell's destructor). Bounded so a bug cannot hang the suite.
     void drain_workers()
     {
-        const auto t = std::chrono::seconds(5);
-        pool_.wait_idle(t);
-        mut_pool_.wait_idle(t);
-        media_prefetch_pool_.wait_idle(t);
+        for (int i = 0; i < 1000; ++i)
+        {
+            wait_pools_idle();
+            std::vector<std::function<void()>> batch;
+            {
+                std::lock_guard<std::mutex> lk(ui_queue_mu_);
+                batch.swap(ui_queue_);
+            }
+            if (batch.empty())
+                return;
+            for (auto& fn : batch)
+                fn();
+        }
     }
+    void settle() { drain_workers(); }
 
-    void post_to_ui_(std::function<void()> fn) override { fn(); }
-    void post_to_ui_after_(int, std::function<void()> fn) override { fn(); }
+    void post_to_ui_(std::function<void()> fn) override { post_(std::move(fn)); }
+    void post_to_ui_after_(int, std::function<void()> fn) override
+    {
+        post_(std::move(fn));
+    }
     void request_relayout_() override {}
     void request_repaint_() override {}
     void on_rooms_updated_() override {}
@@ -82,6 +107,33 @@ struct TestShellBase : AccountManagerHolder, tesseract::ShellBase
     make_account_bridge_(const std::string&) override { return nullptr; }
     void install_account_notifier_(tesseract::AccountSession&) override {}
     void request_relogin_(const std::string&) override {}
+
+    // Waits for the pools without running what they queued. For derived
+    // destructors: the queued continuations may touch fixture state that is
+    // already gone, so they are discarded rather than run.
+    void wait_pools_idle()
+    {
+        const auto t = std::chrono::seconds(5);
+        pool_.wait_idle(t);
+        mut_pool_.wait_idle(t);
+        media_prefetch_pool_.wait_idle(t);
+    }
+
+private:
+    void post_(std::function<void()> fn)
+    {
+        if (std::this_thread::get_id() == ui_thread_)
+        {
+            fn();
+            return;
+        }
+        std::lock_guard<std::mutex> lk(ui_queue_mu_);
+        ui_queue_.push_back(std::move(fn));
+    }
+
+    const std::thread::id ui_thread_ = std::this_thread::get_id();
+    std::mutex ui_queue_mu_;
+    std::vector<std::function<void()>> ui_queue_;
 };
 
 } // namespace tesseract::test

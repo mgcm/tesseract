@@ -35,8 +35,7 @@ struct TabShell : tesseract::test::TestShellBase
 {
     ~TabShell() override
     {
-        pool_.wait_idle(std::chrono::seconds(5));
-        mut_pool_.wait_idle(std::chrono::seconds(5));
+        wait_pools_idle();
         pool_.drain();
         mut_pool_.drain();
         media_prefetch_pool_.drain();
@@ -543,7 +542,7 @@ TEST_CASE("open_room_version_ reveals a listed room or defers to a join",
     s.active_account_->client = std::make_unique<tesseract::Client>();
     s.client_ = s.active_account_->client.get();
     s.open_room_version_("!unknown", {}, "$e", false);
-    s.pool_.wait_idle(std::chrono::seconds(5));
+    s.drain_workers();
     CHECK(s.pending_event_scroll_after_join_.at("!unknown") == "$e");
 }
 
@@ -583,7 +582,7 @@ TEST_CASE("on_room_selected_ loads the room into the view and subscribes",
     s.room_view_ = rv.get();
     s.pagination_["!a"].initial_fill_done = true;
     s.on_room_selected_("!a");
-    s.mut_pool_.wait_idle(std::chrono::seconds(5));
+    s.drain_workers();
     CHECK(s.current_room_id_ == "!a");
     CHECK(rv->compose_bar() != nullptr);
 }

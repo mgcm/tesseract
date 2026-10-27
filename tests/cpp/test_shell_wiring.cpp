@@ -136,6 +136,7 @@ struct WiringShell : tesseract::test::TestShellBase
 {
     ~WiringShell() override
     {
+        wait_pools_idle(); // the login view's worker reads it until done
         release_settings_surface_(); // its fake holds references into this shell
         release_login_surface_();    // likewise, and the login view's worker
         pool_.drain();
@@ -410,7 +411,7 @@ struct WiringShell : tesseract::test::TestShellBase
             parked->push_back(std::move(fn));
             return;
         }
-        fn();
+        TestShellBase::post_to_ui_(std::move(fn)); // inline on the UI thread
     }
     std::vector<std::function<void()>>* parked = nullptr;
     int* repaint_sink = nullptr; // outlives the shell
@@ -3401,7 +3402,7 @@ TEST_CASE("login page: teardown keeps the view while a pool task may still use i
         release = true;
     }
     cv.notify_all();
-    s.pool_.wait_idle(std::chrono::seconds(5));
+    s.drain_workers();
     s.teardown_host.fire_all_delays();
     CHECK(s.login_unmounted == 1);
     CHECK(s.login_alive == 0);
@@ -3639,6 +3640,7 @@ TEST_CASE("login page: created once, bound to the pending client, shown through 
     s.pending_login_client_ = std::make_unique<tesseract::Client>();
     s.shared_show_login(Mode::AddAccount);
     CHECK(s.login_pages == 1);
+    s.wait_pools_idle(); // the view's discovery task reads it until done
     s.release_login_surface_();
     CHECK(s.login_view_ == nullptr);
     CHECK(s.login_alive == 0);

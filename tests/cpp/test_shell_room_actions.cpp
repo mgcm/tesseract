@@ -39,8 +39,7 @@ struct RaShell : tesseract::test::TestShellBase
 {
     ~RaShell() override
     {
-        pool_.wait_idle(std::chrono::seconds(5));
-        mut_pool_.wait_idle(std::chrono::seconds(5));
+        wait_pools_idle();
         pool_.drain();
         mut_pool_.drain();
         media_prefetch_pool_.drain();
@@ -178,7 +177,7 @@ struct RaAppFx : RaFx
     std::unique_ptr<tesseract::views::MainAppWidget> app =
         tk::create_root_widget<tesseract::views::MainAppWidget>(nullptr);
     RaAppFx() { s.main_app_ = app.get(); }
-    // Workers post back into main_app_ inline (TestShellBase::post_to_ui_), and
+    // Workers post back into main_app_ (queued by TestShellBase::post_to_ui_), and
     // `app` is destroyed before the base's shell: drain them first.
     ~RaAppFx() { s.drain_workers(); }
 };
@@ -531,13 +530,13 @@ TEST_CASE("lookup_room_command_ shows the loading state and applies a failure",
     f.s.lookup_room_command_("#a:x");
     CHECK(ar->join_view()->state() == tesseract::views::JoinRoomView::State::Loading);
     CHECK(f.s.join_room_lookup_gen_ == 1);
-    f.s.pool_.wait_idle(std::chrono::seconds(5)); // offline: failed summary
+    f.s.drain_workers(); // offline: failed summary
     CHECK(ar->join_view()->state() == tesseract::views::JoinRoomView::State::Error);
 
     // A newer lookup supersedes an older one's late result.
     f.s.lookup_room_command_("#b:x");
     f.s.lookup_room_command_("#c:x");
-    f.s.pool_.wait_idle(std::chrono::seconds(5));
+    f.s.drain_workers();
     CHECK(f.s.join_room_lookup_gen_ == 3);
 }
 

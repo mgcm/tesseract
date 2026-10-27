@@ -25,7 +25,6 @@ namespace
 struct ShellEncryptionSetupTestShell : tesseract::test::TestShellBase
 {
     // ── ShellBase pure virtuals ───────────────────────────────────────────
-    void post_to_ui_(std::function<void()> fn) override { fn(); }
     std::int64_t monotonic_ms_() override { return 0; }
 
     // ── New pure virtuals (Task 11) ───────────────────────────────────────

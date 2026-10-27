@@ -35,8 +35,7 @@ struct SmShell : tesseract::test::TestShellBase
 {
     ~SmShell() override
     {
-        pool_.wait_idle(std::chrono::seconds(5));
-        mut_pool_.wait_idle(std::chrono::seconds(5));
+        wait_pools_idle();
         pool_.drain();
         mut_pool_.drain();
         media_prefetch_pool_.drain();
@@ -364,7 +363,7 @@ TEST_CASE("pending pack images are decoded off-thread into a preview",
     SmShell s;
     s.handle_image_pack_pending_image_added_(7, {1, 2, 3}, "image/png", nullptr);
     s.handle_user_pack_pending_image_added_(8, {1, 2, 3}, "image/png", nullptr);
-    s.pool_.wait_idle(std::chrono::seconds(5));
+    s.drain_workers();
     SUCCEED();
 }
 

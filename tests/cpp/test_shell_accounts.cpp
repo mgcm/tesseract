@@ -220,7 +220,7 @@ TEST_CASE("a soft logout whose restore fails keeps the account and its stored ke
         s.account_manager_.add_account(a);
 
         s.handle_sync_error_impl_("sync_auth_error", uid, "", true);
-        REQUIRE(s.mut_pool_.wait_idle(std::chrono::seconds(10)));
+        s.drain_workers();
 
         CHECK(s.relogins.empty());
         CHECK_FALSE(a->sync_started);

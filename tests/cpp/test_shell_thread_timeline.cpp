@@ -41,8 +41,7 @@ struct TtShell : tesseract::test::TestShellBase
 {
     ~TtShell() override
     {
-        pool_.wait_idle(std::chrono::seconds(5));
-        mut_pool_.wait_idle(std::chrono::seconds(5));
+        wait_pools_idle();
         main_room_pane_.reset();
         pool_.drain();
         mut_pool_.drain();
@@ -332,13 +331,13 @@ TEST_CASE("search-index stats poll only while the settings panel is open",
     s.client_ = &client;
 
     s.refresh_search_index_stats_(); // panel closed: nothing
-    s.pool_.wait_idle(std::chrono::seconds(5));
+    s.drain_workers();
     CHECK(s.delayed.empty());
 
     tesseract::Settings::instance().index_messages_for_search = true;
     s.start_search_index_stats_poll_();
     CHECK(s.search_stats_panel_open_);
-    s.pool_.wait_idle(std::chrono::seconds(5));
+    s.drain_workers();
     // Backfill not done on a sessionless client: the poll re-arms itself.
     CHECK_FALSE(s.delayed.empty());
 
@@ -350,7 +349,7 @@ TEST_CASE("search-index stats poll only while the settings panel is open",
     tesseract::Settings::instance().index_messages_for_search = false;
     s.delayed.clear();
     s.start_search_index_stats_poll_();
-    s.pool_.wait_idle(std::chrono::seconds(5));
+    s.drain_workers();
     s.stop_search_index_stats_poll_();
 }
 
