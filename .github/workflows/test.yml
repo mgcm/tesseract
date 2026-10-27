@@ -4,15 +4,12 @@
 #   - the C++ Catch2 suite under ctest, on Linux with the Qt6 shell (the only
 #     UI whose test surface compiles in CI today).
 #
-# Pull requests and pushes to the review branches run it. Packaging jobs in
+# Manual only (workflow_dispatch) for now. Packaging jobs in
 # package.yml and build-platform.yml build with TESSERACT_BUILD_TESTS=OFF.
 
 name: Tests
 
 on:
-  push:
-    branches: [main, 'review-*']
-  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -43,9 +40,28 @@ jobs:
         run: python3 i18n/check_i18n.py .
 
   cpp-tests:
-    name: C++ tests (Catch2 via ctest, Linux Qt6)
+    name: C++ tests (${{ matrix.name }}, Linux Qt6)
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Debug
+            build_dir: build/linux-debug
+            cmake_args: ""
+          # AddressSanitizer on the C++ side only (the Rust SDK is a stable-
+          # toolchain static library, uninstrumented). Leak detection is off:
+          # Qt, fontconfig and GStreamer leak at exit by design and would fail
+          # every run; heap/stack/global errors and use-after-free still trip.
+          - name: ASan
+            build_dir: build/linux-asan
+            cmake_args: >-
+              "-DCMAKE_CXX_FLAGS=-fsanitize=address -fno-omit-frame-pointer"
+              "-DCMAKE_C_FLAGS=-fsanitize=address -fno-omit-frame-pointer"
+              "-DCMAKE_EXE_LINKER_FLAGS=-fsanitize=address"
+              "-DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address"
 
     steps:
       - uses: actions/checkout@v4
@@ -71,7 +87,9 @@ jobs:
             gstreamer1.0-plugins-base \
             gstreamer1.0-plugins-good \
             gstreamer1.0-libav \
-            fonts-noto-color-emoji
+            fonts-noto-color-emoji \
+            dbus \
+            gnome-keyring
 
       - name: Expose opus to audiopus_sys
         run: |
@@ -85,13 +103,26 @@ jobs:
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: . -> build/linux-debug/cargo/build
+          workspaces: . -> ${{ matrix.build_dir }}/cargo/build
+          # Distinct per matrix entry: the build dirs (and so the cached
+          # target dirs) differ, and the ASan one must not restore Debug's.
+          key: ${{ matrix.name }}
+          cache-on-failure: true
 
       - name: Configure (Debug, tests on)
-        run: cmake --preset linux-debug -DTESSERACT_UI=qt6 "-DTESSERACT_GITHUB_REPO=${{ github.repository }}"
+        run: cmake --preset linux-debug -B ${{ matrix.build_dir }} -DTESSERACT_UI=qt6 "-DTESSERACT_GITHUB_REPO=${{ github.repository }}" ${{ matrix.cmake_args }}
 
       - name: Build test target
-        run: cmake --build build/linux-debug --target tesseract_tests -j4
+        run: cmake --build ${{ matrix.build_dir }} --target tesseract_tests -j2
 
       - name: Run tests
-        run: ctest --test-dir build/linux-debug --output-on-failure
+        env:
+          ASAN_OPTIONS: detect_leaks=0:abort_on_error=0:strict_string_checks=1:detect_stack_use_after_return=1
+        # The [keychain] tests use the real libsecret backend, which needs a
+        # session bus and an unlocked default collection; a bare runner has
+        # neither. The empty password creates the "login" keyring unlocked.
+        run: |
+          dbus-run-session -- bash -c '
+            echo -n "" | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+            ctest --test-dir "$1" --output-on-failure
+          ' _ ${{ matrix.build_dir }}
