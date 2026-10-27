@@ -26,11 +26,12 @@ jobs:
       - uses: actions/checkout@v4
 
       # webrtc-sys (livekit) takes glib/gobject/gio headers from pkg-config
-      # (all in libglib2.0-dev); audiopus_sys needs the system opus.
+      # (all in libglib2.0-dev); audiopus_sys needs the system opus; gettext
+      # provides xgettext for i18n/check_i18n.py.
       - name: Install build dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y libglib2.0-dev libopus-dev
+          sudo apt-get install -y libglib2.0-dev libopus-dev gettext
 
       - name: Expose opus to audiopus_sys
         run: |
@@ -85,6 +86,9 @@ jobs:
 
       # The same build dependencies as the Linux job in compile-check.yml,
       # which is the reference for this list.
+      # fonts-noto-core (Noto Sans) is needed by the tk layout tests: with only
+      # the emoji font, text lines are short enough that UserInfo's row stays at
+      # its 44 px avatar height and the tests that expect it to grow fail.
       - name: Install build dependencies
         run: |
           sudo apt-get update -q
@@ -105,6 +109,7 @@ jobs:
             gstreamer1.0-plugins-good \
             gstreamer1.0-libav \
             fonts-noto-color-emoji \
+            fonts-noto-core \
             dbus \
             gnome-keyring
 
